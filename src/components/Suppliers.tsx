@@ -6,7 +6,8 @@ import { Supplier, SupplierTransaction, UserRole, Bank } from "@/src/types";
 import { cn, formatCurrency } from "@/src/lib/utils";
 import { 
   Users, Plus, Trash2, CreditCard, History, Wallet, UserCircle, Landmark, X, Eye, Pencil, 
-  Search, ArrowDownRight, ArrowUpRight, Check, CheckSquare, ClipboardList, Shield, ChevronDown
+  Search, ArrowDownRight, ArrowUpRight, Check, CheckSquare, ClipboardList, Shield, ChevronDown,
+  Printer, ArrowLeft, Receipt, Download
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 
@@ -60,6 +61,101 @@ export default function Suppliers({
   const [modalRefNo, setModalRefNo] = useState("");
   const [modalNotes, setModalNotes] = useState("");
   const [submittingModal, setSubmittingModal] = useState(false);
+  const [invoiceTransaction, setInvoiceTransaction] = useState<SupplierTransaction | null>(null);
+
+  // Deletion Confirmation States
+  const [supplierToDelete, setSupplierToDelete] = useState<string | null>(null);
+  const [txToDelete, setTxToDelete] = useState<{ id: string; tx: SupplierTransaction } | null>(null);
+  const [modalAdjustDue, setModalAdjustDue] = useState(true);
+
+  const confirmDeleteSupplier = async () => {
+    if (!supplierToDelete) return;
+    const id = supplierToDelete;
+    setSupplierToDelete(null);
+    try {
+      await deleteDoc(doc(db, "suppliers", id));
+      if (selectedSupplier?.id === id) {
+        setSelectedSupplier(null);
+        setViewState("list");
+      }
+    } catch (err) {
+      handleFirestoreError(err, OperationType.DELETE, "suppliers");
+    }
+  };
+
+  const confirmDeleteTransaction = async () => {
+    if (!txToDelete) return;
+    const { id: txId, tx: sTx } = txToDelete;
+    setTxToDelete(null);
+    try {
+      const supplierId = sTx.supplierId;
+      
+      if (sTx.type === "payment") {
+        // Revert outstanding due: increment back
+        await updateDoc(doc(db, "suppliers", supplierId), {
+          purchaseDue: increment(sTx.totalAmount)
+        });
+
+        // Revert bank balances
+        const isRefund = sTx.notes?.includes("Return Refund Received");
+        if (sTx.paymentMethod && sTx.paymentMethod !== "Cash") {
+          const bank = banks.find(b => b.name === sTx.paymentMethod);
+          if (bank?.id) {
+            await updateDoc(doc(db, "banks", bank.id), {
+              balance: increment(isRefund ? -sTx.totalAmount : sTx.totalAmount),
+              lastUpdated: new Date().toISOString()
+            });
+          }
+        }
+      } else if (sTx.type === "purchase") {
+        const paidVal = sTx.paidAmount || 0;
+        const dueVal = sTx.dueAmount ?? (sTx.totalAmount - paidVal);
+
+        // Revert totals: subtract from total spend and outstanding dues
+        await updateDoc(doc(db, "suppliers", supplierId), {
+          totalAmount: increment(-sTx.totalAmount),
+          purchaseDue: increment(-dueVal)
+        });
+
+        // Revert bank/cash payment
+        if (paidVal > 0 && sTx.paymentMethod && sTx.paymentMethod !== "Cash") {
+          const bank = banks.find(b => b.name === sTx.paymentMethod);
+          if (bank?.id) {
+            await updateDoc(doc(db, "banks", bank.id), {
+              balance: increment(paidVal),
+              lastUpdated: new Date().toISOString()
+            });
+          }
+        }
+      } else if (sTx.type === "return") {
+        const wasAdjusted = sTx.notes?.includes("(Automatically adjusted from due)") || sTx.notes?.includes("Automatically adjusted from due");
+        if (wasAdjusted) {
+          // Put the due back
+          await updateDoc(doc(db, "suppliers", supplierId), {
+            purchaseDue: increment(sTx.totalAmount)
+          });
+        } else {
+          // Revert advance credit note
+          await updateDoc(doc(db, "suppliers", supplierId), {
+            advanceAmount: increment(-sTx.totalAmount)
+          });
+        }
+      }
+
+      // Delete the actual doc
+      await deleteDoc(doc(db, "supplierTransactions", txId));
+
+      // Synchronize in profile state
+      if (selectedSupplier?.id === supplierId) {
+        const updatedSupplier = suppliers.find(s => s.id === supplierId);
+        if (updatedSupplier) {
+          setSelectedSupplier(updatedSupplier);
+        }
+      }
+    } catch (err) {
+      handleFirestoreError(err, OperationType.DELETE, "supplierTransactions");
+    }
+  };
 
   // Load Initial Data
   useEffect(() => {
@@ -87,6 +183,16 @@ export default function Suppliers({
       unsubTransactions();
     };
   }, []);
+
+  // Sync selected supplier in real-time when suppliers change
+  useEffect(() => {
+    if (selectedSupplier) {
+      const match = suppliers.find(s => s.id === selectedSupplier.id);
+      if (match) {
+        setSelectedSupplier(match);
+      }
+    }
+  }, [suppliers, selectedSupplier?.id]);
 
   // Set form fields when editing or clearing
   useEffect(() => {
@@ -165,45 +271,49 @@ export default function Suppliers({
     }
   };
 
-  // Delete Supplier
-  const handleDeleteSupplier = async (id: string) => {
-    if (!window.confirm("Are you sure you want to delete this supplier?")) return;
-    try {
-      await deleteDoc(doc(db, "suppliers", id));
-      if (selectedSupplier?.id === id) {
-        setSelectedSupplier(null);
-        setViewState("list");
-      }
-    } catch (err) {
-      handleFirestoreError(err, OperationType.DELETE, "suppliers");
-    }
-  };
+  // Supplier management utilities
 
   // Calculate specific metrics for a supplier based on transactions + opening balance
   const getSupplierFinances = (supplier: Supplier) => {
+    if (!supplier) {
+      return {
+        openingBalance: 0,
+        totalPurchases: 0,
+        grossPurchases: 0,
+        totalReturns: 0,
+        totalPayments: 0,
+        remainingDue: 0
+      };
+    }
+
     const sTransactions = transactions.filter(t => t.supplierId === supplier.id);
     
-    // Purchases summation
+    // Purchases summation (actual invoice totals excluding opening balance)
     const totalPurchases = sTransactions
       .filter(t => t.type === "purchase")
-      .reduce((sum, t) => sum + t.totalAmount, 0);
+      .reduce((sum, t) => sum + (t.totalAmount || 0), 0);
 
     // Returns summation
     const totalReturns = sTransactions
       .filter(t => t.type === "return")
-      .reduce((sum, t) => sum + t.totalAmount, 0);
+      .reduce((sum, t) => sum + (t.totalAmount || 0), 0);
 
-    // Payments summation
-    const totalPayments = sTransactions
+    // Payments summation: Sum of direct payment transactions AND downpayments made at the time of purchase
+    const directPayments = sTransactions
       .filter(t => t.type === "payment")
-      .reduce((sum, t) => sum + t.totalAmount, 0);
+      .reduce((sum, t) => sum + (t.totalAmount || 0), 0);
+    const purchaseDownpayments = sTransactions
+      .filter(t => t.type === "purchase")
+      .reduce((sum, t) => sum + (t.paidAmount || 0), 0);
+    const totalPayments = directPayments + purchaseDownpayments;
 
-    const netPurchases = supplier.openingBalance + totalPurchases - totalReturns;
-    const remainingDue = netPurchases - totalPayments;
+    const opBal = supplier.openingBalance || 0;
+    const remainingDue = opBal + totalPurchases - totalPayments - totalReturns;
 
     return {
-      totalPurchases: totalPurchases + supplier.openingBalance,
-      netPurchases,
+      openingBalance: opBal,
+      totalPurchases, // Raw total purchases (exclusive of opening balance)
+      grossPurchases: totalPurchases + opBal,
       totalReturns,
       totalPayments,
       remainingDue
@@ -219,6 +329,7 @@ export default function Suppliers({
     setModalPaymentMethod("Cash");
 
     const finances = getSupplierFinances(s);
+    setModalAdjustDue(true);
 
     if (type === "payDue") {
       setModalAmount(Math.max(0, finances.remainingDue).toFixed(2));
@@ -329,7 +440,7 @@ export default function Suppliers({
 
       } else if (activeModal === "addReturn") {
         // Recording a return
-        const adjustDue = window.confirm("Do you want to automatically adjust/minus this return amount from the supplier's due amount?");
+        const adjustDue = modalAdjustDue; // Avoids sandbox-blocking window.confirm!
         
         const returnTx: SupplierTransaction = {
           supplierId: modalSupplier.id,
@@ -373,6 +484,8 @@ export default function Suppliers({
     }
   };
 
+  // Transactions reverted and updated correctly
+
   // Flags generator
   const getCountryFlag = (countryCode: string) => {
     switch (countryCode.toLowerCase()) {
@@ -391,23 +504,75 @@ export default function Suppliers({
     return text.includes(searchTerm.toLowerCase());
   });
 
+  // Export suppliers list to CSV (Excel compatible)
+  const handleExportCSV = () => {
+    const headers = ["Supplier Code", "Supplier Name", "Country", "Total Purchases (৳)", "Purchase Due (৳)", "Deposit Amount (৳)", "Status"];
+    const rows = filteredSuppliers.map((s) => {
+      const finances = getSupplierFinances(s);
+      return [
+        s.code,
+        s.name,
+        s.country,
+        finances.totalPurchases.toFixed(2),
+        finances.remainingDue.toFixed(2),
+        s.advanceAmount.toFixed(2),
+        s.status
+      ];
+    });
+
+    const csvContent = "\uFEFF" + [
+      headers.join(","),
+      ...rows.map(row => row.map(val => `"${String(val).replace(/"/g, '""')}"`).join(","))
+    ].join("\n");
+
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.setAttribute("download", `Suppliers_Ledger_${new Date().toISOString().split("T")[0]}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  const handlePrintList = () => {
+    window.print();
+  };
+
+  // Calculate aggregate metrics across ALL suppliers
+  const aggregateFinances = (() => {
+    let opening = 0;
+    let purchases = 0;
+    let payments = 0;
+    let returns = 0;
+    let due = 0;
+    
+    suppliers.forEach((s) => {
+      const f = getSupplierFinances(s);
+      opening += f.openingBalance || 0;
+      purchases += f.totalPurchases || 0;
+      payments += f.totalPayments || 0;
+      returns += f.totalReturns || 0;
+      due += f.remainingDue || 0;
+    });
+
+    return { opening, purchases, payments, returns, due };
+  })();
+
   return (
-    <div className="w-full bg-[#F5F5F4] min-h-screen">
+    <div className="space-y-6 animate-in fade-in duration-200 print:bg-white print:p-0">
       {/* Dynamic Header */}
-      <div className="flex flex-col md:flex-row md:items-center md:justify-between mb-6 pb-4 border-b border-gray-200">
+      <header className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 border-b border-slate-100 pb-5 print:hidden">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
-            <Users className="w-6 h-6 text-gray-700" />
-            {viewState === "form" ? "Suppliers" : viewState === "profile" ? "Supplier Profile" : "Suppliers List"}
-          </h1>
-          <p className="text-xs text-gray-500 mt-0.5">
-            {viewState === "form" ? "Add/Update Suppliers" : viewState === "profile" ? `Ledger and interactions for ${selectedSupplier?.name}` : "View/Search Suppliers"}
+          <h2 className="text-3xl font-black tracking-tight text-slate-900 flex items-center gap-2">
+            <Users className="w-8 h-8 text-slate-700" />
+            {viewState === "form" ? "Suppliers Form" : viewState === "profile" ? "Supplier Profile" : "Suppliers List"}
+          </h2>
+          <p className="text-sm font-medium text-slate-500 mt-1">
+            {viewState === "form" ? "Add/Update Suppliers details and balance settings." : viewState === "profile" ? `Ledger and interactions for ${selectedSupplier?.name}` : "View & manage your supplier transactions and ledgers."}
           </p>
         </div>
-        <div className="text-xs font-medium text-gray-500 mt-2 md:mt-0">
-          Home &gt; {viewState === "form" ? "Add/Update Supplier" : viewState === "profile" ? "Supplier Profile" : "Suppliers List"}
-        </div>
-      </div>
+      </header>
 
       {/* Main Switch */}
       <AnimatePresence mode="wait">
@@ -514,7 +679,7 @@ export default function Suppliers({
                       type="text"
                       disabled
                       value={editingSupplier ? editingSupplier.totalAmount.toFixed(2) : "0.00"}
-                      className="w-full p-3 rounded-2xl border border-gray-105 bg-gray-50 text-gray-400 text-sm cursor-not-allowed"
+                      className="w-full p-3 rounded-2xl border border-gray-200 bg-gray-50 text-gray-400 text-sm cursor-not-allowed"
                     />
                   </div>
 
@@ -559,7 +724,7 @@ export default function Suppliers({
                   }}
                   className="bg-[#f39c12] hover:bg-[#e08e0b] text-white font-semibold py-3 px-10 rounded-xl transition-all shadow-md shadow-orange-100"
                 >
-                  Close
+                  Leave / Close
                 </button>
               </div>
             </form>
@@ -571,31 +736,65 @@ export default function Suppliers({
             key="supplier-list-view"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
-            className="space-y-6"
+            className="space-y-6 animate-in fade-in duration-300"
           >
+            {/* Aggregate Summary Cards Section */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 print:hidden">
+              <div className="p-4 rounded-3xl bg-indigo-50/70 border border-indigo-150 shadow-sm">
+                <p className="text-[10px] uppercase font-extrabold text-indigo-700 tracking-wider">Total Opening Balance</p>
+                <h3 className="text-xl font-black mt-1.5 text-indigo-950">{formatCurrency(aggregateFinances.opening)}</h3>
+                <p className="text-[10px] text-gray-500 mt-1">Initial ledger opening sum</p>
+              </div>
+
+              <div className="p-4 rounded-3xl bg-blue-50/70 border border-blue-150 shadow-sm">
+                <p className="text-[10px] uppercase font-extrabold text-blue-700 tracking-wider">Total Purchases</p>
+                <h3 className="text-xl font-black mt-1.5 text-blue-950">{formatCurrency(aggregateFinances.purchases)}</h3>
+                <p className="text-[10px] text-gray-500 mt-1">Excl. opening balance</p>
+              </div>
+
+              <div className="p-4 rounded-3xl bg-green-50/70 border border-green-150 shadow-sm">
+                <p className="text-[10px] uppercase font-extrabold text-emerald-700 tracking-wider">Total Paid Payments</p>
+                <h3 className="text-xl font-black mt-1.5 text-emerald-950">{formatCurrency(aggregateFinances.payments)}</h3>
+                <p className="text-[10px] text-gray-500 mt-1">Direct & downpayments total</p>
+              </div>
+
+              <div className="p-4 rounded-3xl bg-yellow-50/70 border border-yellow-150 shadow-sm">
+                <p className="text-[10px] uppercase font-extrabold text-amber-800 tracking-wider">Total Returns</p>
+                <h3 className="text-xl font-black mt-1.5 text-amber-950">{formatCurrency(aggregateFinances.returns)}</h3>
+                <p className="text-[10px] text-gray-500 mt-1">Returned items ledger amount</p>
+              </div>
+
+              <div className="p-4 rounded-3xl bg-red-50/70 border border-red-150 shadow-sm">
+                <p className="text-[10px] uppercase font-extrabold text-red-700 tracking-wider">Total Due Amount</p>
+                <h3 className="text-xl font-black mt-1.5 text-red-950">{formatCurrency(aggregateFinances.due)}</h3>
+                <p className="text-[10px] text-gray-500 mt-1">Opening + Purchases - Paid - Returns</p>
+              </div>
+            </div>
+
             {/* Box Header Controls */}
-            <div className="bg-white rounded-3xl border border-gray-100 shadow-sm p-6">
-              <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-6">
+            <div className="bg-white rounded-3xl border border-gray-100 shadow-sm p-6 print:shadow-none print:border-none print:p-0">
+              <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-6 print:hidden">
                 <h2 className="text-xl font-bold text-gray-900">Suppliers List</h2>
                 <button
+                  type="button"
                   onClick={() => {
                     setEditingSupplier(null);
                     setViewState("form");
                   }}
-                  className="bg-[#00c0ef] hover:bg-[#00acd6] text-white font-bold py-2.5 px-5 rounded-lg transition-colors shadow-sm flex items-center gap-2 text-sm"
+                  className="bg-[#00c0ef] hover:bg-[#00acd6] text-white font-bold py-2.5 px-5 rounded-lg transition-colors shadow-sm flex items-center gap-2 text-sm cursor-pointer"
                 >
                   <Plus className="w-4 h-4" /> New Supplier
                 </button>
               </div>
 
               {/* Filters & Grid Buttons */}
-              <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-4">
+              <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-4 print:hidden">
                 <div className="flex items-center gap-2 text-sm text-gray-600">
                   <span>Show</span>
                   <select
                     value={entriesLimit}
                     onChange={(e) => setEntriesLimit(parseInt(e.target.value))}
-                    className="border border-gray-200 rounded-lg p-1.5 bg-gray-50 text-xs font-bold"
+                    className="border border-gray-200 rounded-lg p-1.5 bg-gray-50 text-xs font-bold outline-none"
                   >
                     <option value={5}>5</option>
                     <option value={10}>10</option>
@@ -605,26 +804,31 @@ export default function Suppliers({
                   <span>entries</span>
                 </div>
 
-                <div className="flex items-center gap-1 flex-wrap">
-                  {["Copy", "Excel", "PDF", "Print", "CSV", "Columns"].map((bLabel) => (
-                    <button
-                      key={bLabel}
-                      onClick={() => alert(`${bLabel} successfully simulated.`)}
-                      className="bg-[#5bc0de] hover:bg-[#31b0d5] text-white border border-[#46b8da] text-xs font-semibold py-1.5 px-3 rounded text-center transition-colors"
-                    >
-                      {bLabel}
-                    </button>
-                  ))}
+                <div className="flex items-center gap-2 flex-wrap">
+                  <button
+                    type="button"
+                    onClick={handleExportCSV}
+                    className="bg-emerald-600 hover:bg-[#008d4ccc] text-white text-xs font-semibold py-1.5 px-3 rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer border border-[#00a65a]"
+                  >
+                    <Download className="w-4 h-4" /> Export Excel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handlePrintList}
+                    className="bg-sky-600 hover:bg-sky-750 text-white text-xs font-semibold py-1.5 px-3 rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer border border-sky-650"
+                  >
+                    <Printer className="w-4 h-4" /> Print / Save PDF
+                  </button>
                 </div>
 
                 <div className="flex items-center gap-2">
-                  <span className="text-sm text-gray-600 font-medium">Search:</span>
+                  <span className="text-sm text-gray-600 font-medium my-auto">Search:</span>
                   <div className="relative">
                     <input
                       type="text"
                       value={searchTerm}
                       onChange={(e) => setSearchTerm(e.target.value)}
-                      className="border border-gray-200 rounded-lg py-1.5 pl-3 pr-8 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 w-48 md:w-60 bg-gray-50"
+                      className="border border-gray-200 rounded-xl py-1.5 pl-3 pr-8 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 w-48 md:w-60 bg-gray-50"
                     />
                     <Search className="w-4 h-4 text-gray-400 absolute right-2.5 top-2.5" />
                   </div>
@@ -632,21 +836,21 @@ export default function Suppliers({
               </div>
 
               {/* Responsive Table */}
-              <div className="overflow-x-auto rounded-xl border border-gray-200">
+              <div className="overflow-x-auto rounded-xl border border-gray-200 print:border-none">
                 <table className="w-full text-left border-collapse">
                   <thead>
                     <tr className="bg-[#3182ce] text-white uppercase text-[11px] tracking-wider font-bold">
-                      <th className="p-3.5 w-12 text-center">
+                      <th className="p-3.5 w-12 text-center print:hidden">
                         <input type="checkbox" className="rounded text-blue-600 focus:ring-blue-500" />
                       </th>
                       <th className="p-3.5">Supplier ID</th>
                       <th className="p-3.5">Supplier Name</th>
                       <th className="p-3.5">Country</th>
-                      <th className="p-3.5 text-right">Total (৳)</th>
-                      <th className="p-3.5 text-right">Purchase Due (৳)</th>
-                      <th className="p-3.5 text-right">Deposit Amount (৳)</th>
+                      <th className="p-3.5 text-right text-nowrap">Total Purchases (৳)</th>
+                      <th className="p-3.5 text-right text-nowrap">Purchase Due (৳)</th>
+                      <th className="p-3.5 text-right text-nowrap">Deposit Amount (৳)</th>
                       <th className="p-3.5">Status</th>
-                      <th className="p-3.5 text-center">Action</th>
+                      <th className="p-3.5 text-center print:hidden">Action</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-100 text-sm text-gray-700">
@@ -667,81 +871,69 @@ export default function Suppliers({
                         const finances = getSupplierFinances(s);
                         return (
                           <tr key={s.id} className="hover:bg-slate-50 transition-colors">
-                            <td className="p-3.5 text-center">
+                            <td className="p-3.5 text-center print:hidden">
                               <input type="checkbox" className="rounded text-blue-600 focus:ring-blue-500" />
                             </td>
-                            <td className="p-3.5 font-bold text-gray-500">{s.code}</td>
+                            <td className="p-3.5 font-bold text-gray-500 font-mono">{s.code}</td>
                             <td className="p-3.5 font-semibold text-gray-900">{s.name}</td>
                             <td className="p-3.5 font-medium">
-                              <span className="mr-1.5">{getCountryFlag(s.country)}</span>
+                              <span className="mr-1.5 print:hidden">{getCountryFlag(s.country)}</span>
                               {s.country}
                             </td>
-                            <td className="p-3.5 text-right font-medium">
+                            <td className="p-3.5 text-right font-medium font-mono">
                               {formatCurrency(finances.totalPurchases)}
                             </td>
-                            <td className="p-3.5 text-right">
+                            <td className="p-3.5 text-right font-mono">
                               <span className={cn(
-                                "font-bold font-mono px-2 py-0.5 rounded text-xs",
-                                finances.remainingDue > 0 ? "text-red-600 bg-red-50" : "text-green-600 bg-green-50"
+                                "font-bold px-2 py-0.5 rounded text-xs",
+                                finances.remainingDue > 0 ? "text-red-650 bg-red-50/70" : "text-green-600 bg-green-50"
                               )}>
                                 {formatCurrency(finances.remainingDue)}
                               </span>
                             </td>
-                            <td className="p-3.5 text-right font-medium">
+                            <td className="p-3.5 text-right font-medium font-mono">
                               {formatCurrency(s.advanceAmount)}
                             </td>
                             <td className="p-3.5">
                               <span className={cn(
-                                "text-[10px] font-extrabold uppercase px-2.5 py-1 rounded inline-block text-white",
+                                "text-[10px] font-extrabold uppercase px-2.5 py-1 rounded inline-block text-white print:text-black print:bg-transparent print:border print:border-slate-300 print:text-[8px] print:p-0.5",
                                 s.status === "active" ? "bg-[#00a65a]" : "bg-red-500"
                               )}>
                                 {s.status}
                               </span>
                             </td>
-                            <td className="p-3.5 text-center relative">
-                              <div className="inline-block text-left group">
-                                <button className="bg-[#337ab7] hover:bg-[#286090] text-white text-xs font-semibold py-1.5 px-3 rounded flex items-center gap-1 transition-all">
-                                  Action <ChevronDown className="w-3 h-3" />
+                            <td className="p-3.5 text-center print:hidden">
+                              <div className="flex items-center justify-center gap-0.5">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setSelectedSupplier(s);
+                                    setViewState("profile");
+                                  }}
+                                  title="View Details"
+                                  className="p-1.5 text-blue-600 hover:text-blue-850 hover:bg-blue-50/70 rounded-lg transition-all cursor-pointer"
+                                >
+                                  <Eye className="w-4 h-4" />
                                 </button>
-                                
-                                <div className="absolute right-0 mt-1 w-48 bg-white border border-gray-200 rounded-lg shadow-xl py-1 text-left hidden group-hover:block z-20">
-                                  <button
-                                    onClick={() => {
-                                      setSelectedSupplier(s);
-                                      setViewState("profile");
-                                    }}
-                                    className="w-full px-4 py-2 text-xs text-gray-700 hover:bg-slate-100 font-semibold flex items-center gap-2"
-                                  >
-                                    <Eye className="w-3.5 h-3.5 text-blue-500" /> View Details
-                                  </button>
-                                  <button
-                                    onClick={() => {
-                                      setEditingSupplier(s);
-                                      setViewState("form");
-                                    }}
-                                    className="w-full px-4 py-2 text-xs text-gray-700 hover:bg-slate-100 font-semibold flex items-center gap-2"
-                                  >
-                                    <Pencil className="w-3.5 h-3.5 text-green-500" /> Edit
-                                  </button>
-                                  <button
-                                    onClick={() => openModal("payDue", s)}
-                                    className="w-full px-4 py-2 text-xs text-gray-700 hover:bg-slate-100 font-semibold flex items-center gap-2"
-                                  >
-                                    <CreditCard className="w-3.5 h-3.5 text-orange-500" /> Pay Due Payments
-                                  </button>
-                                  <button
-                                    onClick={() => openModal("payReturn", s)}
-                                    className="w-full px-4 py-2 text-xs text-gray-700 hover:bg-slate-100 font-semibold flex items-center gap-2"
-                                  >
-                                    <History className="w-3.5 h-3.5 text-indigo-500" /> Pay Return Due
-                                  </button>
-                                  <button
-                                    onClick={() => handleDeleteSupplier(s.id!)}
-                                    className="w-full px-4 py-2 text-xs text-red-600 hover:bg-red-50 font-semibold flex items-center gap-2 border-t border-gray-100"
-                                  >
-                                    <Trash2 className="w-3.5 h-3.5" /> Delete
-                                  </button>
-                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setEditingSupplier(s);
+                                    setViewState("form");
+                                  }}
+                                  title="Edit"
+                                  className="p-1.5 text-emerald-600 hover:text-emerald-800 hover:bg-emerald-50/70 rounded-lg transition-all cursor-pointer"
+                                >
+                                  <Pencil className="w-4 h-4" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setSupplierToDelete(s.id!)}
+                                  title="Delete"
+                                  className="p-1.5 text-rose-600 hover:text-rose-850 hover:bg-rose-50 rounded-lg transition-all cursor-pointer"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
                               </div>
                             </td>
                           </tr>
@@ -785,24 +977,6 @@ export default function Suppliers({
 
                 <div className="flex flex-wrap items-center gap-2">
                   <button
-                    onClick={() => openModal("addPurchase", selectedSupplier)}
-                    className="bg-[#00a65a] hover:bg-[#008d4c] text-white text-xs font-bold py-2.5 px-4 rounded-lg shadow-sm flex items-center gap-1.5"
-                  >
-                    <Plus className="w-4 h-4" /> Create Purchase
-                  </button>
-                  <button
-                    onClick={() => openModal("addReturn", selectedSupplier)}
-                    className="bg-yellow-600 hover:bg-yellow-700 text-white text-xs font-bold py-2.5 px-4 rounded-lg shadow-sm flex items-center gap-1.5"
-                  >
-                    <ArrowDownRight className="w-4 h-4" /> Create Return
-                  </button>
-                  <button
-                    onClick={() => openModal("payDue", selectedSupplier)}
-                    className="bg-red-600 hover:bg-red-700 text-white text-xs font-bold py-2.5 px-4 rounded-lg shadow-sm flex items-center gap-1.5"
-                  >
-                    <CreditCard className="w-4 h-4" /> Pay Due
-                  </button>
-                  <button
                     onClick={() => setViewState("list")}
                     className="bg-slate-200 hover:bg-slate-300 text-gray-700 text-xs font-bold py-2.5 px-4 rounded-lg transition-colors"
                   >
@@ -815,26 +989,31 @@ export default function Suppliers({
               {(() => {
                 const finances = getSupplierFinances(selectedSupplier);
                 return (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mt-6">
-                    <div className="p-4 rounded-2xl bg-blue-50 border border-blue-100">
-                      <p className="text-[10px] uppercase font-extrabold text-blue-600 tracking-wider">Gross Purchases</p>
-                      <h3 className="text-xl font-bold mt-1 text-gray-900">{formatCurrency(finances.totalPurchases)}</h3>
-                      <p className="text-[10px] text-gray-500 mt-1">Incl. {formatCurrency(selectedSupplier.openingBalance)} opening</p>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 mt-6">
+                    <div className="p-4 rounded-2xl bg-indigo-50/70 border border-indigo-120 shadow-sm">
+                      <p className="text-[10px] uppercase font-extrabold text-indigo-700 tracking-wider">Supplier Opening Balance Amount</p>
+                      <h3 className="text-xl font-black mt-1.5 text-indigo-950">{formatCurrency(finances.openingBalance)}</h3>
+                      <p className="text-[10px] text-gray-500 mt-1">Opening ledger ledger balance</p>
                     </div>
-                    <div className="p-4 rounded-2xl bg-yellow-50 border border-yellow-100">
-                      <p className="text-[10px] uppercase font-extrabold text-yellow-700 tracking-wider">Total Returns</p>
-                      <h3 className="text-xl font-bold mt-1 text-gray-900">{formatCurrency(finances.totalReturns)}</h3>
-                      <p className="text-[10px] text-gray-500 mt-1">Items refunded or adjusted</p>
+                    <div className="p-4 rounded-2xl bg-blue-50/70 border border-blue-120 shadow-sm">
+                      <p className="text-[10px] uppercase font-extrabold text-blue-700 tracking-wider">Total Purchase Amount</p>
+                      <h3 className="text-xl font-black mt-1.5 text-blue-950">{formatCurrency(finances.totalPurchases)}</h3>
+                      <p className="text-[10px] text-gray-500 mt-1">Excluding opening balance</p>
                     </div>
-                    <div className="p-4 rounded-2xl bg-green-50 border border-green-100">
-                      <p className="text-[10px] uppercase font-extrabold text-[#00a65a] tracking-wider">Total Paid Payments</p>
-                      <h3 className="text-xl font-bold mt-1 text-gray-900">{formatCurrency(finances.totalPayments)}</h3>
-                      <p className="text-[10px] text-gray-500 mt-1">Paid through all methods</p>
+                    <div className="p-4 rounded-2xl bg-green-50/70 border border-green-120 shadow-sm">
+                      <p className="text-[10px] uppercase font-extrabold text-[#00a65a] tracking-wider">Total Payment Amount</p>
+                      <h3 className="text-xl font-black mt-1.5 text-[#00a65a]">{formatCurrency(finances.totalPayments)}</h3>
+                      <p className="text-[10px] text-gray-500 mt-1">Direct + purchase downpayments</p>
                     </div>
-                    <div className="p-4 rounded-2xl bg-red-50 border border-red-100">
-                      <p className="text-[10px] uppercase font-extrabold text-red-600 tracking-wider">Current Balance Due</p>
-                      <h3 className="text-xl font-bold mt-1 text-red-600">{formatCurrency(finances.remainingDue)}</h3>
-                      <p className="text-[10px] text-gray-500 mt-1">Net pending to supplier</p>
+                    <div className="p-4 rounded-2xl bg-yellow-50/70 border border-yellow-120 shadow-sm">
+                      <p className="text-[10px] uppercase font-extrabold text-amber-700 tracking-wider">Purchase Return Amount</p>
+                      <h3 className="text-xl font-black mt-1.5 text-amber-950">{formatCurrency(finances.totalReturns)}</h3>
+                      <p className="text-[10px] text-gray-500 mt-1">Items returned or adjusted</p>
+                    </div>
+                    <div className="p-4 rounded-2xl bg-red-50/70 border border-red-120 shadow-sm">
+                      <p className="text-[10px] uppercase font-extrabold text-red-650 tracking-wider">Total Due Amount</p>
+                      <h3 className="text-xl font-black mt-1.5 text-red-650">{formatCurrency(finances.remainingDue)}</h3>
+                      <p className="text-[10px] text-gray-500 mt-1">Net pending due to supplier</p>
                     </div>
                   </div>
                 );
@@ -877,12 +1056,13 @@ export default function Suppliers({
                         <th className="p-3 text-right">Paid Amount (৳)</th>
                         <th className="p-3 text-right">Pending Due (৳)</th>
                         <th className="p-3">Notes</th>
+                        <th className="p-4 text-center">Actions</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-100 text-xs text-gray-700">
                       {transactions.filter(t => t.supplierId === selectedSupplier.id && (t.type === "purchase" || t.type === "return")).length === 0 ? (
                         <tr>
-                          <td colSpan={7} className="p-6 text-center text-gray-400 font-medium">No purchase bills logged yet.</td>
+                          <td colSpan={8} className="p-6 text-center text-gray-400 font-medium font-medium">No purchase bills logged yet.</td>
                         </tr>
                       ) : (
                         transactions
@@ -903,6 +1083,24 @@ export default function Suppliers({
                               <td className="p-3 text-right">{t.paidAmount ? formatCurrency(t.paidAmount) : "—"}</td>
                               <td className="p-3 text-right text-red-600 font-bold">{t.dueAmount ? formatCurrency(t.dueAmount) : "0"}</td>
                               <td className="p-3 text-gray-500 italic max-w-xs truncate">{t.notes || "—"}</td>
+                              <td className="p-3 text-center">
+                                <div className="flex items-center justify-center gap-2">
+                                  <button
+                                    onClick={() => setInvoiceTransaction(t)}
+                                    title="View Proper Invoice"
+                                    className="p-1 text-blue-600 hover:text-blue-800 hover:bg-blue-50 rounded-lg transition-colors"
+                                  >
+                                    <Receipt className="w-4 h-4" />
+                                  </button>
+                                  <button
+                                    onClick={() => setTxToDelete({ id: t.id!, tx: t })}
+                                    title="Delete Transaction Record"
+                                    className="p-1 text-red-600 hover:text-red-800 hover:bg-red-50 rounded-lg transition-colors"
+                                  >
+                                    <Trash2 className="w-4 h-4" />
+                                  </button>
+                                </div>
+                              </td>
                             </tr>
                           ))
                       )}
@@ -922,12 +1120,13 @@ export default function Suppliers({
                         <th className="p-3 text-right">Amount Paid (৳)</th>
                         <th className="p-3">Payment Method</th>
                         <th className="p-3">Notes</th>
+                        <th className="p-4 text-center">Actions</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-100 text-xs text-gray-700">
                       {transactions.filter(t => t.supplierId === selectedSupplier.id && t.type === "payment").length === 0 ? (
                         <tr>
-                          <td colSpan={6} className="p-6 text-center text-gray-400 font-medium">No payments logs found.</td>
+                          <td colSpan={7} className="p-6 text-center text-gray-400 font-medium">No payments logs found.</td>
                         </tr>
                       ) : (
                         transactions
@@ -944,6 +1143,24 @@ export default function Suppliers({
                               <td className="p-3 text-right font-bold text-[#00a65a]">{formatCurrency(t.totalAmount)}</td>
                               <td className="p-3 font-bold text-gray-600">{t.paymentMethod || "Cash"}</td>
                               <td className="p-3 text-gray-500 italic max-w-xs truncate">{t.notes || "—"}</td>
+                              <td className="p-3 text-center">
+                                <div className="flex items-center justify-center gap-2">
+                                  <button
+                                    onClick={() => setInvoiceTransaction(t)}
+                                    title="View Payment Voucher"
+                                    className="p-1 text-blue-600 hover:text-blue-800 hover:bg-blue-50 rounded-lg transition-colors"
+                                  >
+                                    <Receipt className="w-4 h-4" />
+                                  </button>
+                                  <button
+                                    onClick={() => setTxToDelete({ id: t.id!, tx: t })}
+                                    title="Delete Paid Payment Voucher"
+                                    className="p-1 text-red-600 hover:text-red-800 hover:bg-red-50 rounded-lg transition-colors"
+                                  >
+                                    <Trash2 className="w-4 h-4" />
+                                  </button>
+                                </div>
+                              </td>
                             </tr>
                           ))
                       )}
@@ -1117,6 +1334,21 @@ export default function Suppliers({
                           />
                         </div>
 
+                        {activeModal === "addReturn" && (
+                          <div className="flex items-start gap-2.5 bg-sky-50 text-sky-800 font-medium text-xs p-3.5 rounded-2xl border border-sky-100">
+                            <input
+                              type="checkbox"
+                              id="modalAdjustDueCheckbox"
+                              checked={modalAdjustDue}
+                              onChange={(e) => setModalAdjustDue(e.target.checked)}
+                              className="mt-0.5 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer h-4 w-4"
+                            />
+                            <label htmlFor="modalAdjustDueCheckbox" className="cursor-pointer text-slate-700 leading-tight">
+                              <strong>Automatically adjust / deduct return:</strong> Check this to automatically subtract this transaction's return value from the supplier's outstanding due balance. If unchecked, it will be added as advance balance.
+                            </label>
+                          </div>
+                        )}
+
                         <div className="flex items-center justify-end gap-3 pt-4 border-t border-gray-100">
                           <button
                             type="button"
@@ -1139,6 +1371,234 @@ export default function Suppliers({
                 );
               })()}
             </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Proper Invoice/Receipt Modal */}
+      <AnimatePresence>
+        {invoiceTransaction && selectedSupplier && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-gray-900/60 backdrop-blur-xs overflow-y-auto print:absolute print:inset-0 print:bg-white print:p-0">
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="bg-white rounded-3xl shadow-3xl max-w-2xl w-full border border-gray-100 overflow-hidden print:shadow-none print:border-none print:rounded-none"
+            >
+              {/* Receipt Header Actions */}
+              <div className="bg-slate-900 text-white p-4 px-6 flex items-center justify-between print:hidden">
+                <div className="flex items-center gap-2">
+                  <Receipt className="w-5 h-5 text-blue-400" />
+                  <span className="font-bold text-sm tracking-wider uppercase">Official Transaction Voucher</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => {
+                      window.print();
+                    }}
+                    className="bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold py-1.5 px-3 rounded-lg flex items-center gap-1.5 transition-colors shadow-sm"
+                  >
+                    <Printer className="w-3.5 h-3.5" /> Print Invoice
+                  </button>
+                  <button
+                    onClick={() => setInvoiceTransaction(null)}
+                    className="text-gray-400 hover:text-white transition-colors p-1"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+              </div>
+
+              {/* Printable Invoice Page Canvas */}
+              <div className="p-8 space-y-8 bg-white text-gray-800 print:p-6" id="printable-invoice">
+                {/* Brand Header */}
+                <div className="flex justify-between items-start border-b-2 border-slate-900 pb-6">
+                  <div>
+                    <h1 className="text-2xl font-black tracking-tight text-slate-900 uppercase">Dhaka Accounting Enterprise</h1>
+                    <p className="text-xs text-gray-500 font-mono mt-1">Multi-Supplier Ledger Management Center • Bangladesh</p>
+                    <p className="text-xs text-gray-400 text-left">Date: {new Date().toLocaleDateString('en-GB')}</p>
+                  </div>
+                  <div className="text-right">
+                    <div className="bg-slate-900 text-white text-[10px] font-black uppercase tracking-widest px-3 py-1 rounded inline-block">
+                      {invoiceTransaction.type} voucher
+                    </div>
+                    <p className="text-xs font-mono font-bold text-slate-700 mt-2">Voucher #{invoiceTransaction.refNo || "N/A"}</p>
+                  </div>
+                </div>
+
+                {/* To & From Information */}
+                <div className="grid grid-cols-2 gap-8 text-xs text-left">
+                  <div>
+                    <p className="text-[10px] uppercase font-bold text-gray-400 tracking-wider">Billed To (Supplier Info)</p>
+                    <div className="mt-2 space-y-1">
+                      <p className="text-sm font-bold text-slate-900">{selectedSupplier.name}</p>
+                      <p className="font-mono text-gray-600">ID/Code: {selectedSupplier.code}</p>
+                      <p className="text-gray-600">{selectedSupplier.mobile || "No Mobile Provided"}</p>
+                      <p className="text-gray-600">{selectedSupplier.email || "No Email Provided"}</p>
+                      <p className="text-gray-500 italic mt-1">{selectedSupplier.address || "No Registered Address"}</p>
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-[10px] uppercase font-bold text-gray-400 tracking-wider">Payment Metadata</p>
+                    <div className="mt-2 space-y-1">
+                      <p className="text-gray-600"><span className="font-semibold text-slate-700">Ref Date:</span> {invoiceTransaction.date}</p>
+                      <p className="text-gray-600"><span className="font-semibold text-slate-700">Channel:</span> {invoiceTransaction.paymentMethod || "Cash"}</p>
+                      <p className="text-gray-600"><span className="font-semibold text-slate-700">Receipt Type:</span> {invoiceTransaction.type.toUpperCase()}</p>
+                      <p className="text-gray-600"><span className="font-semibold text-slate-700">System Stamp:</span> Generated in Cloud Run Container</p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Transaction breakdown table */}
+                <div>
+                  <table className="w-full text-left border-collapse border-b border-slate-200">
+                    <thead>
+                      <tr className="bg-slate-100/50 text-slate-800 text-[10px] font-black uppercase tracking-wider border-y border-slate-900">
+                        <th className="p-3">Reference Ref #</th>
+                        <th className="p-3">Item / Statement Description</th>
+                        <th className="p-3 text-right">Unit Rate (৳)</th>
+                        <th className="p-3 text-right">Value Amount (৳)</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100 text-xs text-left">
+                      <tr>
+                        <td className="p-3 font-mono font-bold text-slate-800">{invoiceTransaction.refNo}</td>
+                        <td className="p-3 text-slate-600">
+                          {invoiceTransaction.type === "purchase" && "Supplied Inventory Stocks & Materials Import Purchases"}
+                          {invoiceTransaction.type === "return" && "Stock Credits Return Voucher for Defective Inventories"}
+                          {invoiceTransaction.type === "payment" && "Acknowledge Settlement payout towards Outstanding Supplier Balance"}
+                        </td>
+                        <td className="p-3 text-right font-mono text-gray-500">{formatCurrency(invoiceTransaction.totalAmount)}</td>
+                        <td className="p-3 text-right font-mono font-bold text-slate-950">{formatCurrency(invoiceTransaction.totalAmount)}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* Calculations Summary block */}
+                <div className="flex justify-end pt-4">
+                  <div className="w-64 space-y-2 text-xs text-left">
+                    <div className="flex justify-between font-medium text-gray-500 border-b border-gray-100 pb-2">
+                      <span>Gross Invoice Value:</span>
+                      <span className="font-mono text-slate-800">৳ {invoiceTransaction.totalAmount.toFixed(2)}</span>
+                    </div>
+                    {invoiceTransaction.paidAmount !== undefined && (
+                      <div className="flex justify-between font-medium text-gray-500 border-b border-gray-100 pb-2">
+                        <span>Paid Clearance Amount:</span>
+                        <span className="font-mono text-[#00a65a]">৳ {invoiceTransaction.paidAmount.toFixed(2)}</span>
+                      </div>
+                    )}
+                    {invoiceTransaction.dueAmount !== undefined && (
+                      <div className="flex justify-between font-medium text-gray-500 border-b border-gray-100 pb-2">
+                        <span>Pending Due Adjustment:</span>
+                        <span className="font-mono text-red-600 font-bold">৳ {invoiceTransaction.dueAmount.toFixed(2)}</span>
+                      </div>
+                    )}
+                    <div className="flex justify-between text-sm font-black text-slate-950 pt-2 border-t-2 border-dashed border-slate-900">
+                      <span>Total Net Settled:</span>
+                      <span className="font-mono">৳ {invoiceTransaction.totalAmount.toFixed(2)}</span>
+                    </div>
+                    {invoiceTransaction.notes && (
+                      <div className="bg-slate-50 p-3 rounded-xl border border-gray-100 text-[11px] text-gray-500 italic mt-4 text-left">
+                        <span className="font-bold text-slate-700 block not-italic uppercase text-[9px] mb-1">Transaction Notes:</span>
+                        {invoiceTransaction.notes}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Signatures footer */}
+                <div className="grid grid-cols-2 gap-8 pt-12 border-t border-dashed border-slate-200 text-center">
+                  <div>
+                    <div className="mx-auto w-32 border-b border-slate-400 h-10"></div>
+                    <p className="text-[10px] text-gray-400 uppercase tracking-widest font-bold mt-2">Authority Signature</p>
+                  </div>
+                  <div>
+                    <div className="mx-auto w-32 border-b border-slate-400 h-10"></div>
+                    <p className="text-[10px] text-gray-400 uppercase tracking-widest font-bold mt-2">Supplier Receiver Stamp</p>
+                  </div>
+                </div>
+
+                {/* Bangladesh declaration stamp footer */}
+                <div className="text-center text-[10px] text-gray-400 pt-8">
+                  <p>Thank you for doing business with Dhaka Accounting Enterprise.</p>
+                  <p className="mt-1">For any queries, contact our support desk: hello@dhaka-accounting.com.bd</p>
+                </div>
+              </div>
+
+              {/* Leave and back action */}
+              <div className="bg-slate-50 px-6 py-4 flex justify-end gap-3 border-t border-gray-100 print:hidden">
+                <button
+                  type="button"
+                  onClick={() => setInvoiceTransaction(null)}
+                  className="bg-slate-900 hover:bg-slate-800 text-white font-bold py-2 px-5 rounded-xl transition-colors text-xs flex items-center gap-1.5"
+                >
+                  <ArrowLeft className="w-3.5 h-3.5" /> Leave Voucher View
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+
+        {/* Custom Supplier Delete Modal */}
+        {supplierToDelete && (
+          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <div className="bg-white rounded-[32px] max-w-md w-full p-8 shadow-2xl border border-gray-100 animate-in zoom-in-95 duration-200">
+              <div className="w-12 h-12 bg-red-50 rounded-2xl flex items-center justify-center text-red-600 mb-6">
+                <Trash2 className="w-6 h-6" />
+              </div>
+              <h3 className="text-xl font-bold text-gray-900 mb-2">Delete Supplier?</h3>
+              <p className="text-sm text-gray-500 mb-6">
+                Are you sure you want to delete this supplier? This action cannot be undone.
+              </p>
+              <div className="flex justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={() => setSupplierToDelete(null)}
+                  className="px-5 py-2.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-xl text-xs font-bold transition-all"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={confirmDeleteSupplier}
+                  className="px-5 py-2.5 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-bold transition-all shadow-lg active:scale-95"
+                >
+                  Yes, Delete
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Custom Transaction Delete Modal */}
+        {txToDelete && (
+          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <div className="bg-white rounded-[32px] max-w-md w-full p-8 shadow-2xl border border-gray-100 animate-in zoom-in-95 duration-200">
+              <div className="w-12 h-12 bg-red-50 rounded-2xl flex items-center justify-center text-red-600 mb-6">
+                <Trash2 className="w-6 h-6" />
+              </div>
+              <h3 className="text-xl font-bold text-gray-900 mb-2">Delete Transaction Record?</h3>
+              <p className="text-sm text-gray-500 mb-6">
+                Are you sure you want to delete this transaction record? This will automatically revert and correct outstanding supplier dues, purchase totals, and associated bank balances.
+              </p>
+              <div className="flex justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={() => setTxToDelete(null)}
+                  className="px-5 py-2.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-xl text-xs font-bold transition-all"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={confirmDeleteTransaction}
+                  className="px-5 py-2.5 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-bold transition-all shadow-lg active:scale-95"
+                >
+                  Yes, Delete
+                </button>
+              </div>
+            </div>
           </div>
         )}
       </AnimatePresence>

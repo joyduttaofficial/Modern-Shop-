@@ -1,12 +1,26 @@
 export type TransactionType = "income" | "expense";
-export type UserRole = "admin" | "accountant" | "sales";
+export type UserRole = string; // standard "admin" | "accountant" | "sales" or custom roles
 
 export interface UserProfile {
   id?: string;
-  uid: string;
+  uid?: string; // Optinal as invited users won't have a UID until they sign in
   email: string;
   displayName: string;
-  role: UserRole;
+  role: string;
+  createdAt: string;
+  photoURL?: string;
+  mobile?: string;
+  designation?: string;
+  department?: string;
+  status?: "active" | "inactive";
+  bio?: string;
+}
+
+export interface RolePermission {
+  id?: string;
+  name: string;
+  allowedMenus: string[];
+  description?: string;
   createdAt: string;
 }
 

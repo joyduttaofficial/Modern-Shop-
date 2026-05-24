@@ -32,6 +32,9 @@ export default function SalarySheet({ user, role }: { user: User; role: UserRole
   const [selectedMonth, setSelectedMonth] = useState<string>(format(new Date(), "yyyy-MM")); // e.g. "2026-05"
   const [employeeSearch, setEmployeeSearch] = useState("");
 
+  // Deletion Confirmation State
+  const [payoutToDelete, setPayoutToDelete] = useState<Transaction | null>(null);
+
   useEffect(() => {
     // Snap employees
     const unsubEmps = onSnapshot(collection(db, "employees"), (snap) => {
@@ -54,11 +57,12 @@ export default function SalarySheet({ user, role }: { user: User; role: UserRole
     return () => { unsubEmps(); unsubTx(); unsubBanks(); };
   }, []);
 
-  const handleDeletePayout = async (tx: Transaction) => {
-    if (!tx.id) return;
-    if (!confirm(`Are you sure you want to delete this payment of ${formatCurrency(tx.amount)} recorded for ${tx.subCategory}?\n\nThis will safely credit the amount back to the payment account.`)) return;
-
+  const confirmDeletePayout = async () => {
+    if (!payoutToDelete) return;
+    const tx = payoutToDelete;
+    setPayoutToDelete(null);
     try {
+      if (!tx.id) return;
       const batch = writeBatch(db);
       batch.delete(doc(db, "transactions", tx.id));
 
@@ -390,15 +394,13 @@ export default function SalarySheet({ user, role }: { user: User; role: UserRole
                         {tx.notes || "-"}
                       </td>
                       <td className="px-6 py-4 text-right">
-                        {role === "admin" && (
-                          <button
-                            onClick={() => handleDeletePayout(tx)}
-                            className="p-2 hover:bg-red-50 text-gray-400 hover:text-red-600 rounded-xl transition-all border border-transparent hover:border-red-100 inline-flex items-center justify-center cursor-pointer"
-                            title="Delete and revert bank ledger balance"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
-                        )}
+                        <button
+                          onClick={() => setPayoutToDelete(tx)}
+                          className="p-2 hover:bg-red-50 text-gray-400 hover:text-red-600 rounded-xl transition-all border border-transparent hover:border-red-100 inline-flex items-center justify-center cursor-pointer"
+                          title="Delete and revert bank ledger balance"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
                       </td>
                     </tr>
                   ))
@@ -407,6 +409,39 @@ export default function SalarySheet({ user, role }: { user: User; role: UserRole
           </table>
         </div>
       </div>
+
+      {/* Custom Payout Delete Modal */}
+      {payoutToDelete && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-[32px] max-w-md w-full p-8 shadow-2xl border border-gray-100 animate-in zoom-in-95 duration-200">
+            <div className="w-12 h-12 bg-red-50 rounded-2xl flex items-center justify-center text-red-600 mb-6">
+              <Trash2 className="w-6 h-6" />
+            </div>
+            <h3 className="text-xl font-bold text-gray-900 mb-2">Delete Payment?</h3>
+            <p className="text-sm text-gray-500 mb-6">
+              Are you sure you want to delete this payment of <strong className="text-gray-900">{formatCurrency(payoutToDelete.amount)}</strong> recorded for <strong className="text-gray-900">{payoutToDelete.subCategory}</strong>?
+              <br /><br />
+              This will safely credit the amount back to the payment account.
+            </p>
+            <div className="flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setPayoutToDelete(null)}
+                className="px-5 py-2.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-xl text-xs font-bold transition-all"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={confirmDeletePayout}
+                className="px-5 py-2.5 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-bold transition-all shadow-lg active:scale-95"
+              >
+                Yes, Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

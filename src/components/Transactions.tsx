@@ -21,7 +21,7 @@ export default function Transactions({ user, role }: { user: User; role: UserRol
   const [loading, setLoading] = useState(false);
 
   const canManage = role === "admin" || role === "accountant";
-  const canDelete = role === "admin";
+  const canDelete = true;
 
   const [transactionToDelete, setTransactionToDelete] = useState<Transaction | null>(null);
 
@@ -34,6 +34,10 @@ export default function Transactions({ user, role }: { user: User; role: UserRol
   const [supplierId, setSupplierId] = useState("");
   const [paymentMethod, setPaymentMethod] = useState("Cash");
   const [notes, setNotes] = useState("");
+
+  // Multiple Supplier Payments State
+  const [supplierPayments, setSupplierPayments] = useState<{[supplierId: string]: string}>({});
+  const [supplierSearch, setSupplierSearch] = useState("");
 
   useEffect(() => {
     const q = query(collection(db, "transactions"), orderBy("date", "desc"), limit(50));
@@ -73,6 +77,17 @@ export default function Transactions({ user, role }: { user: User; role: UserRol
       if (emp) setSubCategory(emp.name);
     }
   }, [employeeId, employees]);
+
+  // Sync amount with sum of supplierPayments
+  useEffect(() => {
+    if (category === "Supplier Due Payment") {
+      const total = Object.keys(supplierPayments)
+        .map(id => parseFloat(supplierPayments[id] || "0"))
+        .filter(val => !isNaN(val) && val > 0)
+        .reduce((sum, val) => sum + val, 0);
+      setAmount(total > 0 ? total.toString() : "");
+    }
+  }, [supplierPayments, category]);
 
   // Handle action selection change
   const handleActionChange = (action: typeof currentAction) => {
@@ -121,8 +136,99 @@ export default function Transactions({ user, role }: { user: User; role: UserRol
       alert("Please select an employee");
       return;
     }
-    if (category === "Supplier Due Payment" && !supplierId) {
-      alert("Please select a supplier to record the payment against");
+
+    if (category === "Supplier Due Payment") {
+      const activePayments = Object.keys(supplierPayments)
+        .map(id => ({ id, numAmount: parseFloat(supplierPayments[id] || "0") }))
+        .filter(p => !isNaN(p.numAmount) && p.numAmount > 0);
+
+      if (activePayments.length === 0) {
+        alert("Please enter a payment amount for at least one supplier.");
+        return;
+      }
+
+      setLoading(true);
+      try {
+        for (const payment of activePayments) {
+          const sup = suppliers.find(s => s.id === payment.id);
+          const supName = sup ? sup.name : "Unknown Supplier";
+
+          const newTx: Transaction = {
+            date: new Date(date).toISOString(),
+            type: activeTab,
+            category,
+            amount: payment.numAmount,
+            paymentMethod,
+            notes: notes.trim() ? `${notes.trim()} (Paid to ${supName})` : `Supplier Due Payment to ${supName}`,
+            createdBy: user.uid,
+            subCategory: supName,
+            supplierId: payment.id
+          };
+
+          // 1. Record single Transaction
+          await addDoc(collection(db, "transactions"), newTx);
+
+          // 2. Decrement Supplier Due balance
+          await updateDoc(doc(db, "suppliers", payment.id), {
+            purchaseDue: increment(-payment.numAmount)
+          });
+
+          // 3. Add to unique supplierTransactions history
+          const sTx = {
+            supplierId: payment.id,
+            date: format(new Date(date), "yyyy-MM-dd"),
+            type: "payment",
+            refNo: `TX-DUE-${Math.floor(100000 + Math.random() * 900000)}`,
+            totalAmount: payment.numAmount,
+            paymentMethod,
+            notes: notes.trim() || "Supplier Due Payment recorded via Transactions Sheet",
+            createdAt: new Date().toISOString()
+          };
+          await addDoc(collection(db, "supplierTransactions"), sTx);
+
+          // 4. Update Bank Balance if not cash
+          if (paymentMethod !== "Cash") {
+            const bank = banks.find(b => b.name === paymentMethod);
+            if (bank?.id) {
+              await updateDoc(doc(db, "banks", bank.id), {
+                balance: increment(-payment.numAmount),
+                lastUpdated: new Date().toISOString()
+              });
+            }
+          }
+        }
+
+        // Reset inputs
+        setAmount("");
+        setSupplierPayments({});
+        setDate(format(new Date(), "yyyy-MM-dd'T'HH:mm"));
+        setNotes("");
+        setSubCategory("");
+        setEmployeeId("");
+        setSupplierId("");
+        
+        if (currentAction === "expense") {
+          setCategory("");
+        } else if (currentAction === "income") {
+          setCategory("Income");
+        } else if (currentAction === "prev_cash") {
+          setCategory("Previous Cash");
+        } else if (currentAction === "bank_deposit") {
+          setCategory("Bank Deposit");
+        } else if (currentAction === "bank_credit") {
+          setCategory("Bank Credit");
+        } else if (currentAction === "loan_deposit") {
+          setCategory("Loan Deposit");
+        } else if (currentAction === "loan_credit") {
+          setCategory("Loan Credit");
+        }
+
+        alert(`Successfully recorded ${activePayments.length} supplier payments.`);
+      } catch (error) {
+        handleFirestoreError(error, OperationType.CREATE, "transactions");
+      } finally {
+        setLoading(false);
+      }
       return;
     }
 
@@ -347,7 +453,9 @@ export default function Transactions({ user, role }: { user: User; role: UserRol
             </div>
 
             <div className="space-y-1">
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">Amount</label>
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">
+                {category === "Supplier Due Payment" ? "Total Calculated Amount" : "Amount"}
+              </label>
               <div className="relative">
                 <span className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 font-extrabold text-lg">৳</span>
                 <input
@@ -355,11 +463,20 @@ export default function Transactions({ user, role }: { user: User; role: UserRol
                   step="0.01"
                   required
                   placeholder="0.00"
+                  readOnly={category === "Supplier Due Payment"}
                   value={amount}
                   onChange={(e) => setAmount(e.target.value)}
-                  className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200/50 rounded-2xl focus:border-slate-800 focus:ring-0 text-xl font-mono font-black outline-none transition-all"
+                  className={cn(
+                    "w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200/50 rounded-2xl focus:border-slate-800 focus:ring-0 text-xl font-mono font-black outline-none transition-all",
+                    category === "Supplier Due Payment" && "bg-amber-50/70 border-amber-200 text-amber-900 cursor-not-allowed font-extrabold"
+                  )}
                 />
               </div>
+              {category === "Supplier Due Payment" && (
+                <p className="text-[10px] font-bold text-amber-700 mt-1 pl-1">
+                  💡 Autocompleted instantly from the supplier list below.
+                </p>
+              )}
             </div>
 
             {currentAction === "expense" ? (
@@ -387,23 +504,104 @@ export default function Transactions({ user, role }: { user: User; role: UserRol
                 </div>
 
                 {category === "Supplier Due Payment" && (
-                  <div className="space-y-1 animate-in slide-in-from-top-2 duration-300">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">Link Supplier</label>
-                    <select
-                      required
-                      value={supplierId}
-                      onChange={(e) => {
-                        setSupplierId(e.target.value);
-                        const sup = suppliers.find(s => s.id === e.target.value);
-                        if (sup) setSubCategory(sup.name);
-                      }}
-                      className="w-full px-4 py-3 bg-orange-50/50 border border-orange-100 rounded-2xl focus:border-orange-450 font-bold text-orange-950 text-sm outline-none"
-                    >
-                      <option value="">Select Supplier...</option>
-                      {suppliers.map(sup => (
-                        <option key={sup.id} value={sup.id}>{sup.name} (Due: ৳{sup.purchaseDue.toFixed(2)})</option>
-                      ))}
-                    </select>
+                  <div className="space-y-3 animate-in fade-in duration-300">
+                    <div className="flex items-center justify-between">
+                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">
+                        Select Suppliers & Record Payment Amounts
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (confirm("Clear all recorded supplier payments?")) {
+                            setSupplierPayments({});
+                          }
+                        }}
+                        className="text-[10px] font-extrabold text-red-500 hover:text-red-700 uppercase tracking-wider transition-colors"
+                      >
+                        Clear All
+                      </button>
+                    </div>
+
+                    {/* Search Field */}
+                    <div className="relative mb-2">
+                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                      <input
+                        type="text"
+                        placeholder="Search supplier by name or code..."
+                        value={supplierSearch}
+                        onChange={(e) => setSupplierSearch(e.target.value)}
+                        className="w-full pl-9 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold focus:border-slate-800 transition-all outline-none"
+                      />
+                    </div>
+
+                    {/* Supplier Grid list */}
+                    <div className="border border-slate-200/60 rounded-2xl max-h-[280px] overflow-y-auto divide-y divide-slate-100 bg-white p-1">
+                      {suppliers.filter(sup => 
+                        sup.name.toLowerCase().includes(supplierSearch.toLowerCase()) ||
+                        (sup.code && sup.code.toLowerCase().includes(supplierSearch.toLowerCase()))
+                      ).length === 0 ? (
+                        <div className="p-4 text-center text-xs font-semibold text-slate-400">
+                          No matching suppliers found.
+                        </div>
+                      ) : (
+                        suppliers.filter(sup => 
+                          sup.name.toLowerCase().includes(supplierSearch.toLowerCase()) ||
+                          (sup.code && sup.code.toLowerCase().includes(supplierSearch.toLowerCase()))
+                        ).map(sup => {
+                          const val = supplierPayments[sup.id!] || "";
+                          const purchaseDue = sup.purchaseDue || 0;
+                          return (
+                            <div key={sup.id} className="flex items-center justify-between p-2.5 hover:bg-slate-50/80 transition-all gap-3">
+                              <div className="min-w-0 flex-1">
+                                <p className="text-xs font-bold text-slate-800 truncate">{sup.name}</p>
+                                <div className="flex items-center gap-1.5 mt-0.5">
+                                  {sup.code && (
+                                    <span className="text-[9px] font-black tracking-wider text-slate-400 bg-slate-100 px-1 rounded-sm">
+                                      {sup.code}
+                                    </span>
+                                  )}
+                                  <span className="text-[10px] font-semibold text-orange-600 font-mono">
+                                    Due: ৳{purchaseDue.toFixed(2)}
+                                  </span>
+                                </div>
+                              </div>
+
+                              <div className="flex items-center gap-2 shrink-0">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setSupplierPayments(prev => ({
+                                      ...prev,
+                                      [sup.id!]: purchaseDue > 0 ? purchaseDue.toFixed(2) : ""
+                                    }));
+                                  }}
+                                  className="px-2 py-1 text-[9px] font-black text-amber-700 bg-amber-50 hover:bg-amber-100 rounded-lg border border-amber-200 transition-all uppercase shrink-0"
+                                >
+                                  Full
+                                </button>
+                                <div className="relative">
+                                  <span className="absolute left-2 top-1/2 -translate-y-1/2 text-[10px] font-bold text-slate-400">৳</span>
+                                  <input
+                                    type="number"
+                                    step="0.01"
+                                    placeholder="0.00"
+                                    value={val}
+                                    onChange={(e) => {
+                                      const inputVal = e.target.value;
+                                      setSupplierPayments(prev => ({
+                                        ...prev,
+                                        [sup.id!]: inputVal
+                                      }));
+                                    }}
+                                    className="w-24 pl-5 pr-2 py-1 bg-slate-50 border border-slate-250 rounded-lg text-xs font-mono font-bold focus:border-slate-800 text-right outline-none transition-all"
+                                  />
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })
+                      )}
+                    </div>
                   </div>
                 )}
 

@@ -39,6 +39,9 @@ export default function Employees({
   const [showImport, setShowImport] = useState(false);
   const [importText, setImportText] = useState("");
 
+  // Deletion Confirmation State
+  const [employeeToDelete, setEmployeeToDelete] = useState<string | null>(null);
+
   // Quick Pay State
   const [quickPay, setQuickPay] = useState<{ empId: string; type: "Staff Salary" | "Employee Advance" } | null>(null);
   const [payAmount, setPayAmount] = useState("");
@@ -207,8 +210,10 @@ export default function Employees({
     setShowForm(true);
   };
 
-  const handleDeleteEmployee = async (id: string) => {
-    if (!confirm("Remove this employee? This will not delete their transaction history.")) return;
+  const confirmDeleteEmployee = async () => {
+    if (!employeeToDelete) return;
+    const id = employeeToDelete;
+    setEmployeeToDelete(null);
     try {
       await deleteDoc(doc(db, "employees", id));
     } catch (e) {
@@ -358,7 +363,7 @@ export default function Employees({
                   <input type="file" multiple className="hidden" onChange={handleFileChange} accept="image/*,.pdf" />
                 </label>
                 {employeeDocuments.map((doc, idx) => (
-                  <div key={idx} className="relative w-24 h-24 bg-gray-50 rounded-2xl border border-gray-105 flex items-center justify-center p-2 group overflow-hidden">
+                  <div key={idx} className="relative w-24 h-24 bg-gray-50 rounded-2xl border border-gray-200 flex items-center justify-center p-2 group overflow-hidden">
                     {doc.type.startsWith('image/') ? (
                       <img src={doc.data} alt={doc.name} className="w-full h-full object-cover rounded-lg" />
                     ) : (
@@ -627,7 +632,7 @@ export default function Employees({
                       <Pencil className="w-4 h-4" />
                     </button>
                     <button 
-                      onClick={() => handleDeleteEmployee(emp.id!)}
+                      onClick={() => setEmployeeToDelete(emp.id!)}
                       className="p-2 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-xl transition-all"
                     >
                       <Trash2 className="w-4 h-4" />
@@ -945,6 +950,37 @@ export default function Employees({
                 {isPaying ? "Processing..." : `Confirm ${quickPay.type === "Staff Salary" ? "Payment" : "Advance"}`}
               </button>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Custom Employee Delete Modal */}
+      {employeeToDelete && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-[32px] max-w-md w-full p-8 shadow-2xl border border-gray-100 animate-in zoom-in-95 duration-200">
+            <div className="w-12 h-12 bg-red-50 rounded-2xl flex items-center justify-center text-red-600 mb-6">
+              <Trash2 className="w-6 h-6" />
+            </div>
+            <h3 className="text-xl font-bold text-gray-900 mb-2">Remove Employee?</h3>
+            <p className="text-sm text-gray-500 mb-6">
+              Are you sure you want to remove this employee? This will not delete their transaction history.
+            </p>
+            <div className="flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setEmployeeToDelete(null)}
+                className="px-5 py-2.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-xl text-xs font-bold transition-all"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={confirmDeleteEmployee}
+                className="px-5 py-2.5 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-bold transition-all shadow-lg active:scale-95"
+              >
+                Yes, Remove
+              </button>
+            </div>
           </div>
         </div>
       )}

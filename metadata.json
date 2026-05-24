@@ -1,5 +1,5 @@
 {
-  "name": "ShopManager Pro",
+  "name": "ModernManager Pro",
   "description": "A modern accounting and inventory management system for retail and wholesale shops.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]

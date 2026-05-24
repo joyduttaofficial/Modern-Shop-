@@ -6,9 +6,10 @@ export function cn(...inputs: ClassValue[]) {
 }
 
 export function formatCurrency(amount: number) {
+  const value = typeof amount === "number" && !isNaN(amount) ? amount : 0;
   return new Intl.NumberFormat("en-BD", {
     style: "currency",
     currency: "BDT",
     minimumFractionDigits: 0,
-  }).format(amount);
+  }).format(value);
 }

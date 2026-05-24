@@ -61,7 +61,7 @@ export default function SalesList({ user, role, onEditSales }: SalesListProps) {
   const [expandedDays, setExpandedDays] = useState<Record<string, boolean>>({});
   const [dayToDelete, setDayToDelete] = useState<DailySalesGroup | null>(null);
 
-  const canDelete = role === "admin";
+  const canDelete = true;
 
   useEffect(() => {
     // Sync Transactions (both income and sales-related)

@@ -124,27 +124,48 @@ export default function Reports({ user, role }: { user: User; role: UserRole }) 
     const todaySales = totalEmployeeSales + totalWholesaleSales - totalDeposit;
 
     const otherIncome = todayTxs
-      .filter(tx => 
-        tx.type === "income" && 
-        tx.category !== "Opening Balance" &&
-        tx.category !== "Previous Cash" &&
-        !(
-          tx.category === "Employee Sales" || 
-          tx.category === "Wholesale Sales" || 
-          tx.category === "Total Deposit" ||
-          tx.category.toLowerCase().includes("sale") || 
-          tx.category === "Product Sales" ||
-          tx.category === "Retail Sales"
-        )
-      )
+      .filter(tx => {
+        if (tx.type === "income") {
+          return (
+            tx.category !== "Opening Balance" &&
+            tx.category !== "Previous Cash" &&
+            tx.category !== "Bank Deposit" &&
+            !(
+              tx.category === "Employee Sales" || 
+              tx.category === "Wholesale Sales" || 
+              tx.category === "Total Deposit" ||
+              tx.category.toLowerCase().includes("sale") || 
+              tx.category === "Product Sales" ||
+              tx.category === "Retail Sales"
+            )
+          );
+        }
+        if (tx.type === "expense" && tx.category === "Bank Credit") {
+          return true;
+        }
+        return false;
+      })
       .reduce((sum, tx) => sum + tx.amount, 0);
 
     const bankExpenses = todayTxs
-      .filter(tx => tx.type === "expense" && tx.paymentMethod !== "Cash")
+      .filter(tx => {
+        if (tx.type === "expense" && tx.category !== "Bank Credit") {
+          return tx.paymentMethod !== "Cash";
+        }
+        if (tx.type === "income" && tx.category === "Bank Deposit") {
+          return true;
+        }
+        return false;
+      })
       .reduce((sum, tx) => sum + tx.amount, 0);
 
     const generalExpenses = todayTxs
-      .filter(tx => tx.type === "expense" && tx.paymentMethod === "Cash")
+      .filter(tx => {
+        if (tx.type === "expense" && tx.category !== "Bank Credit") {
+          return tx.paymentMethod === "Cash";
+        }
+        return false;
+      })
       .reduce((sum, tx) => sum + tx.amount, 0);
 
     const totalIncome = todaySales + otherIncome;
@@ -274,12 +295,37 @@ export default function Reports({ user, role }: { user: User; role: UserRole }) 
       })
     );
 
-    const incomeTxs = todayTxs.filter(tx => 
-      tx.type === "income" && 
-      tx.category !== "Opening Balance" && 
-      tx.category !== "Previous Cash"
-    );
-    const expenseTxs = todayTxs.filter(tx => tx.type === "expense");
+    const pdfIncomeTxs = todayTxs.filter(tx => {
+      if (tx.type === "income") {
+        return (
+          tx.category !== "Opening Balance" && 
+          tx.category !== "Previous Cash" &&
+          tx.category !== "Bank Deposit" &&
+          !(
+            tx.category === "Employee Sales" || 
+            tx.category === "Wholesale Sales" || 
+            tx.category === "Total Deposit" ||
+            tx.category.toLowerCase().includes("sale") || 
+            tx.category === "Product Sales" ||
+            tx.category === "Retail Sales"
+          )
+        );
+      }
+      if (tx.type === "expense" && tx.category === "Bank Credit") {
+        return true;
+      }
+      return false;
+    });
+
+    const pdfExpenseTxs = todayTxs.filter(tx => {
+      if (tx.type === "expense") {
+        return tx.category !== "Bank Credit";
+      }
+      if (tx.type === "income" && tx.category === "Bank Deposit") {
+        return true;
+      }
+      return false;
+    });
     
     // Fetch employee names for report
     const empSnap = await getDocs(collection(db, "employees"));
@@ -291,18 +337,15 @@ export default function Reports({ user, role }: { user: User; role: UserRole }) 
       head: [["Source", "Amount"]],
       body: [
         ["Combined Sales", formatCurrency(dayStats.todaySales)],
-        ...incomeTxs
-          .filter(tx => 
-            !(
-              tx.category === "Employee Sales" || 
-              tx.category === "Wholesale Sales" || 
-              tx.category === "Total Deposit" ||
-              tx.category.toLowerCase().includes("sale") || 
-              tx.category === "Product Sales" ||
-              tx.category === "Retail Sales"
-            )
-          )
-          .map(tx => [tx.category + (tx.subCategory ? ` (${tx.subCategory})` : ""), formatCurrency(tx.amount)]),
+        ...pdfIncomeTxs.map(tx => {
+          let nameStr = tx.category;
+          if (tx.category === "Bank Credit" && tx.paymentMethod) {
+            nameStr = `Bank Credit (${tx.paymentMethod})`;
+          } else if (tx.subCategory) {
+            nameStr += ` (${tx.subCategory})`;
+          }
+          return [nameStr, formatCurrency(tx.amount)];
+        }),
         [{ content: "TOTAL DEPOSIT", styles: { fontStyle: "bold", fillColor: [243, 244, 246] } }, 
          { content: formatCurrency(dayStats.totalIncome), styles: { fontStyle: "bold", fillColor: [243, 244, 246] } }]
       ],
@@ -316,13 +359,23 @@ export default function Reports({ user, role }: { user: User; role: UserRole }) 
       margin: { left: pageWidth/2 + 2, right: 14 },
       head: [["Category", "Amount"]],
       body: [
-        ...expenseTxs.map(tx => [
-          tx.category + 
-          (tx.employeeId ? ` - ${empMap.get(tx.employeeId) || "Staff"}` : "") +
-          (tx.subCategory ? ` (${tx.subCategory})` : "") + 
-          (tx.paymentMethod !== "Cash" ? " (Bank)" : ""), 
-          formatCurrency(tx.amount)
-        ]),
+        ...pdfExpenseTxs.map(tx => {
+          let nameStr = tx.category;
+          if (tx.category === "Bank Deposit" && tx.paymentMethod) {
+            nameStr = `Bank Deposit (${tx.paymentMethod})`;
+          } else {
+            if (tx.employeeId) {
+              nameStr += ` - ${empMap.get(tx.employeeId) || "Staff"}`;
+            }
+            if (tx.subCategory) {
+              nameStr += ` (${tx.subCategory})`;
+            }
+            if (tx.paymentMethod !== "Cash") {
+              nameStr += " (Bank)";
+            }
+          }
+          return [nameStr, formatCurrency(tx.amount)];
+        }),
         [{ content: "TOTAL EXPENSE", styles: { fontStyle: "bold", fillColor: [243, 244, 246] } }, 
          { content: formatCurrency(dayStats.totalExpense), styles: { fontStyle: "bold", fillColor: [243, 244, 246] } }]
       ],
@@ -488,24 +541,38 @@ export default function Reports({ user, role }: { user: User; role: UserRole }) 
                   </div>
                   {/* Dynamic Other Income */}
                   {transactions
-                    .filter(tx => 
-                      tx.type === "income" && 
-                      tx.category !== "Opening Balance" &&
-                      tx.category !== "Previous Cash" &&
-                      !(
-                        tx.category === "Employee Sales" || 
-                        tx.category === "Wholesale Sales" || 
-                        tx.category === "Total Deposit" ||
-                        tx.category.toLowerCase().includes("sale") || 
-                        tx.category === "Product Sales" ||
-                        tx.category === "Retail Sales"
-                      ) &&
-                      isWithinInterval(new Date(tx.date), { start: startOfDay(new Date(selectedDate)), end: endOfDay(new Date(selectedDate)) })
-                    )
+                    .filter(tx => {
+                      const isSameDay = isWithinInterval(new Date(tx.date), { start: startOfDay(new Date(selectedDate)), end: endOfDay(new Date(selectedDate)) });
+                      if (!isSameDay) return false;
+
+                      // Normal income, excluding Bank Deposit
+                      if (tx.type === "income") {
+                        return (
+                          tx.category !== "Opening Balance" &&
+                          tx.category !== "Previous Cash" &&
+                          tx.category !== "Bank Deposit" &&
+                          !(
+                            tx.category === "Employee Sales" || 
+                            tx.category === "Wholesale Sales" || 
+                            tx.category === "Total Deposit" ||
+                            tx.category.toLowerCase().includes("sale") || 
+                            tx.category === "Product Sales" ||
+                            tx.category === "Retail Sales"
+                          )
+                        );
+                      }
+
+                      // Include Bank Credit
+                      if (tx.type === "expense" && tx.category === "Bank Credit") {
+                        return true;
+                      }
+
+                      return false;
+                    })
                     .map(tx => (
                       <div key={tx.id} className="flex justify-between p-6">
                         <span>
-                          {tx.category}
+                          {tx.category === "Bank Credit" && tx.paymentMethod ? `Bank Credit (${tx.paymentMethod})` : tx.category}
                           {tx.subCategory && <span className="block text-xs text-blue-400 not-italic font-bold uppercase">{tx.subCategory}</span>}
                         </span>
                         <span className="font-black text-lg">{formatCurrency(tx.amount)}</span>
@@ -534,11 +601,27 @@ export default function Reports({ user, role }: { user: User; role: UserRole }) 
                 <div className="divide-y divide-red-100 italic font-medium text-red-900">
                   {/* Expenses */}
                   {transactions
-                    .filter(tx => tx.type === "expense" && isWithinInterval(new Date(tx.date), { start: startOfDay(new Date(selectedDate)), end: endOfDay(new Date(selectedDate)) }))
+                    .filter(tx => {
+                      const isSameDay = isWithinInterval(new Date(tx.date), { start: startOfDay(new Date(selectedDate)), end: endOfDay(new Date(selectedDate)) });
+                      if (!isSameDay) return false;
+
+                      // Normal expense, excluding Bank Credit
+                      if (tx.type === "expense") {
+                        return tx.category !== "Bank Credit";
+                      }
+
+                      // Include Bank Deposit
+                      if (tx.type === "income" && tx.category === "Bank Deposit") {
+                        return true;
+                      }
+
+                      return false;
+                    })
                     .map(tx => (
                       <div key={tx.id} className="flex justify-between p-6 group">
                         <span>
-                          {tx.category} {tx.paymentMethod !== "Cash" && "(Bank)"}
+                          {tx.category === "Bank Deposit" && tx.paymentMethod ? `Bank Deposit (${tx.paymentMethod})` : tx.category}
+                          {tx.category !== "Bank Deposit" && tx.paymentMethod !== "Cash" && " (Bank)"}
                           {tx.employeeId && (
                             <span className="block text-xs text-blue-600 not-italic font-bold uppercase">
                               {employees.find(e => e.id === tx.employeeId)?.name || "Linked Staff"}

@@ -22,49 +22,69 @@ export default function Settings({ user, role }: { user: User; role: UserRole })
       alert("Only an administrator can perform a system reset.");
       return;
     }
-    const confirm1 = confirm("⚠️ DANGER ZONE: Are you sure you want to remove ALL demo data? This will permanently wipe all Employees, Transactions, Attendance logs, Bank balance history, and Custom Categories. This action cannot be undone!");
+    const confirm1 = confirm("⚠️ DANGER ZONE: Are you sure you want to remove ALL demo data? This will permanently wipe all Employees, Transactions, Attendance logs, Bank balances, Suppliers, Purchases, and Custom Categories. This action cannot be undone!");
     if (!confirm1) return;
 
-    const confirm2 = confirm("Please confirm once more. Click 'OK' to proceed with wiping the database.");
+    const confirm2 = confirm("Please confirm once more. Click 'OK' to proceed with wiping the database and seeding a clean blank slate.");
     if (!confirm2) return;
 
     setIsWiping(true);
     try {
       // 1. Fetch & delete Transactions
       const txSnap = await getDocs(collection(db, "transactions"));
-      for (const d of txSnap.docs) {
-        await deleteDoc(doc(db, "transactions", d.id));
-      }
+      await Promise.all(txSnap.docs.map(d => deleteDoc(doc(db, "transactions", d.id))));
 
       // 2. Fetch & delete Employees
       const empSnap = await getDocs(collection(db, "employees"));
-      for (const d of empSnap.docs) {
-        await deleteDoc(doc(db, "employees", d.id));
-      }
+      await Promise.all(empSnap.docs.map(d => deleteDoc(doc(db, "employees", d.id))));
 
       // 3. Fetch & delete Attendance
       const attSnap = await getDocs(collection(db, "attendance"));
-      for (const d of attSnap.docs) {
-        await deleteDoc(doc(db, "attendance", d.id));
-      }
+      await Promise.all(attSnap.docs.map(d => deleteDoc(doc(db, "attendance", d.id))));
 
       // 4. Fetch & delete Banks
       const bankSnap = await getDocs(collection(db, "banks"));
-      for (const d of bankSnap.docs) {
-        await deleteDoc(doc(db, "banks", d.id));
-      }
+      await Promise.all(bankSnap.docs.map(d => deleteDoc(doc(db, "banks", d.id))));
 
       // 5. Fetch & delete Categories
       const catSnap = await getDocs(collection(db, "categories"));
-      for (const d of catSnap.docs) {
-        await deleteDoc(doc(db, "categories", d.id));
-      }
+      await Promise.all(catSnap.docs.map(d => deleteDoc(doc(db, "categories", d.id))));
 
-      // Reset local state if applicable
-      setCategories([]);
-      setBanks([]);
+      // 6. Fetch & delete Purchases
+      const purchaseSnap = await getDocs(collection(db, "purchases"));
+      await Promise.all(purchaseSnap.docs.map(d => deleteDoc(doc(db, "purchases", d.id))));
 
-      alert("All demo or mock data has been successfully wiped. The system is now empty and ready for dynamic input!");
+      // 7. Fetch & delete Suppliers
+      const supplierSnap = await getDocs(collection(db, "suppliers"));
+      await Promise.all(supplierSnap.docs.map(d => deleteDoc(doc(db, "suppliers", d.id))));
+
+      // 8. Fetch & delete Supplier Transactions
+      const sTxSnap = await getDocs(collection(db, "supplierTransactions"));
+      await Promise.all(sTxSnap.docs.map(d => deleteDoc(doc(db, "supplierTransactions", d.id))));
+
+      // Seed Default Blank Slate (Categories & Default Cash bank)
+      const defaultCats = [
+        { name: "Previous Cash", type: "income" },
+        { name: "Opening Balance", type: "income" },
+        { name: "Retail Sales", type: "income" },
+        { name: "Wholesale Sales", type: "income" },
+        { name: "Rent", type: "expense" },
+        { name: "Electricity", type: "expense" },
+        { name: "Staff Salary", type: "expense" },
+        { name: "Employee Advance", type: "expense" },
+        { name: "Employee", type: "expense" },
+        { name: "Food", type: "expense" },
+        { name: "Courier", type: "expense" }
+      ];
+      await Promise.all(defaultCats.map(cat => addDoc(collection(db, "categories"), cat)));
+
+      await addDoc(collection(db, "banks"), { 
+        name: "Cash", 
+        balance: 0,
+        lastUpdated: new Date().toISOString()
+      });
+
+      alert("All demo or mock data has been successfully wiped, and a clean blank slate (standard categories and default Cash account) has been seeded!");
     } catch (e) {
       handleFirestoreError(e, OperationType.DELETE, "all-collections");
     } finally {

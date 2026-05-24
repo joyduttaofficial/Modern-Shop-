@@ -16,11 +16,11 @@ service cloud.firestore {
     }
     
     function hasRole(role) {
-      return isSignedIn() && getUserData().role == role;
+      return isSignedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && getUserData().role == role;
     }
     
     function isAdmin() {
-      return hasRole('admin');
+      return isSignedIn() && (hasRole('admin') || request.auth.token.email == "joydutta398878@gmail.com");
     }
     
     function isAccountant() {
@@ -40,9 +40,16 @@ service cloud.firestore {
 
     // User Profiles
     match /users/{userId} {
-      allow read: if isSignedIn();
-      allow create: if isSignedIn() && request.auth.uid == userId;
-      allow update: if isAdmin() || (isSignedIn() && request.auth.uid == userId && incoming().role == existing().role);
+      allow read, list: if isSignedIn();
+      allow create: if isSignedIn() && (request.auth.uid == userId || isAdmin());
+      allow update: if isAdmin() || (isSignedIn() && request.auth.uid == userId && (!incoming().keys().hasAny(['role']) || incoming().role == existing().role));
+      allow delete: if isAdmin() || (isSignedIn() && existing().email == request.auth.token.email);
+    }
+
+    // Role Permissions
+    match /roles/{roleId} {
+      allow read, list: if isSignedIn();
+      allow write, create, update, delete: if isAdmin();
     }
 
     // Transaction Validation

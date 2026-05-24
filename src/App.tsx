@@ -25,9 +25,9 @@ import {
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { auth, db } from "@/src/lib/firebase";
-import { onAuthStateChanged, signInWithPopup, GoogleAuthProvider, signOut, User as FirebaseUser } from "firebase/auth";
-import { doc, getDoc, setDoc, onSnapshot } from "firebase/firestore";
-import { UserProfile, UserRole } from "@/src/types";
+import { onAuthStateChanged, signOut, User as FirebaseUser } from "firebase/auth";
+import { doc, getDoc, setDoc, onSnapshot, collection, query, where, getDocs, deleteDoc } from "firebase/firestore";
+import { UserProfile, UserRole, RolePermission } from "@/src/types";
 
 // Components
 import Dashboard from "./components/Dashboard";
@@ -42,8 +42,10 @@ import NewSale from "./components/NewSale";
 import SalesList from "./components/SalesList";
 import Suppliers from "./components/Suppliers";
 import Purchase from "./components/Purchase";
+import UsersManager from "./components/UsersManager";
+import Login from "./components/Login";
 
-type View = "dashboard" | "transactions" | "newSale" | "salesList" | "newEmployee" | "employeesList" | "salaryEntry" | "salarySheet" | "addAttendance" | "attendanceList" | "attendance" | "reports" | "settings" | "newSupplier" | "suppliersList" | "suppliers" | "newPurchase" | "purchaseList";
+type View = "dashboard" | "transactions" | "newSale" | "salesList" | "newEmployee" | "employeesList" | "salaryEntry" | "salarySheet" | "addAttendance" | "attendanceList" | "attendance" | "reports" | "settings" | "newSupplier" | "suppliersList" | "suppliers" | "newPurchase" | "purchaseList" | "newUser" | "usersList" | "rolesList" | "profileView";
 
 export default function App() {
   const [activeView, setActiveView] = useState<View>("dashboard");
@@ -58,109 +60,164 @@ export default function App() {
   });
   const [user, setUser] = useState<FirebaseUser | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
+  const [customRoles, setCustomRoles] = useState<RolePermission[]>([]);
   const [loading, setLoading] = useState(true);
 
+  // Load custom roles
   useEffect(() => {
+    if (!user) {
+      setCustomRoles([]);
+      return;
+    }
+    const unsubRoles = onSnapshot(collection(db, "roles"), (snap) => {
+      const parsedRoles: RolePermission[] = [];
+      snap.forEach((doc) => {
+        parsedRoles.push({ id: doc.id, ...doc.data() } as RolePermission);
+      });
+      setCustomRoles(parsedRoles);
+    }, (err) => console.error("Roles fetch error", err));
+    return () => unsubRoles();
+  }, [user]);
+
+  useEffect(() => {
+    let unsubProfile: (() => void) | null = null;
+
     const unsubscribe = onAuthStateChanged(auth, async (u) => {
       setUser(u);
-      if (u) {
-        // Fetch or create profile
-        const profileRef = doc(db, "users", u.uid);
-        const profileSnap = await getDoc(profileRef);
-        
-        if (profileSnap.exists()) {
-          setProfile(profileSnap.data() as UserProfile);
-        } else {
-          // Check if first user (make them admin) or regular (make them sales)
-          // In a real app, you'd probably default to sales and have an out-of-band admin process
-          const newProfile: UserProfile = {
-            uid: u.uid,
-            email: u.email || "",
-            displayName: u.displayName || "New User",
-            role: "admin", // Defaulting first user to admin for demo purposes
-            createdAt: new Date().toISOString(),
-          };
-          await setDoc(profileRef, newProfile);
-          setProfile(newProfile);
-        }
+      
+      // Immediately unsubscribe from previous profile listener if any
+      if (unsubProfile) {
+        unsubProfile();
+        unsubProfile = null;
+      }
 
-        // Listen for profile changes (role updates)
-        const unsubProfile = onSnapshot(profileRef, (snap) => {
-          if (snap.exists()) setProfile(snap.data() as UserProfile);
-        }, (error) => console.error("Profile sync error", error));
-        setLoading(false);
-        return () => unsubProfile();
+      if (u) {
+        try {
+          // Fetch or create profile. First, check if there's an invited user with this email
+          const usersRef = collection(db, "users");
+          const q = query(usersRef, where("email", "==", u.email?.toLowerCase() || ""));
+          const querySnap = await getDocs(q);
+          
+          let profileData: UserProfile | null = null;
+          let profileId: string | null = null;
+
+          if (!querySnap.empty) {
+            const docSnap = querySnap.docs[0];
+            const oldDocId = docSnap.id;
+            profileData = docSnap.data() as UserProfile;
+            
+            if (oldDocId !== u.uid) {
+              // Document ID is different from u.uid. Copy the data to u.uid!
+              profileData.uid = u.uid;
+              await setDoc(doc(db, "users", u.uid), profileData);
+              
+              // Delete the legacy document
+              try {
+                await deleteDoc(doc(db, "users", oldDocId));
+              } catch (delErr) {
+                console.warn("Could not delete legacy invited record", delErr);
+              }
+              profileId = u.uid;
+            } else {
+              profileId = oldDocId;
+              if (!profileData.uid) {
+                profileData.uid = u.uid;
+                await setDoc(doc(db, "users", profileId), { uid: u.uid }, { merge: true });
+              }
+            }
+          } else {
+            // Fallback to check directly at uid path
+            const profileRef = doc(db, "users", u.uid);
+            const profileSnap = await getDoc(profileRef);
+            if (profileSnap.exists()) {
+              profileData = profileSnap.data() as UserProfile;
+              profileId = u.uid;
+            }
+          }
+
+          if (!profileData) {
+            // If no profile found at all, check if first user in system
+            const allUsersSnap = await getDocs(collection(db, "users"));
+            const isFirstUser = allUsersSnap.empty;
+
+            const newProfile: UserProfile = {
+              uid: u.uid,
+              email: u.email || "",
+              displayName: u.displayName || "New User",
+              role: isFirstUser ? "admin" : "sales", // First user is admin, otherwise sales
+              createdAt: new Date().toISOString(),
+              status: "active",
+              photoURL: u.photoURL || ""
+            };
+            
+            profileId = u.uid;
+            await setDoc(doc(db, "users", profileId), newProfile);
+            profileData = newProfile;
+          }
+
+          setProfile(profileData);
+
+          // Listen for profile changes (role updates)
+          if (profileId) {
+            const profileRef = doc(db, "users", profileId);
+            unsubProfile = onSnapshot(profileRef, (snap) => {
+              if (snap.exists()) setProfile(snap.data() as UserProfile);
+            }, (error) => {
+              // Only log if the user is still actively signed in
+              if (auth.currentUser) {
+                console.error("Profile sync error", error);
+              }
+            });
+          }
+        } catch (err) {
+          console.error("Error loading user profile:", err);
+        } finally {
+          setLoading(false);
+        }
       } else {
         setProfile(null);
         setLoading(false);
       }
     });
-    return () => unsubscribe();
-  }, []);
 
-  const handleLogin = async () => {
-    const provider = new GoogleAuthProvider();
-    try {
-      await signInWithPopup(auth, provider);
-    } catch (error) {
-      console.error("Login failed", error);
-    }
-  };
+    return () => {
+      unsubscribe();
+      if (unsubProfile) {
+        unsubProfile();
+      }
+    };
+  }, []);
 
   const handleLogout = () => signOut(auth);
 
   if (loading) {
     return (
       <div className="flex items-center justify-center h-screen bg-[#F5F5F4]">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
+        <div className="animate-spin rounded-full h-12 w-12 border-slate-900 border-b-2"></div>
       </div>
     );
   }
 
   if (!user || !profile) {
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100/50 flex flex-col items-center justify-center p-4">
-        <motion.div 
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="bg-white p-8 rounded-3xl border border-slate-200/60 shadow-2xl max-w-md w-full text-center relative overflow-hidden"
-        >
-          <div className="absolute top-0 left-0 right-0 h-1.5 bg-slate-900" />
-          <div className="w-20 h-20 bg-slate-900 rounded-2xl flex items-center justify-center mx-auto mb-6 shadow-xl shadow-slate-100">
-            <LayoutDashboard className="w-10 h-10 text-white" />
-          </div>
-          <h1 className="text-3xl font-black text-slate-900 mb-1 tracking-tight">Modern Shop</h1>
-          <p className="text-slate-500 font-medium text-sm mb-8">Ultimate Workspace for Sales, Accounts & Team</p>
-          <button
-            onClick={handleLogin}
-            className="w-full py-4 bg-slate-900 text-white rounded-2xl font-bold hover:bg-slate-800 active:scale-[0.98] transition-all flex items-center justify-center gap-3 shadow-lg shadow-slate-900/10 group cursor-pointer"
-          >
-            <UserIcon className="w-5 h-5 group-hover:scale-110 transition-transform text-slate-300" />
-            Sign in with Google
-          </button>
-        </motion.div>
-      </div>
-    );
+    return <Login />;
   }
 
   const navItems = [
-    { id: "dashboard", label: "Dashboard", icon: LayoutDashboard, roles: ["admin", "accountant", "sales"] },
+    { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
     { 
       id: "sales", 
       label: "Sales Hub", 
       icon: ShoppingCart, 
-      roles: ["admin", "accountant", "sales"],
       children: [
         { id: "newSale", label: "New Sale Entry" },
         { id: "salesList", label: "Sales List / Ledger" }
       ]
     },
-    { id: "transactions", label: "Transactions", icon: ReceiptIndianRupee, roles: ["admin", "accountant", "sales"] },
+    { id: "transactions", label: "Transactions", icon: ReceiptIndianRupee },
     { 
       id: "employees", 
       label: "Employees", 
       icon: Users, 
-      roles: ["admin", "accountant"],
       children: [
         { id: "newEmployee", label: "Add New Employee" },
         { id: "employeesList", label: "Registered Staff" },
@@ -172,7 +229,6 @@ export default function App() {
       id: "attendance", 
       label: "Attendance", 
       icon: ShieldCheck, 
-      roles: ["admin", "accountant"],
       children: [
         { id: "addAttendance", label: "Daily Input" },
         { id: "attendanceList", label: "Attendance Book" }
@@ -182,7 +238,6 @@ export default function App() {
       id: "suppliers", 
       label: "Suppliers", 
       icon: UserPlus, 
-      roles: ["admin", "accountant"],
       children: [
         { id: "newSupplier", label: "New Supplier Info" },
         { id: "suppliersList", label: "Suppliers Ledger" }
@@ -192,22 +247,72 @@ export default function App() {
       id: "purchases", 
       label: "Purchase Book", 
       icon: ShoppingCart, 
-      roles: ["admin", "accountant"],
       children: [
         { id: "newPurchase", label: "New Procurement" },
         { id: "purchaseList", label: "Bills & Purchase List" }
       ]
     },
-    { id: "reports", label: "Reports & PDFs", icon: FileText, roles: ["admin", "accountant"] },
-    { id: "settings", label: "Settings Pane", icon: SettingsIcon, roles: ["admin", "accountant"] },
+    { id: "reports", label: "Reports & PDFs", icon: FileText },
+    { 
+      id: "users", 
+      label: "Users", 
+      icon: Users, 
+      children: [
+        { id: "newUser", label: "New User" },
+        { id: "usersList", label: "Users List" },
+        { id: "rolesList", label: "Roles List" }
+      ]
+    },
+    { id: "settings", label: "Settings Pane", icon: SettingsIcon },
   ];
 
-  const filteredNavItems = navItems.filter(item => item.roles.includes(profile.role));
+  const hasAccessToView = (viewId: string) => {
+    if (!profile) return false;
+    
+    // Admins always have full, unrestricted access to all menus
+    if (profile.role === "admin") return true;
+
+    // Direct match check on user's assigned role from custom roles collection
+    const matchedRole = customRoles.find(r => r.id === profile.role);
+    if (matchedRole) {
+      return matchedRole.allowedMenus.includes(viewId);
+    }
+
+    // Default built-in fallback permissions if no custom roles are matched
+    if (profile.role === "accountant") {
+      const restrictedForAccountant = ["newUser", "usersList", "rolesList", "settings"];
+      return !restrictedForAccountant.includes(viewId);
+    }
+
+    if (profile.role === "sales") {
+      const allowedForSales = ["dashboard", "sales", "newSale", "salesList", "transactions", "profileView"];
+      return allowedForSales.includes(viewId);
+    }
+
+    return false;
+  };
+
+  const filteredNavItems = navItems.map(item => {
+    if ("children" in item && Array.isArray((item as any).children)) {
+      const allowedChildren = (item as any).children.filter((child: any) => hasAccessToView(child.id));
+      if (allowedChildren.length > 0) {
+        return {
+          ...item,
+          children: allowedChildren
+        };
+      }
+      return null;
+    }
+    if (hasAccessToView(item.id)) {
+      return item;
+    }
+    return null;
+  }).filter((item): item is NonNullable<typeof item> => item !== null);
 
   return (
     <div className="min-h-screen bg-slate-50/50 flex font-sans text-slate-800 antialiased selection:bg-slate-200">
       {/* Mobile Header */}
-      <div className="lg:hidden fixed top-0 left-0 right-0 h-16 bg-white/95 backdrop-blur border-b border-slate-100 z-50 flex items-center justify-between px-4">
+      <div className="lg:hidden fixed top-0 left-0 right-0 h-16 bg-white/95 backdrop-blur border-b border-slate-100 z-50 flex items-center justify-between px-4 print:hidden">
         <div className="flex items-center gap-2">
           <div className="w-8 h-8 bg-slate-900 rounded-lg flex items-center justify-center">
             <LayoutDashboard className="w-4 h-4 text-white" />
@@ -221,7 +326,7 @@ export default function App() {
 
       {/* Sidebar */}
       <aside className={cn(
-        "fixed inset-y-0 left-0 z-40 w-64 bg-white border-r border-slate-100 transform transition-transform duration-300 ease-in-out lg:translate-x-0 lg:static flex flex-col shadow-xl shadow-slate-100/40 lg:shadow-none",
+        "fixed inset-y-0 left-0 z-40 w-64 bg-white border-r border-slate-100 transform transition-transform duration-300 ease-in-out lg:translate-x-0 lg:static flex flex-col shadow-xl shadow-slate-100/40 lg:shadow-none print:hidden",
         isSidebarOpen ? "translate-x-0" : "-translate-x-full"
       )}>
         <div className="h-full flex flex-col p-5 overflow-y-auto [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:bg-slate-100 [&::-webkit-scrollbar-track]:transparent">
@@ -336,15 +441,31 @@ export default function App() {
               </div>
             </div>
             
-            <div className="flex items-center gap-3 px-1">
-              <div className="w-10 h-10 rounded-full bg-slate-100 overflow-hidden border border-slate-250/80 shrink-0">
-                <img src={user.photoURL || ""} alt={user.displayName || "User"} referrerPolicy="no-referrer" />
+            <button 
+              onClick={() => {
+                setActiveView("profileView");
+                if (window.innerWidth < 1024) setIsSidebarOpen(false);
+              }}
+              className="w-full flex items-center gap-3 px-2.5 py-2 px-1 rounded-2xl hover:bg-slate-50 border border-transparent hover:border-slate-150/50 transition-all text-left group cursor-pointer"
+              title="View my polished profile card"
+            >
+              <div className="w-10 h-10 rounded-xl bg-slate-100 overflow-hidden border border-slate-200 shrink-0 relative">
+                <img 
+                  src={profile.photoURL || user.photoURL || `https://api.dicebear.com/7.x/adventurer/svg?seed=${encodeURIComponent(profile.displayName || user.displayName || "avatar")}`} 
+                  alt={profile.displayName || user.displayName || "User"} 
+                  referrerPolicy="no-referrer" 
+                  className="w-full h-full object-cover transition-transform group-hover:scale-110 duration-200"
+                />
               </div>
               <div className="flex-1 overflow-hidden">
-                <p className="text-sm font-bold text-slate-900 truncate">{user.displayName}</p>
-                <p className="text-[11px] text-slate-400 truncate font-semibold font-mono">{user.email}</p>
+                <p className="text-xs font-black text-slate-900 truncate group-hover:text-indigo-700 transition-colors leading-snug">
+                  {profile.displayName || user.displayName}
+                </p>
+                <p className="text-[10px] text-slate-400 truncate font-semibold font-mono leading-none mt-0.5">
+                  {profile.email || user.email}
+                </p>
               </div>
-            </div>
+            </button>
 
             <button 
               onClick={handleLogout}
@@ -358,7 +479,7 @@ export default function App() {
       </aside>
 
       {/* Main Content */}
-      <main className="flex-1 h-screen overflow-y-auto p-4 lg:p-10 pt-20 lg:pt-10 bg-slate-50/30">
+      <main className="flex-1 h-screen overflow-y-auto p-4 lg:p-10 pt-20 lg:pt-10 bg-slate-50/30 print:p-0 print:bg-white print:h-auto print:overflow-visible">
         <div className="max-w-6xl mx-auto space-y-6">
           <AnimatePresence mode="wait">
             <motion.div
@@ -505,6 +626,19 @@ export default function App() {
               )}
               {activeView === "reports" && <Reports user={user} role={profile.role} />}
               {activeView === "settings" && <Settings user={user} role={profile.role} />}
+              {(activeView === "newUser" || activeView === "usersList" || activeView === "rolesList" || activeView === "profileView") && (
+                <UsersManager 
+                  user={user} 
+                  role={profile.role} 
+                  activeSubView={activeView as any}
+                  onSelectView={(v) => setActiveView(v as View)}
+                  onProfileUpdated={async () => {
+                    const pRef = doc(db, "users", user.uid);
+                    const snap = await getDoc(pRef);
+                    if (snap.exists()) setProfile(snap.data() as UserProfile);
+                  }}
+                />
+              )}
             </motion.div>
           </AnimatePresence>
         </div>

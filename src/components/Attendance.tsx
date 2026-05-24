@@ -771,15 +771,13 @@ export default function AttendancePage({
                             {record.notes || "-"}
                           </td>
                           <td className="px-6 py-4 text-right">
-                            {role === "admin" && (
-                              <button
-                                onClick={() => handleDeleteAttendanceLog(record.id!, targetEmp?.name || "staff", record.date)}
-                                className="p-2 hover:bg-red-50 text-gray-400 hover:text-red-600 rounded-xl transition-all border border-transparent hover:border-red-100 inline-flex items-center justify-center cursor-pointer"
-                                title="Delete Attendance Log"
-                              >
-                                <Trash2 className="w-4 h-4" />
-                              </button>
-                            )}
+                            <button
+                              onClick={() => handleDeleteAttendanceLog(record.id!, targetEmp?.name || "staff", record.date)}
+                              className="p-2 hover:bg-red-50 text-gray-400 hover:text-red-600 rounded-xl transition-all border border-transparent hover:border-red-100 inline-flex items-center justify-center cursor-pointer"
+                              title="Delete Attendance Log"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
                           </td>
                         </tr>
                       );

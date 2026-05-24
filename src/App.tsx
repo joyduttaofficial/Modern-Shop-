@@ -28,6 +28,7 @@ import { auth, db } from "@/src/lib/firebase";
 import { onAuthStateChanged, signOut, User as FirebaseUser } from "firebase/auth";
 import { doc, getDoc, setDoc, onSnapshot, collection, query, where, getDocs, deleteDoc } from "firebase/firestore";
 import { UserProfile, UserRole, RolePermission } from "@/src/types";
+import { useLanguage } from "./contexts/LanguageContext";
 
 // Components
 import Dashboard from "./components/Dashboard";
@@ -48,6 +49,7 @@ import Login from "./components/Login";
 type View = "dashboard" | "transactions" | "newSale" | "salesList" | "newEmployee" | "employeesList" | "salaryEntry" | "salarySheet" | "addAttendance" | "attendanceList" | "attendance" | "reports" | "settings" | "newSupplier" | "suppliersList" | "suppliers" | "newPurchase" | "purchaseList" | "newUser" | "usersList" | "rolesList" | "profileView";
 
 export default function App() {
+  const { language, setLanguage, t, formatDate } = useLanguage();
   const [activeView, setActiveView] = useState<View>("dashboard");
   const [salesEditDate, setSalesEditDate] = useState<string>("");
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
@@ -317,11 +319,33 @@ export default function App() {
           <div className="w-8 h-8 bg-slate-900 rounded-lg flex items-center justify-center">
             <LayoutDashboard className="w-4 h-4 text-white" />
           </div>
-          <span className="font-extrabold tracking-tight text-slate-900 text-base">Modern Shop</span>
+          <span className="font-extrabold tracking-tight text-slate-900 text-base">{t("Modern Shop")}</span>
         </div>
-        <button onClick={() => setIsSidebarOpen(!isSidebarOpen)} className="p-2 text-slate-700 hover:bg-slate-50 rounded-xl transition-colors">
-          {isSidebarOpen ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}
-        </button>
+        <div className="flex items-center gap-2">
+          <div className="bg-slate-50 p-0.5 rounded-lg border border-slate-150 flex items-center">
+            <button
+              onClick={() => setLanguage("en")}
+              className={cn(
+                "px-2 py-1 text-[10px] font-bold rounded-md transition-all",
+                language === "en" ? "bg-white text-slate-900 shadow-xs border border-slate-200/50" : "text-slate-500"
+              )}
+            >
+              EN
+            </button>
+            <button
+              onClick={() => setLanguage("bn")}
+              className={cn(
+                "px-2 py-1 text-[10px] font-bold rounded-md transition-all font-sans",
+                language === "bn" ? "bg-slate-900 text-white shadow-xs" : "text-slate-500"
+              )}
+            >
+              বাংলা
+            </button>
+          </div>
+          <button onClick={() => setIsSidebarOpen(!isSidebarOpen)} className="p-2 text-slate-700 hover:bg-slate-50 rounded-xl transition-colors">
+            {isSidebarOpen ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}
+          </button>
+        </div>
       </div>
 
       {/* Sidebar */}
@@ -336,8 +360,8 @@ export default function App() {
               <LayoutDashboard className="w-5.5 h-5.5 text-white" />
             </div>
             <div>
-              <span className="text-lg font-black tracking-tight text-slate-900 block leading-none">Modern Shop</span>
-              <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mt-0.5 block">Automated POS</span>
+              <span className="text-lg font-black tracking-tight text-slate-900 block leading-none">{t("Modern Shop")}</span>
+              <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mt-0.5 block">{t("Automated POS")}</span>
             </div>
           </div>
 
@@ -368,7 +392,7 @@ export default function App() {
                           "w-5 h-5 transition-transform group-hover:scale-105 duration-200",
                           isSelected ? "text-slate-950" : "text-slate-400 group-hover:text-slate-700"
                         )} />
-                        <span className="font-semibold text-sm">{item.label}</span>
+                        <span className="font-semibold text-sm">{t(item.label)}</span>
                       </div>
                       {isExpanded ? (
                         <ChevronDown className="w-4 h-4 text-slate-400 group-hover:text-slate-600 transition-colors" />
@@ -395,7 +419,7 @@ export default function App() {
                                   : "text-slate-400 hover:text-slate-800 hover:bg-slate-50"
                               )}
                             >
-                              {child.label}
+                              {t(child.label)}
                             </button>
                           );
                         })}
@@ -423,7 +447,7 @@ export default function App() {
                     "w-5 h-5 transition-transform group-hover:scale-105 duration-200",
                     activeView === item.id ? "text-white" : "text-slate-400 group-hover:text-slate-700"
                   )} />
-                  <span className="font-semibold text-sm">{item.label}</span>
+                  <span className="font-semibold text-sm">{t(item.label)}</span>
                 </button>
               );
             })}
@@ -436,8 +460,8 @@ export default function App() {
                 <ShieldCheck className="w-4 h-4 text-teal-400" />
               </div>
               <div>
-                <p className="text-[10px] font-black uppercase text-slate-400 tracking-wider">Access Badge</p>
-                <p className="text-xs font-black text-slate-850 uppercase tracking-widest">{profile.role}</p>
+                <p className="text-[10px] font-black uppercase text-slate-400 tracking-wider">{t("Access Badge")}</p>
+                <p className="text-xs font-black text-slate-850 uppercase tracking-widest">{t(profile.role)}</p>
               </div>
             </div>
             
@@ -472,7 +496,7 @@ export default function App() {
               className="w-full py-3 bg-red-50 hover:bg-red-155 hover:text-red-700 text-red-600 rounded-xl font-bold text-xs uppercase tracking-wider transition-all duration-200 flex items-center justify-center gap-2 cursor-pointer border border-transparent hover:border-red-100"
             >
               <LogOut className="w-4 h-4" />
-              Sign Out Securely
+              {t("Sign Out Securely")}
             </button>
           </div>
         </div>
@@ -481,6 +505,69 @@ export default function App() {
       {/* Main Content */}
       <main className="flex-1 h-screen overflow-y-auto p-4 lg:p-10 pt-20 lg:pt-10 bg-slate-50/30 print:p-0 print:bg-white print:h-auto print:overflow-visible">
         <div className="max-w-6xl mx-auto space-y-6">
+          {/* Global Header Bar */}
+          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-white p-4 sm:px-6 sm:py-4 rounded-2xl border border-slate-100 shadow-sm print:hidden">
+            <div>
+              <h1 className="text-lg font-extrabold text-slate-900 tracking-tight">
+                {t(activeView === "dashboard" ? "Dashboard" : 
+                   activeView === "transactions" ? "Transactions" :
+                   activeView === "newSale" ? "New Sale" :
+                   activeView === "salesList" ? "Sales Ledger" :
+                   activeView === "newEmployee" ? "New Employee" :
+                   activeView === "employeesList" ? "Employees List" :
+                   activeView === "employees" ? "Employees List" :
+                   activeView === "salaryEntry" ? "Salary Entry" :
+                   activeView === "salarySheet" ? "Salary Sheet" :
+                   activeView === "addAttendance" ? "Add Attendance" :
+                   activeView === "attendanceList" ? "Attendance List" :
+                   activeView === "attendance" ? "Add Attendance" :
+                   activeView === "newSupplier" ? "New Supplier" :
+                   activeView === "suppliersList" ? "Suppliers List" :
+                   activeView === "suppliers" ? "Suppliers List" :
+                   activeView === "newPurchase" ? "New Purchase" :
+                   activeView === "purchaseList" ? "Purchase List" :
+                   activeView === "reports" ? "Reports" :
+                   activeView === "settings" ? "Settings" : 
+                   activeView === "usersList" ? "Users List" :
+                   activeView === "rolesList" ? "Roles List" :
+                   activeView === "newUser" ? "Pre-Register User" :
+                   activeView === "profileView" ? "Profile View" : "Modern Shop")}
+              </h1>
+              <p className="text-[11px] text-slate-400 font-bold uppercase tracking-wider mt-0.5">
+                {formatDate(new Date())}
+              </p>
+            </div>
+            
+            <div className="flex items-center gap-3 self-stretch sm:self-auto justify-between sm:justify-end">
+              {/* Language Switcher Button */}
+              <div className="bg-slate-50 p-1 rounded-xl border border-slate-150 inline-flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => setLanguage("en")}
+                  className={cn(
+                    "px-3 py-1.5 text-xs font-bold rounded-lg transition-all cursor-pointer",
+                    language === "en" 
+                      ? "bg-white text-slate-900 shadow-xs border border-slate-200/50" 
+                      : "text-slate-500 hover:text-slate-900"
+                  )}
+                >
+                  English
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setLanguage("bn")}
+                  className={cn(
+                    "px-3 py-1.5 text-xs font-bold rounded-lg transition-all font-sans cursor-pointer",
+                    language === "bn" 
+                      ? "bg-slate-950 text-white shadow-xs" 
+                      : "text-slate-500 hover:text-slate-950"
+                  )}
+                >
+                  বাংলা
+                </button>
+              </div>
+            </div>
+          </div>
           <AnimatePresence mode="wait">
             <motion.div
               key={activeView}

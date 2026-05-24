@@ -2,6 +2,7 @@ import {StrictMode} from 'react';
 import {createRoot} from 'react-dom/client';
 import App from './App.tsx';
 import './index.css';
+import { LanguageProvider } from "./contexts/LanguageContext.tsx";
 
 // Safe confirm & alert fallbacks for sandboxed iframes
 const originalConfirm = window.confirm;
@@ -25,6 +26,8 @@ window.alert = function (message?: any): void {
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <App />
+    <LanguageProvider>
+      <App />
+    </LanguageProvider>
   </StrictMode>,
 );

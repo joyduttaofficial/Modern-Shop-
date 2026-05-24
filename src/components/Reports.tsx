@@ -7,6 +7,7 @@ import { formatCurrency, cn } from "@/src/lib/utils";
 import { format, startOfDay, endOfDay, subDays, isWithinInterval, isBefore, startOfMonth, endOfMonth, eachMonthOfInterval, startOfYear } from "date-fns";
 import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
+import { useLanguage } from "../contexts/LanguageContext";
 import { 
   FileText, 
   Download, 
@@ -26,6 +27,7 @@ import { motion } from "motion/react";
 type ReportTab = "daily" | "attendance" | "salary" | "transactions";
 
 export default function Reports({ user, role }: { user: User; role: UserRole }) {
+  const { language, t, formatCurrency, formatDate, formatNumber, translateValue } = useLanguage();
   const [activeTab, setActiveTab] = useState<ReportTab>("daily");
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [banks, setBanks] = useState<Bank[]>([]);
@@ -186,6 +188,7 @@ export default function Reports({ user, role }: { user: User; role: UserRole }) 
 
   const exportToCSV = (type: ReportTab) => {
     let csvContent = "";
+    const bom = "\uFEFF";
     let fileName = `report_${type}_${format(new Date(), "yyyyMMdd")}.csv`;
 
     if (type === "daily") {
@@ -195,32 +198,78 @@ export default function Reports({ user, role }: { user: User; role: UserRole }) 
         isWithinInterval(new Date(tx.date), { start, end })
       );
       
-      csvContent = "Date,Category,Sub-Category,Type,Payment Method,Amount,Notes\n";
-      rangeTxs.forEach(tx => {
-        csvContent += `${format(new Date(tx.date), "yyyy-MM-dd")},"${tx.category}","${tx.subCategory || ""}","${tx.type}","${tx.paymentMethod}",${tx.amount},"${tx.notes || ""}"\n`;
-      });
-      fileName = `daily_statement_${csvStartDate}_to_${csvEndDate}.csv`;
+      if (language === "bn") {
+        csvContent = bom + "তারিখ,ক্যাটাগরি,সাব-ক্যাটাগরি,প্রকার,লেনদেনের মাধ্যম,পরিমাণ,মন্তব্য\n";
+        rangeTxs.forEach(tx => {
+          csvContent += `"${formatDate(tx.date)}","${translateValue(tx.category)}","${tx.subCategory ? translateValue(tx.subCategory) : ""}","${translateValue(tx.type)}","${translateValue(tx.paymentMethod)}","${formatNumber(tx.amount)}","${tx.notes || ""}"\n`;
+        });
+        csvContent += `\nপ্রতিবেদন তৈরির সময়: "${formatDate(new Date())}"\n`;
+        fileName = `দৈনিক_বিবরণী_${csvStartDate}_থেকে_${csvEndDate}.csv`;
+      } else {
+        csvContent = "Date,Category,Sub-Category,Type,Payment Method,Amount,Notes\n";
+        rangeTxs.forEach(tx => {
+          csvContent += `${format(new Date(tx.date), "yyyy-MM-dd")},"${tx.category}","${tx.subCategory || ""}","${tx.type}","${tx.paymentMethod}",${tx.amount},"${tx.notes || ""}"\n`;
+        });
+        csvContent += `\nReport Generated on: "${format(new Date(), "yyyy-MM-dd HH:mm")}"\n`;
+        fileName = `daily_statement_${csvStartDate}_to_${csvEndDate}.csv`;
+      }
     } 
     else if (type === "attendance") {
-      csvContent = "Date,Employee,Role,Status,Check In,Lunch Out,Lunch In\n";
-      attendance.forEach(att => {
-        const emp = employees.find(e => e.id === att.employeeId);
-        csvContent += `${format(new Date(att.date), "yyyy-MM-dd")},"${emp?.name || "Unknown"}","${emp?.role || ""}","${att.status}","${att.checkIn || ""}","${att.lunchOut || ""}","${att.lunchIn || ""}"\n`;
-      });
+      if (language === "bn") {
+        csvContent = bom + "তারিখ,কর্মচারী,ভূমিকা,উপস্থিতি অবস্থা,প্রবেশ সময়,লাঞ্চ বিরতি প্রস্থান,লাঞ্চ বিরতি প্রবেশ\n";
+        attendance.forEach(att => {
+          const emp = employees.find(e => e.id === att.employeeId);
+          csvContent += `"${formatDate(att.date)}","${emp?.name || "অজানা"}","${emp?.role ? translateValue(emp.role) : ""}","${translateValue(att.status)}","${att.checkIn || ""}","${att.lunchOut || ""}","${att.lunchIn || ""}"\n`;
+        });
+        csvContent += `\nপ্রতিবেদন তৈরির সময়: "${formatDate(new Date())}"\n`;
+        fileName = `উপস্থিতি_বিবরণী_${format(new Date(), "yyyyMMdd")}.csv`;
+      } else {
+        csvContent = "Date,Employee,Role,Status,Check In,Lunch Out,Lunch In\n";
+        attendance.forEach(att => {
+          const emp = employees.find(e => e.id === att.employeeId);
+          csvContent += `${format(new Date(att.date), "yyyy-MM-dd")},"${emp?.name || "Unknown"}","${emp?.role || ""}","${att.status}","${att.checkIn || ""}","${att.lunchOut || ""}","${att.lunchIn || ""}"\n`;
+        });
+        csvContent += `\nReport Generated on: "${format(new Date(), "yyyy-MM-dd HH:mm")}"\n`;
+        fileName = `attendance_report_${format(new Date(), "yyyyMMdd")}.csv`;
+      }
     }
     else if (type === "salary") {
-      csvContent = "Date,Employee,Amount,Method,Notes\n";
-      const salaryTxs = transactions.filter(tx => tx.category === "Salary");
-      salaryTxs.forEach(tx => {
-        const emp = employees.find(e => e.id === tx.employeeId);
-        csvContent += `${format(new Date(tx.date), "yyyy-MM-dd")},"${emp?.name || "Unknown"}",${tx.amount},"${tx.paymentMethod}","${tx.notes || ""}"\n`;
-      });
+      if (language === "bn") {
+        csvContent = bom + "তারিখ,কর্মচারী,বেতন পরিমাণ,পেমেন্ট পদ্ধতি,মন্তব্য\n";
+        const salaryTxs = transactions.filter(tx => tx.category === "Salary");
+        salaryTxs.forEach(tx => {
+          const emp = employees.find(e => e.id === tx.employeeId);
+          csvContent += `"${formatDate(tx.date)}","${emp?.name || "অজানা"}","${formatNumber(tx.amount)}","${translateValue(tx.paymentMethod)}","${tx.notes || ""}"\n`;
+        });
+        csvContent += `\nপ্রতিবেদন তৈরির সময়: "${formatDate(new Date())}"\n`;
+        fileName = `বেতন_খতিয়ান_${format(new Date(), "yyyyMMdd")}.csv`;
+      } else {
+        csvContent = "Date,Employee,Amount,Method,Notes\n";
+        const salaryTxs = transactions.filter(tx => tx.category === "Salary");
+        salaryTxs.forEach(tx => {
+          const emp = employees.find(e => e.id === tx.employeeId);
+          csvContent += `${format(new Date(tx.date), "yyyy-MM-dd")},"${emp?.name || "Unknown"}",${tx.amount},"${tx.paymentMethod}","${tx.notes || ""}"\n`;
+        });
+        csvContent += `\nReport Generated on: "${format(new Date(), "yyyy-MM-dd HH:mm")}"\n`;
+        fileName = `salary_report_${format(new Date(), "yyyyMMdd")}.csv`;
+      }
     }
     else if (type === "transactions") {
-      csvContent = "Date,Category,Type,Payment Method,Amount,Reference\n";
-      transactions.forEach(tx => {
-        csvContent += `${format(new Date(tx.date), "yyyy-MM-dd")},"${tx.category}","${tx.type}","${tx.paymentMethod}",${tx.amount},"${tx.notes || ""}"\n`;
-      });
+      if (language === "bn") {
+        csvContent = bom + "তারিখ,ক্যাটাগরি,প্রকার,পেমেন্ট পদ্ধতি,পরিমাণ,রেফারেন্স মন্তব্য\n";
+        transactions.forEach(tx => {
+          csvContent += `"${formatDate(tx.date)}","${translateValue(tx.category)}","${translateValue(tx.type)}","${translateValue(tx.paymentMethod)}","${formatNumber(tx.amount)}","${tx.notes || ""}"\n`;
+        });
+        csvContent += `\nপ্রতিবেদন তৈরির সময়: "${formatDate(new Date())}"\n`;
+        fileName = `লেনদেন_খতিয়ান_${format(new Date(), "yyyyMMdd")}.csv`;
+      } else {
+        csvContent = "Date,Category,Type,Payment Method,Amount,Reference\n";
+        transactions.forEach(tx => {
+          csvContent += `${format(new Date(tx.date), "yyyy-MM-dd")},"${tx.category}","${tx.type}","${tx.paymentMethod}",${tx.amount},"${tx.notes || ""}"\n`;
+        });
+        csvContent += `\nReport Generated on: "${format(new Date(), "yyyy-MM-dd HH:mm")}"\n`;
+        fileName = `transactions_ledger_${format(new Date(), "yyyyMMdd")}.csv`;
+      }
     }
 
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
@@ -259,17 +308,17 @@ export default function Reports({ user, role }: { user: User; role: UserRole }) 
 
     doc.setFontSize(10);
     doc.setTextColor(0);
-    doc.text("Previous Cash:", 18, boxY + 7);
+    doc.text(language === "bn" ? "Previous Cash (পূর্বের ক্যাশ):" : "Previous Cash:", 18, boxY + 7);
     doc.text(formatCurrency(dayStats.openingBalance), pageWidth/2 - 5, boxY + 7, { align: "right" });
     
-    doc.text("Today's Total Sales:", 18, boxY + 17);
+    doc.text(language === "bn" ? "Today's Sales (আজকের বিক্রি):" : "Today's Total Sales:", 18, boxY + 17);
     doc.text(formatCurrency(dayStats.todaySales), pageWidth/2 - 5, boxY + 17, { align: "right" });
 
-    doc.text("Date:", pageWidth/2 + 5, boxY + 7);
-    doc.text(format(new Date(selectedDate), "dd/MM/yyyy"), pageWidth - 18, boxY + 7, { align: "right" });
+    doc.text(language === "bn" ? "Date (তারিখ):" : "Date:", pageWidth/2 + 5, boxY + 7);
+    doc.text(language === "bn" ? formatDate(new Date(selectedDate)) : format(new Date(selectedDate), "dd/MM/yyyy"), pageWidth - 18, boxY + 7, { align: "right" });
 
     doc.text("MCS || 2026", pageWidth/2 + 5, boxY + 17);
-    doc.text("Status: Verified", pageWidth - 18, boxY + 17, { align: "right" });
+    doc.text(language === "bn" ? "Status: Verified (যাচাইকৃত)" : "Status: Verified", pageWidth - 18, boxY + 17, { align: "right" });
 
     // COLUMNS HEADERS
     const colY = 55;
@@ -390,25 +439,54 @@ export default function Reports({ user, role }: { user: User; role: UserRole }) 
     doc.line(14, finalY, pageWidth - 14, finalY);
     
     doc.setTextColor(0);
-    doc.setFontSize(12);
-    doc.text(`Total Deposit: ${formatCurrency(dayStats.totalIncome)}`, 14, finalY + 10);
-    doc.text(`Total Expense: ${formatCurrency(dayStats.totalExpense)}`, pageWidth - 14, finalY + 10, { align: "right" });
+    doc.setFontSize(11);
+    doc.text(
+      language === "bn"
+        ? `মোট সংগৃহীত জমা (Total Deposit): ${formatCurrency(dayStats.totalIncome)}`
+        : `Total Deposit: ${formatCurrency(dayStats.totalIncome)}`,
+      14,
+      finalY + 10
+    );
+    doc.text(
+      language === "bn"
+        ? `মোট সাধারণ খরচ (Total Expense): ${formatCurrency(dayStats.totalExpense)}`
+        : `Total Expense: ${formatCurrency(dayStats.totalExpense)}`,
+      pageWidth - 14,
+      finalY + 10,
+      { align: "right" }
+    );
 
     doc.setFillColor(30, 58, 138);
     doc.rect(14, finalY + 15, pageWidth - 28, 10, "F");
     doc.setTextColor(255);
-    doc.setFontSize(14);
-    doc.text(`TOTAL CASH IN HAND: ${formatCurrency(dayStats.netCash)}`, pageWidth/2, finalY + 22, { align: "center" });
+    doc.setFontSize(13);
+    doc.text(
+      language === "bn"
+        ? `সর্বমোট ক্যাশ ব্যালেন্স (TOTAL CASH IN HAND): ${formatCurrency(dayStats.netCash)}`
+        : `TOTAL CASH IN HAND: ${formatCurrency(dayStats.netCash)}`,
+      pageWidth/2,
+      finalY + 22,
+      { align: "center" }
+    );
 
-    doc.save(`Shop_Daily_Report_${selectedDate}.pdf`);
+    // Print timestamp in local language
+    doc.setFontSize(8);
+    doc.setTextColor(120);
+    const downloadTimeStr = language === "bn" 
+      ? `ডাউনলোড সময় (Download Time): ${formatDate(new Date())}`
+      : `Download Time: ${format(new Date(), "yyyy-MM-dd HH:mm:ss")}`;
+    doc.text(downloadTimeStr, 14, finalY + 34);
+
+    const pdfFilename = language === "bn" ? `Daily_Report_${selectedDate}.pdf` : `Shop_Daily_Report_${selectedDate}.pdf`;
+    doc.save(pdfFilename);
   };
 
   return (
     <div className="space-y-8 animate-in fade-in duration-500">
       <header className="flex flex-col md:flex-row md:items-center justify-between gap-6">
         <div>
-          <h2 className="text-4xl font-black tracking-tighter mb-2">Business Intelligence</h2>
-          <p className="text-gray-500 font-medium italic">Deep dive into your shop's performance, attendance and finance history.</p>
+          <h2 className="text-4xl font-black tracking-tighter mb-2">{t("Business Intelligence")}</h2>
+          <p className="text-gray-500 font-medium italic">{t("Deep dive into your shop's performance, attendance and finance history.")}</p>
         </div>
         
         <div className="flex flex-col gap-4">
@@ -422,16 +500,17 @@ export default function Reports({ user, role }: { user: User; role: UserRole }) 
                   activeTab === tab ? "bg-gray-900 text-white shadow-xl scale-105" : "text-gray-400 hover:text-gray-900 hover:bg-gray-50"
                 )}
               >
-                {tab}
+                {t(tab)}
               </button>
             ))}
           </div>
           
           <button 
+            type="button"
             onClick={() => exportToCSV(activeTab)}
-            className="flex items-center justify-center gap-2 px-6 py-3 bg-blue-600 text-white rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-blue-700 transition-all shadow-lg active:scale-95"
+            className="flex items-center justify-center gap-2 px-6 py-3 bg-blue-600 text-white rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-blue-700 transition-all shadow-lg active:scale-95 cursor-pointer"
           >
-            <Download className="w-4 h-4" /> Export {activeTab} CSV
+            <Download className="w-4 h-4" /> {language === "bn" ? `${t(activeTab)} ${t("রপ্তানি করুন (CSV)")}` : `Export ${activeTab} CSV`}
           </button>
         </div>
       </header>

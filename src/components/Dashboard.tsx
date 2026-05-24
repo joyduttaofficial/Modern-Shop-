@@ -37,8 +37,10 @@ import {
   Cell 
 } from "recharts";
 import { format, subDays, startOfDay, endOfDay } from "date-fns";
+import { useLanguage } from "../contexts/LanguageContext";
 
 export default function Dashboard({ user, role }: { user: User; role: UserRole }) {
+  const { language, t, formatCurrency, formatDate, formatNumber, translateValue } = useLanguage();
   const [recentTransactions, setRecentTransactions] = useState<Transaction[]>([]);
   const [banks, setBanks] = useState<Bank[]>([]);
   const [stats, setStats] = useState({
@@ -382,9 +384,9 @@ export default function Dashboard({ user, role }: { user: User; role: UserRole }
   return (
     <div className="space-y-8 animate-in fade-in duration-200">
       <header className="flex flex-col gap-1.5 border-b border-slate-100 pb-5">
-        <h2 className="text-3xl font-black tracking-tight text-slate-900">Dashboard Overview</h2>
+        <h2 className="text-3xl font-black tracking-tight text-slate-900">{t("Dashboard Overview")}</h2>
         <p className="text-sm font-medium text-slate-500">
-          Welcome back, <strong className="text-slate-800">{user.displayName?.split(" ")[0]}</strong>. Here's your shop's real-time performance matrix.
+          {t("Welcome back,")} <strong className="text-slate-800">{user.displayName?.split(" ")[0]}</strong>. {t("Here's your shop's real-time performance matrix.")}
         </p>
       </header>
 
@@ -392,7 +394,7 @@ export default function Dashboard({ user, role }: { user: User; role: UserRole }
       <div className="space-y-4">
         <div className="flex items-center gap-2">
           <span className="w-1.5 h-6 bg-rose-600 rounded-full animate-pulse" />
-          <h3 className="text-base font-black text-slate-800 uppercase tracking-tight">Today's Shop Ledger Snapshot</h3>
+          <h3 className="text-base font-black text-slate-800 uppercase tracking-tight">{t("Today's Shop Ledger Snapshot")}</h3>
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
           <StatCard 
@@ -484,7 +486,7 @@ export default function Dashboard({ user, role }: { user: User; role: UserRole }
       <div className="space-y-4 pt-4">
         <div className="flex items-center gap-2">
           <span className="w-1.5 h-6 bg-indigo-600 rounded-full" />
-          <h3 className="text-base font-black text-slate-800 uppercase tracking-tight">Shop Lifetime Reserves & Aggregates</h3>
+          <h3 className="text-base font-black text-slate-800 uppercase tracking-tight">{t("Shop Lifetime Reserves & Aggregates")}</h3>
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
           <StatCard 
@@ -587,20 +589,20 @@ export default function Dashboard({ user, role }: { user: User; role: UserRole }
             <div>
               <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
                 <BarChart4 className="w-5 h-5 text-emerald-500" />
-                Total Sales, Purchase, & Expense Bar Chart
+                {t("Total Sales, Purchase, & Expense Bar Chart")}
               </h3>
-              <p className="text-xs font-semibold text-slate-400 mt-0.5">7-Day comparative grouped comparison</p>
+              <p className="text-xs font-semibold text-slate-400 mt-0.5">{t("7-Day comparative grouped comparison")}</p>
             </div>
             <div className="flex items-center gap-3 text-[10px] font-bold uppercase tracking-wider text-slate-400">
-              <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-500" /> Sales</span>
-              <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-amber-500" /> Purchase</span>
-              <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-red-500" /> Expense</span>
+              <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-500" /> {t("Sales")}</span>
+              <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-amber-500" /> {t("Purchase")}</span>
+              <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-red-500" /> {t("Expense")}</span>
             </div>
           </div>
           <div className="h-[300px] w-full min-w-0 relative">
             {!isMounted || sevenDaysBarChartData.length === 0 ? (
               <div className="flex items-center justify-center h-full bg-slate-50 rounded-2xl border border-dashed border-slate-200">
-                <p className="text-sm font-semibold text-slate-400">Loading chart analytics...</p>
+                <p className="text-sm font-semibold text-slate-400">{t("Loading chart analytics...")}</p>
               </div>
             ) : (
               <ResponsiveContainer width="100%" height={300}>
@@ -629,9 +631,9 @@ export default function Dashboard({ user, role }: { user: User; role: UserRole }
               <div>
                 <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
                   <Users className="w-5 h-5 text-indigo-500" />
-                  Staff Sales Performance Matrix
+                  {t("Staff Sales Performance Matrix")}
                 </h3>
-                <p className="text-xs font-semibold text-slate-400 mt-0.5">Track individual sales achievements</p>
+                <p className="text-xs font-semibold text-slate-400 mt-0.5">{t("Track individual sales achievements")}</p>
               </div>
               <div className="flex bg-slate-100 p-1 rounded-xl shrink-0">
                 <button
@@ -643,7 +645,7 @@ export default function Dashboard({ user, role }: { user: User; role: UserRole }
                       : "text-slate-500 hover:text-slate-800"
                   )}
                 >
-                  Today's Sales
+                  {t("Today's Sales")}
                 </button>
                 <button
                   onClick={() => setActiveEmpChart("total")}
@@ -654,7 +656,7 @@ export default function Dashboard({ user, role }: { user: User; role: UserRole }
                       : "text-slate-500 hover:text-slate-800"
                   )}
                 >
-                  All-Time Top
+                  {t("All-Time Top")}
                 </button>
               </div>
             </div>
@@ -711,25 +713,25 @@ export default function Dashboard({ user, role }: { user: User; role: UserRole }
             <div>
               <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
                 <TrendingUp className="w-5 h-5 text-indigo-500" />
-                Cash Inflow vs Outflow (Trend)
+                {t("Cash Inflow vs Outflow (Trend)")}
               </h3>
-              <p className="text-xs font-semibold text-slate-400 mt-0.5">7-Day ledger inflows and outflows timeline</p>
+              <p className="text-xs font-semibold text-slate-400 mt-0.5">{t("7-Day ledger inflows and outflows timeline")}</p>
             </div>
             <div className="flex items-center gap-4 text-xs font-bold uppercase tracking-wider text-slate-400">
               <div className="flex items-center gap-1.5">
                 <div className="w-2.5 h-2.5 rounded-full bg-indigo-500" />
-                <span className="text-slate-600">Inflow</span>
+                <span className="text-slate-600">{t("Inflow")}</span>
               </div>
               <div className="flex items-center gap-1.5">
                 <div className="w-2.5 h-2.5 rounded-full bg-rose-400" />
-                <span className="text-slate-600">Outflow</span>
+                <span className="text-slate-600">{t("Outflow")}</span>
               </div>
             </div>
           </div>
           <div className="h-[285px] w-full min-w-0 relative">
             {!isMounted ? (
               <div className="flex items-center justify-center h-full bg-slate-50 rounded-2xl border border-dashed border-slate-200">
-                <p className="text-sm font-semibold text-slate-400">Loading trend analytics...</p>
+                <p className="text-sm font-semibold text-slate-400">{t("Loading trend analytics...")}</p>
               </div>
             ) : (
               <ResponsiveContainer width="100%" height={285}>
@@ -760,19 +762,19 @@ export default function Dashboard({ user, role }: { user: User; role: UserRole }
           <div>
             <h3 className="text-base font-bold text-slate-900 mb-6 flex items-center gap-2">
               <Landmark className="w-5 h-5 text-indigo-500" />
-              Bank Accounts
+              {t("Bank Accounts")}
             </h3>
             <div className="space-y-3 max-h-[260px] overflow-y-auto pr-1">
               {banks.length === 0 && (
                 <div className="text-center py-8 bg-slate-50 rounded-2xl border border-dashed border-slate-200">
-                  <p className="text-xs font-semibold text-slate-400">No bank accounts registered.</p>
+                  <p className="text-xs font-semibold text-slate-400">{t("No bank accounts registered.")}</p>
                 </div>
               )}
               {banks.map((bank) => (
                 <div key={bank.id} className="flex items-center justify-between p-3.5 bg-slate-50 hover:bg-slate-100/80 rounded-2xl group transition-all border border-slate-100/60 hover:border-slate-200">
                   <div>
                     <p className="font-bold text-slate-800 text-sm group-hover:text-slate-950 transition-colors">{bank.name}</p>
-                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Sync {format(new Date(bank.lastUpdated), "MMM dd")}</p>
+                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">{t("Sync")} {language === "bn" ? formatDate(bank.lastUpdated) : format(new Date(bank.lastUpdated), "MMM dd")}</p>
                   </div>
                   <p className="text-base font-mono font-black text-slate-900 bg-white px-3 py-1.5 rounded-xl border border-slate-250/50 shadow-sm">{formatCurrency(bank.balance)}</p>
                 </div>
@@ -787,37 +789,37 @@ export default function Dashboard({ user, role }: { user: User; role: UserRole }
         <div className="p-6 border-b border-slate-100 flex items-center justify-between">
           <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
             <Clock className="w-5 h-5 text-indigo-500" />
-            Recent Logbook Transactions
+            {t("Recent Logbook Transactions")}
           </h3>
           <span className="text-xs font-bold text-slate-400 bg-slate-50 px-3 py-1.5 rounded-xl border border-slate-200/50 uppercase tracking-widest">
-            Latest 6 entries
+            {language === "bn" ? t("Latest 6 entries") : "Latest 6 entries"}
           </span>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-left">
             <thead className="bg-slate-50/70 border-b border-slate-100 text-slate-400 text-[10px] font-black uppercase tracking-wider">
               <tr>
-                <th className="px-6 py-4">Timestamp</th>
-                <th className="px-6 py-4">Account/Category</th>
-                <th className="px-6 py-4">Gateway</th>
-                <th className="px-6 py-4 text-right">Magnitude</th>
+                <th className="px-6 py-4">{t("Timestamp")}</th>
+                <th className="px-6 py-4">{t("Account/Category")}</th>
+                <th className="px-6 py-4">{t("Gateway")}</th>
+                <th className="px-6 py-4 text-right">{t("Magnitude")}</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-50">
               {recentTransactions.map((tx) => (
                 <tr key={tx.id} className="hover:bg-slate-50/50 transition-colors cursor-default group">
                   <td className="px-6 py-4 text-xs font-semibold text-slate-400 whitespace-nowrap">
-                    {format(new Date(tx.date), "MMM dd, yyyy HH:mm")}
+                    {language === "bn" ? formatDate(tx.date) : format(new Date(tx.date), "MMM dd, yyyy HH:mm")}
                   </td>
                   <td className="px-6 py-4">
                     <div className="flex flex-col">
-                      <span className="text-sm font-bold text-slate-900">{tx.category}</span>
+                      <span className="text-sm font-bold text-slate-900">{t(tx.category)}</span>
                       {tx.notes && <span className="text-xs text-slate-400 font-medium line-clamp-1">{tx.notes}</span>}
                     </div>
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">
                     <span className="text-[10px] px-2.5 py-1 bg-slate-100 text-slate-600 rounded-lg font-black uppercase tracking-wider border border-slate-200/20">
-                      {tx.paymentMethod}
+                      {t(tx.paymentMethod)}
                     </span>
                   </td>
                   <td className={cn(
@@ -840,6 +842,7 @@ export default function Dashboard({ user, role }: { user: User; role: UserRole }
 }
 
 function StatCard({ title, value, icon: Icon, color, description, scope = "Global", isCount = false }: any) {
+  const { language, t, formatCurrency, formatNumber } = useLanguage();
   const colorMap: any = {
     emerald: {
       bg: "bg-emerald-50 text-emerald-600 border-emerald-100/55",
@@ -900,18 +903,18 @@ function StatCard({ title, value, icon: Icon, color, description, scope = "Globa
           scope === "Total" ? "bg-indigo-55 text-indigo-600 border-indigo-105" :
           "bg-slate-50 text-slate-500 border-slate-100"
         )}>
-          {scope}
+          {t(scope)}
         </span>
       </div>
       <div>
-        <p className="text-[10.5px] font-bold text-slate-400 uppercase tracking-wider mb-1 truncate" title={title}>{title}</p>
+        <p className="text-[10.5px] font-bold text-slate-400 uppercase tracking-wider mb-1 truncate" title={t(title)}>{t(title)}</p>
         <p className="text-xl font-black text-slate-900 tracking-tight font-mono">
-          {isCount ? value : formatCurrency(value)}
+          {isCount ? formatNumber(value) : formatCurrency(value)}
         </p>
       </div>
-      <p className="text-[9px] font-bold text-slate-400 mt-2 flex items-center gap-1 border-t border-slate-50 pt-2 truncate" title={description}>
+      <p className="text-[9px] font-bold text-slate-400 mt-2 flex items-center gap-1 border-t border-slate-50 pt-2 truncate" title={t(description)}>
         <span className="w-1.5 h-1.5 rounded-full bg-slate-300 animate-pulse shrink-0" />
-        {description}
+        {t(description)}
       </p>
     </div>
   );

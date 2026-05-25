@@ -65,9 +65,12 @@ export default function AttendancePage({
   const [searchQuery, setSearchQuery] = useState("");
   const [isSaving, setIsSaving] = useState(false);
   const [lateThreshold, setLateThreshold] = useState("10:00");
+  const [lunchDurationLimit, setLunchDurationLimit] = useState(60);
+  const [halfDayThreshold, setHalfDayThreshold] = useState("11:30");
+  const [attendanceToDelete, setAttendanceToDelete] = useState<{ id: string; empName: string; prettyDate: string } | null>(null);
   
   // List view specific states
-  const [listTab, setListTab] = useState<"matrix" | "logs">("matrix");
+  const [listTab, setListTab] = useState<"matrix" | "logs" | "lunch">("matrix");
   const [selectedMonth, setSelectedMonth] = useState<string>(format(new Date(), "yyyy-MM")); // e.g. "2026-05"
 
   useEffect(() => {
@@ -87,7 +90,12 @@ export default function AttendancePage({
     }, (error) => handleFirestoreError(error, OperationType.LIST, "employees"));
 
     const unsubSettings = onSnapshot(doc(db, "settings", "attendance"), (doc) => {
-      if (doc.exists()) setLateThreshold(doc.data().lateThreshold || "10:00");
+      if (doc.exists()) {
+        const data = doc.data();
+        setLateThreshold(data.lateThreshold || "10:00");
+        setLunchDurationLimit(data.lunchDurationLimit ?? 60);
+        setHalfDayThreshold(data.halfDayThreshold || "11:30");
+      }
     }, (error) => handleFirestoreError(error, OperationType.LIST, "settings"));
 
     // Fetch attendance for the selected date's / month's range
@@ -122,15 +130,38 @@ export default function AttendancePage({
     return time > lateThreshold;
   };
 
+  const getLunchDurationMinutes = (lunchOut?: string, lunchIn?: string): number => {
+    if (!lunchOut || !lunchIn) return 0;
+    try {
+      const [outH, outM] = lunchOut.split(":").map(Number);
+      const [inH, inM] = lunchIn.split(":").map(Number);
+      if (isNaN(outH) || isNaN(outM) || isNaN(inH) || isNaN(inM)) return 0;
+      return (inH * 60 + inM) - (outH * 60 + outM);
+    } catch {
+      return 0;
+    }
+  };
+
+  const computeStatus = (checkInTime: string, desiredStatus: AttendanceStatus): AttendanceStatus => {
+    if (desiredStatus !== "present" && desiredStatus !== "late" && desiredStatus !== "half-day") {
+      return desiredStatus;
+    }
+    if (!checkInTime) return "present";
+    if (checkInTime > halfDayThreshold) {
+      return "half-day";
+    }
+    if (checkInTime > lateThreshold) {
+      return "late";
+    }
+    return "present";
+  };
+
   const handleStatusChange = async (empId: string, status: AttendanceStatus) => {
     const existing = getAttendanceForDay(empId, selectedDate);
     const dateStr = selectedDate.toISOString();
     
-    let finalStatus = status;
     const currentIn = existing?.checkIn || "09:00";
-    if (finalStatus === "present" && isLate(currentIn)) {
-      finalStatus = "late";
-    }
+    const finalStatus = computeStatus(currentIn, status);
 
     try {
       if (existing) {
@@ -138,11 +169,18 @@ export default function AttendancePage({
           await updateDoc(doc(db, "attendance", existing.id), { status: finalStatus });
         }
       } else {
+        let defaultIn = "09:00";
+        if (finalStatus === "half-day") {
+          defaultIn = "12:00";
+        } else if (finalStatus === "late") {
+          defaultIn = "10:15";
+        }
+
         await addDoc(collection(db, "attendance"), {
           employeeId: empId,
           date: dateStr,
           status: finalStatus,
-          checkIn: finalStatus === "late" ? "10:30" : "09:00",
+          checkIn: defaultIn,
           lunchOut: "13:00",
           lunchIn: "14:00",
           notes: ""
@@ -158,17 +196,22 @@ export default function AttendancePage({
     try {
       for (const emp of employees) {
         const existing = getAttendanceForDay(emp.id!, selectedDate);
-        let finalStatus = status;
-        if (finalStatus === "present" && isLate(existing?.checkIn || "09:00")) {
-          finalStatus = "late";
-        }
+        const currentIn = existing?.checkIn || "09:00";
+        const finalStatus = computeStatus(currentIn, status);
 
         if (!existing) {
+          let defaultIn = "09:00";
+          if (finalStatus === "half-day") {
+            defaultIn = "12:00";
+          } else if (finalStatus === "late") {
+            defaultIn = "10:15";
+          }
+
           await addDoc(collection(db, "attendance"), {
             employeeId: emp.id!,
             date: selectedDate.toISOString(),
             status: finalStatus,
-            checkIn: finalStatus === "late" ? "10:30" : "09:00",
+            checkIn: defaultIn,
             lunchOut: "13:00",
             lunchIn: "14:00",
             notes: ""
@@ -184,12 +227,26 @@ export default function AttendancePage({
     }
   };
 
-  // Helper to remove an attendance entry
-  const handleDeleteAttendanceLog = async (id: string, empName: string, dateStr: string) => {
+  // Helper to remove an attendance entry by staging in modal trigger
+  const handleDeleteAttendanceLog = (id: string, empName: string, dateStr: string) => {
     if (!id) return;
-    const prettyDate = format(parseISO(dateStr), "dd MMMM yyyy");
-    if (!confirm(`Are you sure you want to delete the attendance log for ${empName} on ${prettyDate}?`)) return;
+    let prettyDate = dateStr;
+    try {
+      prettyDate = format(parseISO(dateStr), "dd MMMM yyyy");
+    } catch {
+      try {
+        prettyDate = format(new Date(dateStr), "dd MMMM yyyy");
+      } catch {
+        prettyDate = dateStr;
+      }
+    }
+    setAttendanceToDelete({ id, empName, prettyDate });
+  };
 
+  const executeDeleteAttendance = async () => {
+    if (!attendanceToDelete) return;
+    const { id } = attendanceToDelete;
+    setAttendanceToDelete(null);
     try {
       await deleteDoc(doc(db, "attendance", id));
     } catch (e) {
@@ -219,19 +276,22 @@ export default function AttendancePage({
     end: endOfMonth(listMonthDate)
   });
 
+  // Filter out any entries that don't belong to active employees (remove test or orphan data logs)
+  const validAttendance = attendance.filter(a => employees.some(e => e.id === a.employeeId));
+
   // Calculate detailed dashboard stats for the selected list month
   const totalSlotsPossible = employees.length * daysInMonth.length;
-  const presentCount = attendance.filter(a => a.status === "present" || a.status === "late" || a.status === "half-day").length;
-  const lateCount = attendance.filter(a => a.status === "late").length;
-  const absentCount = attendance.filter(a => a.status === "absent").length;
-  const leaveCount = attendance.filter(a => a.status === "leave").length;
-  const holidayCount = attendance.filter(a => a.status === "holiday").length;
+  const presentCount = validAttendance.filter(a => a.status === "present" || a.status === "late" || a.status === "half-day").length;
+  const lateCount = validAttendance.filter(a => a.status === "late").length;
+  const absentCount = validAttendance.filter(a => a.status === "absent").length;
+  const leaveCount = validAttendance.filter(a => a.status === "leave").length;
+  const holidayCount = validAttendance.filter(a => a.status === "holiday").length;
   const occupancyRate = totalSlotsPossible > 0 ? Math.round((presentCount / totalSlotsPossible) * 100) : 0;
 
   const downloadCSV = () => {
     const headers = ["Employee", "Role", "Department", ...daysInMonth.map(d => format(d, "yyyy-MM-dd")), "Present Days", "Percentage"];
     const rows = employees.map(emp => {
-      const empRecords = attendance.filter(a => a.employeeId === emp.id);
+      const empRecords = validAttendance.filter(a => a.employeeId === emp.id);
       const daysPaid = empRecords.filter(r => r.status === "present" || r.status === "late" || r.status === "half-day").length;
       const rate = daysInMonth.length > 0 ? Math.round((daysPaid / daysInMonth.length) * 100) : 0;
       return [
@@ -402,6 +462,17 @@ export default function AttendancePage({
                               <cfg.icon className="w-4 h-4" />
                             </button>
                           ))}
+
+                          {/* Action Button to clear and delete any daily attendance log */}
+                          {record && (
+                            <button
+                              onClick={() => handleDeleteAttendanceLog(record.id!, emp.name, record.date)}
+                              title="Delete/Clear today's attendance log"
+                              className="p-2 bg-white text-gray-400 hover:text-red-600 hover:bg-red-50 border border-gray-100 hover:border-red-100 rounded-xl transition-all hover:scale-105 active:scale-95 cursor-pointer shrink-0 ml-1.5 flex items-center justify-center"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          )}
                         </div>
                       </td>
 
@@ -417,8 +488,8 @@ export default function AttendancePage({
                                 if (record?.id) {
                                   const newInTime = e.target.value;
                                   const updates: any = { checkIn: newInTime };
-                                  if (record.status === "present" || record.status === "late") {
-                                    updates.status = isLate(newInTime) ? "late" : "present";
+                                  if (record.status === "present" || record.status === "late" || record.status === "half-day") {
+                                    updates.status = computeStatus(newInTime, "present");
                                   }
                                   await updateDoc(doc(db, "attendance", record.id), updates);
                                 }
@@ -583,16 +654,14 @@ export default function AttendancePage({
             <span className="text-[8px] text-purple-600 font-bold">{leaveCount} leaves, {holidayCount} holidays</span>
           </div>
         </div>
-      </div>
-
-      {/* Main Tab selectors for Ledger Lists */}
+      </div>      {/* Main Tab selectors for Ledger Lists */}
       <div className="bg-white rounded-[32px] border border-gray-100 p-6 shadow-xs space-y-6">
-        <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-4 border-b border-gray-150 pb-4">
-          <div className="flex bg-gray-50 p-1 rounded-xl">
+        <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-4 border-b border-gray-150 pb-4 flex-wrap">
+          <div className="flex bg-gray-50 p-1 rounded-xl flex-wrap gap-1">
             <button 
               onClick={() => setListTab("matrix")}
               className={cn(
-                "px-5 py-2 rounded-lg text-xs font-bold tracking-tight transition-all cursor-pointer",
+                "px-4 py-2 rounded-lg text-xs font-bold tracking-tight transition-all cursor-pointer",
                 listTab === "matrix" ? "bg-white text-gray-950 shadow-xs" : "text-gray-500 hover:text-gray-950"
               )}
             >
@@ -601,11 +670,20 @@ export default function AttendancePage({
             <button 
               onClick={() => setListTab("logs")}
               className={cn(
-                "px-5 py-2 rounded-lg text-xs font-bold tracking-tight transition-all cursor-pointer",
+                "px-4 py-2 rounded-lg text-xs font-bold tracking-tight transition-all cursor-pointer",
                 listTab === "logs" ? "bg-white text-gray-950 shadow-xs" : "text-gray-500 hover:text-gray-950"
               )}
             >
-              Log History Ledger ({attendance.length} record{attendance.length === 1 ? "" : "s"})
+              Log History Ledger ({validAttendance.length})
+            </button>
+            <button 
+              onClick={() => setListTab("lunch")}
+              className={cn(
+                "px-4 py-2 rounded-lg text-xs font-bold tracking-tight transition-all cursor-pointer",
+                listTab === "lunch" ? "bg-white text-slate-950 shadow-xs" : "text-gray-500 hover:text-slate-950"
+              )}
+            >
+              Lunch Overtime Report ({validAttendance.filter(r => getLunchDurationMinutes(r.lunchOut, r.lunchIn) > lunchDurationLimit).length} breaches)
             </button>
           </div>
 
@@ -657,7 +735,7 @@ export default function AttendancePage({
                     </tr>
                   ) : (
                     filteredEmployees.map(emp => {
-                      const empRecords = attendance.filter(a => a.employeeId === emp.id);
+                      const empRecords = validAttendance.filter(a => a.employeeId === emp.id);
                       const presentCount = empRecords.filter(r => r.status === "present" || r.status === "late" || r.status === "half-day").length;
                       return (
                         <tr key={emp.id} className="hover:bg-slate-50/50 transition-colors">
@@ -700,9 +778,9 @@ export default function AttendancePage({
               </table>
             </div>
           </div>
-        ) : (
+        ) : listTab === "logs" ? (
           /* AUDIT LOG HISTORY TABLE */
-          <div className="overflow-x-auto -mx-6">
+          <div className="overflow-x-auto -mx-6 font-sans">
             <table className="w-full text-left border-collapse min-w-[800px]">
               <thead>
                 <tr className="bg-gray-50/50 border-b border-gray-150">
@@ -716,15 +794,15 @@ export default function AttendancePage({
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50">
-                {attendance.length === 0 ? (
+                {validAttendance.length === 0 ? (
                   <tr>
                     <td colSpan={7} className="py-12 text-center text-gray-400 italic text-xs font-semibold">No attendance entries recorded in database this month.</td>
                   </tr>
                 ) : (
-                  attendance
+                  validAttendance
                     .filter(tx => {
                       const emp = employees.find(e => e.id === tx.employeeId);
-                      if (!emp) return true; // Keep or skip if undefined
+                      if (!emp) return false; // Hide completely if the employee is not active/valid
                       return emp.name.toLowerCase().includes(searchQuery.toLowerCase());
                     })
                     .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
@@ -732,7 +810,7 @@ export default function AttendancePage({
                       const targetEmp = employees.find(e => e.id === record.employeeId);
                       return (
                         <tr key={record.id} className="hover:bg-slate-50/40 transition-colors">
-                          <td className="px-6 py-4 font-bold text-xs text-gray-600">
+                          <td className="px-6 py-4 font-bold text-xs text-gray-650">
                             {format(parseISO(record.date), "dd MMM yyyy")}
                           </td>
                           <td className="px-6 py-4">
@@ -760,7 +838,7 @@ export default function AttendancePage({
                               {record.checkIn || "09:00 AM"}
                             </span>
                           </td>
-                          <td className="px-6 py-4 text-xs font-semibold text-gray-500 font-mono">
+                          <td className="px-6 py-4 text-xs font-semibold text-gray-550 font-mono">
                             {record.lunchOut && record.lunchIn ? (
                               <span>{record.lunchOut} - {record.lunchIn}</span>
                             ) : (
@@ -773,7 +851,7 @@ export default function AttendancePage({
                           <td className="px-6 py-4 text-right">
                             <button
                               onClick={() => handleDeleteAttendanceLog(record.id!, targetEmp?.name || "staff", record.date)}
-                              className="p-2 hover:bg-red-50 text-gray-400 hover:text-red-600 rounded-xl transition-all border border-transparent hover:border-red-100 inline-flex items-center justify-center cursor-pointer"
+                              className="p-2 hover:bg-red-50 text-gray-400 hover:text-red-650 rounded-xl transition-all border border-transparent hover:border-red-100 inline-flex items-center justify-center cursor-pointer"
                               title="Delete Attendance Log"
                             >
                               <Trash2 className="w-4 h-4" />
@@ -786,8 +864,124 @@ export default function AttendancePage({
               </tbody>
             </table>
           </div>
+        ) : (
+          /* LUNCH OVERTIME REPORT */
+          <div className="space-y-4 font-sans">
+            <div className="p-4 bg-amber-50/70 border border-amber-100 rounded-2xl text-[11px] font-bold uppercase text-amber-900 tracking-wider flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse shrink-0" />
+              Store Policy: Allowed break limit is set to {lunchDurationLimit} minutes. Exceeding records are flagged below:
+            </div>
+
+            <div className="overflow-x-auto -mx-6">
+              <table className="w-full text-left border-collapse min-w-[800px]">
+                <thead>
+                  <tr className="bg-gray-50/50 border-b border-gray-150">
+                    <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest">Entry Date</th>
+                    <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest">Employee</th>
+                    <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest">Lunch Out</th>
+                    <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest">Lunch In</th>
+                    <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest">Recorded Break</th>
+                    <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest">Overtime Breach</th>
+                    <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-50">
+                  {(() => {
+                    const overtimeLogs = validAttendance
+                      .filter(r => {
+                        const mins = getLunchDurationMinutes(r.lunchOut, r.lunchIn);
+                        return mins > lunchDurationLimit;
+                      })
+                      .filter(tx => {
+                        const emp = employees.find(e => e.id === tx.employeeId);
+                        if (!emp) return false;
+                        return emp.name.toLowerCase().includes(searchQuery.toLowerCase());
+                      })
+                      .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+
+                    if (overtimeLogs.length === 0) {
+                      return (
+                        <tr>
+                          <td colSpan={7} className="py-12 text-center text-gray-400 italic text-xs font-semibold">
+                            Perfect compliance! No lunch overtime breaches recorded for active employees this month.
+                          </td>
+                        </tr>
+                      );
+                    }
+
+                    return overtimeLogs.map(record => {
+                      const targetEmp = employees.find(e => e.id === record.employeeId);
+                      const totalTaken = getLunchDurationMinutes(record.lunchOut, record.lunchIn);
+                      const excess = totalTaken - lunchDurationLimit;
+
+                      return (
+                        <tr key={record.id} className="hover:bg-amber-50/10 transition-colors">
+                          <td className="px-6 py-4 font-bold text-xs text-gray-650">
+                            {format(parseISO(record.date), "dd MMM yyyy")}
+                          </td>
+                          <td className="px-6 py-4">
+                            <div className="flex items-center gap-2">
+                              <UserCircle className="w-5 h-5 text-gray-400" />
+                              <div>
+                                <span className="font-extrabold text-gray-900 text-sm">{targetEmp?.name || "Deleted Staff"}</span>
+                                <span className="block text-[8px] font-bold text-gray-400 uppercase leading-none mt-0.5">{targetEmp?.role || "System"}</span>
+                              </div>
+                            </div>
+                          </td>
+                          <td className="px-6 py-4 font-mono font-bold text-slate-700 text-xs">{record.lunchOut || "-"}</td>
+                          <td className="px-6 py-4 font-mono font-bold text-slate-700 text-xs">{record.lunchIn || "-"}</td>
+                          <td className="px-6 py-4 font-mono text-sm font-extrabold text-amber-700">{totalTaken} mins</td>
+                          <td className="px-6 py-4 font-mono text-sm font-extrabold text-red-650">+{excess} mins policy breach</td>
+                          <td className="px-6 py-4 text-right">
+                            <button
+                              onClick={() => handleDeleteAttendanceLog(record.id!, targetEmp?.name || "staff", record.date)}
+                              className="p-2 hover:bg-red-50 text-gray-400 hover:text-red-650 rounded-xl transition-all border border-transparent hover:border-red-100 inline-flex items-center justify-center cursor-pointer"
+                              title="Delete Attendance Log"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    });
+                  })()}
+                </tbody>
+              </table>
+            </div>
+          </div>
         )}
       </div>
+
+      {/* Custom Non-blocking Delete Confirmation Modal */}
+      {attendanceToDelete && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-[32px] max-w-md w-full p-8 shadow-2xl border border-gray-100 animate-in zoom-in-95 duration-200">
+            <div className="w-12 h-12 bg-red-55 border border-red-100 rounded-2xl flex items-center justify-center text-red-600 mb-6">
+              <Trash2 className="w-5 h-5" />
+            </div>
+            <h3 className="text-xl font-bold text-gray-900 mb-2">Delete Attendance Log?</h3>
+            <p className="text-sm text-gray-500 mb-6">
+              Are you sure you want to delete the attendance log of <strong className="text-slate-805">{attendanceToDelete.empName}</strong> on <span className="font-semibold">{attendanceToDelete.prettyDate}</span>? This action is permanent and cannot be undone.
+            </p>
+            <div className="flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setAttendanceToDelete(null)}
+                className="px-5 py-2.5 bg-gray-100 hover:bg-gray-200 text-slate-700 rounded-xl text-xs font-bold transition-all cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={executeDeleteAttendance}
+                className="px-5 py-2.5 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-bold transition-all shadow-lg active:scale-95 cursor-pointer"
+              >
+                Delete Log
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

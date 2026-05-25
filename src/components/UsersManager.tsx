@@ -4,6 +4,9 @@ import { collection, onSnapshot, doc, setDoc, deleteDoc, query, orderBy, getDocs
 import { db, OperationType, handleFirestoreError } from "@/src/lib/firebase";
 import { UserProfile, RolePermission } from "@/src/types";
 import { cn } from "@/src/lib/utils";
+import { initializeApp, deleteApp } from "firebase/app";
+import { getAuth, createUserWithEmailAndPassword, updateProfile, signOut } from "firebase/auth";
+import firebaseConfig from "@/firebase-applet-config.json";
 import { 
   Users, Plus, Trash2, Shield, UserCheck, X, Search, Check, Pencil, 
   Mail, Phone, Briefcase, ChevronRight, UserCircle, ShieldAlert, BadgeCheck,
@@ -85,6 +88,16 @@ export default function UsersManager({
   onProfileUpdated?: () => void;
 }) {
   const [usersList, setUsersList] = useState<UserProfile[]>([]);
+  const cleanEmailDisplay = (email: string) => {
+    if (!email) return "";
+    let display = email;
+    if (display.endsWith("@modernmanager.com")) {
+      display = display.replace("@modernmanager.com", "");
+    } else if (display.endsWith("@modernmanager.local")) {
+      display = display.replace("@modernmanager.local", "");
+    }
+    return display;
+  };
   const [roles, setRoles] = useState<RolePermission[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -92,6 +105,7 @@ export default function UsersManager({
   const [userFormOpen, setUserFormOpen] = useState(false);
   const [editingUser, setEditingUser] = useState<UserProfile | null>(null);
   const [userEmail, setUserEmail] = useState("");
+  const [userPassword, setUserPassword] = useState("");
   const [userDisplayName, setUserDisplayName] = useState("");
   const [userRole, setUserRole] = useState("sales");
   const [userPhotoURL, setUserPhotoURL] = useState("");
@@ -113,6 +127,8 @@ export default function UsersManager({
   const [selectedProfile, setSelectedProfile] = useState<UserProfile | null>(null);
   const [errorMsg, setErrorMsg] = useState("");
   const [successMsg, setSuccessMsg] = useState("");
+  const [deleteConfirmUserId, setDeleteConfirmUserId] = useState<string | null>(null);
+  const [deleteConfirmRoleId, setDeleteConfirmRoleId] = useState<string | null>(null);
 
   useEffect(() => {
     // Listen for roles
@@ -164,6 +180,7 @@ export default function UsersManager({
 
   const clearUserForm = () => {
     setUserEmail("");
+    setUserPassword("");
     setUserDisplayName("");
     setUserRole("sales");
     setUserPhotoURL("");
@@ -190,37 +207,79 @@ export default function UsersManager({
     setSuccessMsg("");
 
     if (!userEmail.trim() || !userDisplayName.trim()) {
-      setErrorMsg("Display Name and Email Address are required.");
+      setErrorMsg("Display Name and User ID/Email are required.");
+      return;
+    }
+
+    if (!editingUser && !userPassword.trim()) {
+      setErrorMsg("A password is required when creating a new user.");
+      return;
+    }
+
+    const emailKey = userEmail.trim().toLowerCase();
+    const finalEmail = emailKey.includes("@") ? emailKey : `${emailKey}@modernmanager.com`;
+
+    if (editingUser && editingUser.email?.toLowerCase() === "modern@admin.com" && user.email?.toLowerCase() !== "modern@admin.com") {
+      setErrorMsg("Only the main Administrator themselves can modify their own credentials or profile.");
       return;
     }
 
     try {
-      // Determine profile ID. If editing, keep same id.
-      // If new, generate ID from email or a standard ID string.
-      const emailKey = userEmail.trim().toLowerCase();
+      const cleanUsername = emailKey.includes("@") ? emailKey.split("@")[0] : emailKey;
       let docId = editingUser?.id || `user-${Date.now()}`;
       
-      // If a user with this email already has a record (to prevent duplicates)
-      const existingWithEmail = usersList.find(u => u.email.toLowerCase() === emailKey && u.id !== editingUser?.id);
+      // If a user with this email/username already has a record (to prevent duplicates)
+      const existingWithEmail = usersList.find(u => 
+        (u.email.toLowerCase() === finalEmail || (u.username && u.username.toLowerCase() === cleanUsername)) && 
+        u.id !== editingUser?.id
+      );
       if (existingWithEmail) {
-        setErrorMsg("A user profile with this email address already exists.");
+        setErrorMsg("A user profile with this User ID or Email address already exists.");
         return;
       }
 
       // If they provide no avatar icon, we generate a high-quality human layout from dicebear/ui-avatars
       const defaultPhoto = userPhotoURL.trim() || `https://api.dicebear.com/7.x/adventurer/svg?seed=${encodeURIComponent(userDisplayName)}`;
 
+      if (!editingUser) {
+        // Create full user auth in background using a secondary Firebase app so we don't log the admin out!
+        const tempAppName = `app-${Date.now()}`;
+        const tempApp = initializeApp(firebaseConfig, tempAppName);
+        const tempAuth = getAuth(tempApp);
+        try {
+          const userCred = await createUserWithEmailAndPassword(tempAuth, finalEmail, userPassword.trim());
+          if (userCred.user) {
+            await updateProfile(userCred.user, {
+              displayName: userDisplayName.trim(),
+              photoURL: defaultPhoto
+            });
+            await signOut(tempAuth);
+          }
+        } catch (authErr: any) {
+          console.error("Secondary app registration failed:", authErr);
+          const msg = authErr?.message || "";
+          if (!msg.includes("email-already-in-use")) {
+            setErrorMsg("Failed to create credential: " + msg);
+            await deleteApp(tempApp);
+            return;
+          }
+        }
+        await deleteApp(tempApp);
+      }
+
       const profilePayload: UserProfile = {
-        email: emailKey,
-        displayName: userDisplayName.trim(),
-        role: userRole,
+        email: finalEmail,
+        username: cleanUsername,
+        displayName: finalEmail === "modern@admin.com" ? "Main Administrator" : userDisplayName.trim(),
+        role: finalEmail === "modern@admin.com" ? "admin" : userRole,
         photoURL: defaultPhoto,
         mobile: userMobile.trim(),
         designation: userDesignation.trim(),
         department: userDepartment.trim(),
         bio: userBio.trim(),
-        status: userStatus,
+        status: finalEmail === "modern@admin.com" ? "active" : userStatus,
         createdAt: editingUser?.createdAt || new Date().toISOString(),
+        ...(userPassword.trim() ? { password: userPassword.trim() } : (editingUser?.password ? { password: editingUser.password } : {})),
         ...(editingUser?.uid ? { uid: editingUser.uid } : {})
       };
 
@@ -278,10 +337,19 @@ export default function UsersManager({
   };
 
   const handleDeleteUser = async (profileId: string) => {
-    if (!window.confirm("Are you sure you want to delete this user profile? This action will immediately revoke all access rights associated with this profile.")) return;
+    // Check if user is the main administrator
+    const targetUser = usersList.find(u => u.id === profileId || u.uid === profileId);
+    if (targetUser && targetUser.email?.toLowerCase() === "modern@admin.com") {
+      setErrorMsg("The main system Administrator (modern@admin.com) cannot be deleted under any circumstances.");
+      setDeleteConfirmUserId(null);
+      setTimeout(() => setErrorMsg(""), 3000);
+      return;
+    }
+
     try {
       await deleteDoc(doc(db, "users", profileId));
       setSuccessMsg("User profile deleted successfully.");
+      setDeleteConfirmUserId(null);
       if (selectedProfile?.id === profileId) {
         setSelectedProfile(null);
       }
@@ -293,13 +361,14 @@ export default function UsersManager({
 
   const handleDeleteRole = async (roleId: string) => {
     if (roleId === "admin" || roleId === "accountant" || roleId === "sales") {
-      alert("Built-in roles (admin, accountant, sales) cannot be deleted as they serve as system infrastructure keys.");
+      setErrorMsg("Built-in roles (admin, accountant, sales) cannot be deleted as they serve as system infrastructure keys.");
+      setTimeout(() => setErrorMsg(""), 4000);
       return;
     }
-    if (!window.confirm("Are you sure you desire to delete this custom Role? Users assigned to this role will fallback to basic guest restrictions.")) return;
     try {
       await deleteDoc(doc(db, "roles", roleId));
       setSuccessMsg("Role configuration deleted.");
+      setDeleteConfirmRoleId(null);
       setTimeout(() => setSuccessMsg(""), 2000);
     } catch (err) {
       handleFirestoreError(err, OperationType.DELETE, "roles");
@@ -448,15 +517,29 @@ export default function UsersManager({
                   </div>
 
                   <div>
-                    <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Google Email ID *</label>
+                    <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">User ID (Username) or Email *</label>
                     <input
-                      type="email"
+                      type="text"
                       required
                       value={userEmail}
                       onChange={(e) => setUserEmail(e.target.value)}
-                      placeholder="e.g. user@gmail.com"
+                      placeholder="e.g. johndoe or user@company.com"
                       className="w-full px-4 py-3 bg-slate-50 border border-slate-200 focus:border-slate-800 focus:bg-white rounded-xl font-medium outline-none transition-all text-sm disabled:cursor-not-allowed disabled:opacity-60"
                       disabled={!!editingUser}
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">
+                      {editingUser ? "Update Password (Optional)" : "Security Password *"}
+                    </label>
+                    <input
+                      type="text"
+                      required={!editingUser}
+                      value={userPassword}
+                      onChange={(e) => setUserPassword(e.target.value)}
+                      placeholder={editingUser ? "Leave blank to keep current password" : "Minimum 6 characters"}
+                      className="w-full px-4 py-3 bg-slate-50 border border-slate-200 focus:border-slate-800 focus:bg-white rounded-xl font-medium outline-none transition-all text-sm"
                     />
                   </div>
 
@@ -527,17 +610,67 @@ export default function UsersManager({
                     />
                   </div>
 
-                  <div>
-                    <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Photo URL</label>
-                    <div className="relative">
-                      <input
-                        type="url"
-                        value={userPhotoURL}
-                        onChange={(e) => setUserPhotoURL(e.target.value)}
-                        placeholder="Leave blank to auto-generate beautiful Avatar"
-                        className="w-full px-4 py-3 bg-slate-50 border border-slate-200 focus:border-slate-800 focus:bg-white rounded-xl font-medium outline-none transition-all text-sm pr-10"
-                      />
-                      <Camera className="w-4 h-4 text-slate-400 absolute right-3.5 top-3.5" />
+                  <div className="md:col-span-2">
+                    <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Profile Photo Upload</label>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-6 items-center bg-slate-50/50 p-4 rounded-2xl border border-slate-100">
+                      <div className="flex justify-center items-center">
+                        <div className="w-24 h-24 rounded-2xl overflow-hidden bg-white border border-slate-200 relative group flex items-center justify-center shadow-sm">
+                          {userPhotoURL ? (
+                            <>
+                              <img src={userPhotoURL} alt="Preview" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                              <button
+                                type="button"
+                                onClick={() => setUserPhotoURL("")}
+                                className="absolute inset-0 bg-slate-950/80 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white text-[9px] font-extrabold uppercase tracking-widest cursor-pointer"
+                              >
+                                Clear Photo
+                              </button>
+                            </>
+                          ) : (
+                            <div className="text-center p-2 text-slate-400">
+                              <Camera className="w-8 h-8 mx-auto mb-1 text-slate-400" />
+                              <span className="text-[9px] text-slate-400 font-bold uppercase tracking-wider leading-none">No Photo</span>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                      
+                      <div className="sm:col-span-2">
+                        <div 
+                          onClick={() => document.getElementById("photo-upload-input")?.click()}
+                          onDragOver={(e) => e.preventDefault()}
+                          onDrop={(e) => {
+                            e.preventDefault();
+                            const file = e.dataTransfer.files?.[0];
+                            if (file) {
+                              const reader = new FileReader();
+                              reader.onloadend = () => setUserPhotoURL(reader.result as string);
+                              reader.readAsDataURL(file);
+                            }
+                          }}
+                          className="border-2 border-dashed border-slate-200 hover:border-slate-950 rounded-2xl p-5 text-center cursor-pointer hover:bg-white hover:shadow-sm transition-all flex flex-col items-center justify-center min-h-[96px] group"
+                        >
+                          <Plus className="w-5 h-5 text-slate-400 mb-1 group-hover:text-slate-800 transition-colors" />
+                          <p className="text-xs font-semibold text-slate-700">
+                            Drag & drop or <span className="text-indigo-600 hover:underline">click to upload photo</span>
+                          </p>
+                          <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mt-0.5">Supports PNG, JPG, JPEG, SVG</p>
+                          <input 
+                            type="file" 
+                            id="photo-upload-input" 
+                            accept="image/*" 
+                            className="hidden" 
+                            onChange={(e) => {
+                              const file = e.target.files?.[0];
+                              if (file) {
+                                const reader = new FileReader();
+                                reader.onloadend = () => setUserPhotoURL(reader.result as string);
+                                reader.readAsDataURL(file);
+                              }
+                            }}
+                          />
+                        </div>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -796,8 +929,8 @@ export default function UsersManager({
                     <div className="flex items-center gap-2.5 bg-slate-50/50 p-3 rounded-xl border border-slate-100">
                       <Mail className="w-4 h-4 text-slate-400 shrink-0" />
                       <div>
-                        <p className="text-[9px] font-bold uppercase text-slate-400 tracking-wider">Primary Email Address</p>
-                        <p className="text-xs font-bold font-mono text-slate-800">{selectedProfile.email}</p>
+                        <p className="text-[9px] font-bold uppercase text-slate-400 tracking-wider">Primary Email / User ID</p>
+                        <p className="text-xs font-bold font-mono text-slate-805">{cleanEmailDisplay(selectedProfile.email)}</p>
                       </div>
                     </div>
 
@@ -813,12 +946,14 @@ export default function UsersManager({
 
                 {/* Back or actions */}
                 <div className="w-full md:w-auto flex md:flex-col gap-2 shrink-0">
-                  {role === "admin" && (
+                  {role === "admin" && (selectedProfile.email?.toLowerCase() !== "modern@admin.com" || user?.email?.toLowerCase() === "modern@admin.com") && (
                     <button
                       onClick={() => {
                         setEditingUser(selectedProfile);
                         setUserDisplayName(selectedProfile.displayName);
-                        setUserEmail(selectedProfile.email);
+                        const displayEmail = selectedProfile.username || cleanEmailDisplay(selectedProfile.email);
+                        setUserEmail(displayEmail);
+                        setUserPassword(selectedProfile.password || "");
                         setUserRole(selectedProfile.role);
                         setUserPhotoURL(selectedProfile.photoURL || "");
                         setUserMobile(selectedProfile.mobile || "");
@@ -968,7 +1103,7 @@ export default function UsersManager({
                               </div>
                             </td>
                             <td className="p-4">
-                              <p className="font-semibold text-slate-805 leading-tight">{profileItem.email}</p>
+                              <p className="font-semibold text-slate-805 leading-tight">{cleanEmailDisplay(profileItem.email)}</p>
                               {profileItem.mobile && <p className="text-[10px] text-slate-400 leading-none mt-0.5">{profileItem.mobile}</p>}
                             </td>
                             <td className="p-4">
@@ -1004,14 +1139,31 @@ export default function UsersManager({
                                   <ChevronRight className="w-4 h-4" />
                                 </button>
                                 
-                                {role === "admin" && !isSelf && (
-                                  <button
-                                    onClick={() => handleDeleteUser(profileItem.id || "")}
-                                    className="p-2 hover:bg-red-50 hover:text-red-700 text-slate-350 border border-transparent hover:border-red-100 rounded-xl transition-colors pointer-cursor"
-                                    title="Revoke and Delete Access"
-                                  >
-                                    <Trash2 className="w-4 h-4" />
-                                  </button>
+                                {role === "admin" && !isSelf && profileItem.email?.toLowerCase() !== "modern@admin.com" && (
+                                  deleteConfirmUserId === profileItem.id ? (
+                                    <div className="flex items-center gap-1 shrink-0 animate-in fade-in duration-100">
+                                      <button 
+                                        onClick={() => handleDeleteUser(profileItem.id || "")}
+                                        className="px-2 py-1 text-[9px] font-black uppercase tracking-wider bg-rose-600 hover:bg-rose-700 text-white rounded-md cursor-pointer transition-all"
+                                      >
+                                        Confirm
+                                      </button>
+                                      <button 
+                                        onClick={() => setDeleteConfirmUserId(null)}
+                                        className="px-2 py-1 text-[9px] font-black uppercase tracking-wider bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-md cursor-pointer transition-all"
+                                      >
+                                        Cancel
+                                      </button>
+                                    </div>
+                                  ) : (
+                                    <button
+                                      onClick={() => setDeleteConfirmUserId(profileItem.id || "")}
+                                      className="p-2 hover:bg-red-50 hover:text-red-700 text-slate-350 border border-transparent hover:border-red-100 rounded-xl transition-colors pointer-cursor"
+                                      title="Revoke and Delete Access"
+                                    >
+                                      <Trash2 className="w-4 h-4" />
+                                    </button>
+                                  )
                                 )}
                               </div>
                             </td>
@@ -1115,13 +1267,30 @@ export default function UsersManager({
                                 >
                                   Modify
                                 </button>
-                                <button
-                                  onClick={() => handleDeleteRole(r.id || "")}
-                                  className="p-1.5 hover:bg-red-55 hover:text-red-700 text-slate-350 border border-transparent hover:border-red-100 rounded-lg transition-colors cursor-pointer"
-                                  title="Delete Role"
-                                >
-                                  <Trash2 className="w-4 h-4" />
-                                </button>
+                                {deleteConfirmRoleId === r.id ? (
+                                  <div className="flex items-center gap-1.5 animate-in fade-in duration-100">
+                                    <button
+                                      onClick={() => handleDeleteRole(r.id || "")}
+                                      className="px-2 py-1 text-[9px] font-black uppercase tracking-wider bg-rose-600 hover:bg-rose-700 text-white rounded-md cursor-pointer transition-all"
+                                    >
+                                      Confirm
+                                    </button>
+                                    <button
+                                      onClick={() => setDeleteConfirmRoleId(null)}
+                                      className="px-2 py-1 text-[9px] font-black uppercase tracking-wider bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-md cursor-pointer transition-all"
+                                    >
+                                      Cancel
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <button
+                                    onClick={() => setDeleteConfirmRoleId(r.id || "")}
+                                    className="p-1.5 hover:bg-red-55 hover:text-red-700 text-slate-350 border border-transparent hover:border-red-100 rounded-lg transition-colors cursor-pointer"
+                                    title="Delete Role"
+                                  >
+                                    <Trash2 className="w-4 h-4" />
+                                  </button>
+                                )}
                               </div>
                             )}
                           </div>

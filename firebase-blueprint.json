@@ -122,9 +122,22 @@
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["supplierId", "supplierName", "date", "refNo", "totalAmount", "paidAmount", "dueAmount", "paymentMethod", "createdAt"]
+    },
+    "Department": {
+      "title": "Department",
+      "description": "Company departments list",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" }
+      },
+      "required": ["name"]
     }
   },
   "firestore": {
+    "/departments/{departmentId}": {
+      "schema": "Department",
+      "description": "Departments registry"
+    },
     "/purchases/{purchaseId}": {
       "schema": "Purchase",
       "description": "Historical purchases registry"

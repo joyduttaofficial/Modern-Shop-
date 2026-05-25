@@ -21,7 +21,8 @@ import {
   Coins, 
   CalendarRange,
   Sparkles,
-  BarChart4
+  BarChart4,
+  Printer
 } from "lucide-react";
 import { 
   XAxis, 
@@ -383,11 +384,20 @@ export default function Dashboard({ user, role }: { user: User; role: UserRole }
 
   return (
     <div className="space-y-8 animate-in fade-in duration-200">
-      <header className="flex flex-col gap-1.5 border-b border-slate-100 pb-5">
-        <h2 className="text-3xl font-black tracking-tight text-slate-900">{t("Dashboard Overview")}</h2>
-        <p className="text-sm font-medium text-slate-500">
-          {t("Welcome back,")} <strong className="text-slate-800">{user.displayName?.split(" ")[0]}</strong>. {t("Here's your shop's real-time performance matrix.")}
-        </p>
+      <header className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 border-b border-slate-100 pb-5">
+        <div>
+          <h2 className="text-3xl font-black tracking-tight text-slate-900">{t("Dashboard Overview")}</h2>
+          <p className="text-sm font-medium text-slate-500">
+            {t("Welcome back,")} <strong className="text-slate-800">{user.displayName?.split(" ")[0]}</strong>. {t("Here's your shop's real-time performance matrix.")}
+          </p>
+        </div>
+        <button
+          onClick={() => window.print()}
+          className="print:hidden flex items-center gap-2 px-4 py-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl font-bold text-xs uppercase tracking-wider transition-all duration-200 shadow-sm shadow-slate-950/10 cursor-pointer border border-transparent hover:scale-[1.02] active:scale-[0.98] shrink-0"
+        >
+          <Printer className="w-4 h-4 text-emerald-400" />
+          {t("Print Ledger Report")}
+        </button>
       </header>
 
       {/* Daily Performance Section (Today) */}
@@ -512,6 +522,7 @@ export default function Dashboard({ user, role }: { user: User; role: UserRole }
             color="emerald" 
             description="Literal secondary total sales matching rule"
             scope="Total Copy"
+            printHidden={true}
           />
           <StatCard 
             title="Total Bank Deposit" 
@@ -625,7 +636,7 @@ export default function Dashboard({ user, role }: { user: User; role: UserRole }
         </div>
 
         {/* Today Employee Sales Chart || Total Top Employee Sales Chart */}
-        <div className="bg-white p-6 rounded-3xl border border-slate-100/80 shadow-md shadow-slate-100/30 flex flex-col justify-between">
+        <div className="bg-white p-6 rounded-3xl border border-slate-100/80 shadow-md shadow-slate-100/30 flex flex-col justify-between print:hidden">
           <div>
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
               <div>
@@ -841,7 +852,7 @@ export default function Dashboard({ user, role }: { user: User; role: UserRole }
   );
 }
 
-function StatCard({ title, value, icon: Icon, color, description, scope = "Global", isCount = false }: any) {
+function StatCard({ title, value, icon: Icon, color, description, scope = "Global", isCount = false, printHidden = false }: any) {
   const { language, t, formatCurrency, formatNumber } = useLanguage();
   const colorMap: any = {
     emerald: {
@@ -891,6 +902,7 @@ function StatCard({ title, value, icon: Icon, color, description, scope = "Globa
   return (
     <div className={cn(
       "bg-white p-5 rounded-3xl border border-slate-200/60 shadow-xs hover:shadow-lg transition-all duration-300 group hover:-translate-y-0.5",
+      (isCount || printHidden) ? "print:hidden" : "",
       style.glow
     )}>
       <div className="flex items-start justify-between mb-3.5">

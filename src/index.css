@@ -1,1 +1,261 @@
 @import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+}
+
+/* Luxury Golden & Black Dark Mode Stylesheet Overrides */
+.dark {
+  background-color: #000000 !important;
+  color: #f5f5f0 !important;
+}
+
+/* Main Layouts and Bodies */
+.dark body,
+.dark html {
+  background-color: #000000 !important;
+  color: #f5f5f0 !important;
+}
+
+.dark main {
+  background-color: #000000 !important;
+}
+
+/* Sidebar and Header overrides */
+.dark aside {
+  background-color: #080808 !important;
+  border-right-color: rgba(212, 175, 55, 0.18) !important;
+}
+
+.dark aside * {
+  border-color: rgba(212, 175, 55, 0.12) !important;
+}
+
+/* Cards & panels: Pitch Charcoal with warm metallic golden rim */
+.dark .bg-white,
+.dark [class*="bg-white"] {
+  background-color: #070707 !important;
+  border-color: rgba(212, 175, 55, 0.22) !important;
+  color: #f5f5f0 !important;
+  box-shadow: 0 4px 30px rgba(0, 0, 0, 0.8) !important;
+}
+
+/* Inputs and interactive nodes */
+.dark input,
+.dark select,
+.dark textarea {
+  background-color: #0f0f0f !important;
+  color: #ffffff !important;
+  border: 1px solid rgba(212, 175, 55, 0.3) !important;
+}
+
+.dark input:focus,
+.dark select:focus,
+.dark textarea:focus {
+  outline: none !important;
+  box-shadow: 0 0 0 2px rgba(212, 175, 55, 0.4) !important;
+  border-color: #d4af37 !important;
+}
+
+/* Hover panels */
+.dark .hover\:bg-slate-50:hover,
+.dark .hover\:bg-gray-50:hover,
+.dark [class*="hover:bg-slate-50"]:hover,
+.dark [class*="hover:bg-gray-50"]:hover {
+  background-color: #111111 !important;
+}
+
+/* Secondary deep grey panels */
+.dark .bg-slate-50,
+.dark .bg-gray-50,
+.dark [class*="bg-slate-50"],
+.dark [class*="bg-gray-50"] {
+  background-color: #0f0f0f !important;
+  color: #fdfdfd !important;
+}
+
+.dark .bg-slate-100,
+.dark .bg-gray-100,
+.dark [class*="bg-slate-100"],
+.dark [class*="bg-gray-100"] {
+  background-color: #151515 !important;
+  color: #ffffff !important;
+}
+
+/* Typographic overrides */
+.dark .text-slate-900,
+.dark .text-gray-900,
+.dark .text-slate-800,
+.dark .text-slate-850,
+.dark h1, .dark h2, .dark h3 {
+  color: #ffffff !important;
+}
+
+.dark .text-slate-500,
+.dark .text-gray-500,
+.dark .text-slate-400,
+.dark .text-gray-400 {
+  color: #bbbbbb !important;
+}
+
+/* Accent items and badges colored to Golden Theme */
+.dark .text-blue-600,
+.dark .text-indigo-600,
+.dark .text-violet-600,
+.dark .text-indigo-700,
+.dark .text-indigo-500 {
+  color: #d4af37 !important;
+}
+
+.dark .bg-slate-950,
+.dark .bg-slate-900,
+.dark .bg-indigo-600,
+.dark .bg-black {
+  background-color: #d4af37 !important;
+  color: #000000 !important;
+  border-color: #d4af37 !important;
+}
+
+.dark .bg-slate-950:hover,
+.dark .bg-slate-900:hover,
+.dark .bg-indigo-600:hover,
+.dark .bg-indigo-700:hover {
+  background-color: #ebd073 !important;
+  color: #000000 !important;
+}
+
+.dark .text-slate-950 {
+  color: #d4af37 !important;
+}
+
+.dark .bg-indigo-50,
+.dark .bg-blue-50,
+.dark .bg-slate-50\/50 {
+  background-color: rgba(212, 175, 55, 0.1) !important;
+  color: #e5c158 !important;
+}
+
+/* Borders and lines */
+.dark .border,
+.dark .border-slate-100,
+.dark .border-slate-150,
+.dark .border-slate-200,
+.dark .border-gray-100,
+.dark .border-gray-200,
+.dark .divide-y > * {
+  border-color: rgba(212, 175, 55, 0.18) !important;
+}
+
+.dark .text-teal-400 {
+  color: #d4af37 !important;
+}
+
+/* Selection and Accent Highlight colors */
+.dark ::selection {
+  background-color: rgba(212, 175, 55, 0.3) !important;
+  color: #ffffff !important;
+}
+
+/* Custom Scrollbars in dark mode */
+.dark ::-webkit-scrollbar-thumb {
+  background-color: rgba(212, 175, 55, 0.3) !important;
+  border-radius: 4px !important;
+}
+
+.dark ::-webkit-scrollbar-track {
+  background-color: #050505 !important;
+}
+
+@media print {
+  /* Hide sidebar, navigation menus, mobile headers, action buttons, and language switcher */
+  aside,
+  nav,
+  header,
+  .print\:hidden,
+  .language-switcher,
+  button,
+  select,
+  input,
+  .mb-8.px-2,
+  .mt-auto.space-y-4 {
+    display: none !important;
+  }
+
+  /* Force main content container to be full width with zero spacing */
+  body, html {
+    background-color: #ffffff !important;
+    color: #0f172a !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    width: 100% !important;
+    height: auto !important;
+  }
+
+  main, .flex-1, .max-w-6xl {
+    width: 100% !important;
+    max-width: 100% !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    background: transparent !important;
+    overflow: visible !important;
+    height: auto !important;
+  }
+
+  /* Reset layout constraints and flex containers for print output */
+  .min-h-screen {
+    min-height: auto !important;
+    height: auto !important;
+    display: block !important;
+  }
+
+  /* Render financial stat card grids in a clean 3-column layout on standard A4 */
+  .grid {
+    display: grid !important;
+    gap: 12px !important;
+  }
+
+  .grid-cols-1,
+  .sm\:grid-cols-2,
+  .lg\:grid-cols-5 {
+    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+  }
+
+  /* Charts and lists should take full single column width when printed to remain legible */
+  .lg\:grid-cols-2,
+  .lg\:grid-cols-3 {
+    grid-template-columns: 1fr !important;
+  }
+
+  /* Preserve element background colors and graphics when exporting/printing */
+  * {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+    color-adjust: exact !important;
+  }
+
+  /* Ensure card backgrounds are crisp, thin-bordered, and omit hover translation shadows */
+  .bg-white, [class*="bg-white"] {
+    background-color: #ffffff !important;
+    border: 1px solid #cbd5e1 !important;
+    border-radius: 12px !important;
+    box-shadow: none !important;
+    transform: none !important;
+  }
+
+  /* Ensure deep text contrast and layout readability */
+  h2, h3 {
+    color: #0f172a !important;
+    page-break-after: avoid;
+  }
+
+  p, span, td, th {
+    color: #334155 !important;
+  }
+
+  /* Prevent page-breaks in the middle of card elements or table rows */
+  .bg-white, tr, table {
+    page-break-inside: avoid !important;
+  }
+}
+

@@ -95,9 +95,19 @@ export default function Settings({ user, role }: { user: User; role: UserRole })
   const [bankName, setBankName] = useState("");
   const [bankBalance, setBankBalance] = useState("");
 
+  // Departments & Employee ID Rule State
+  const [departmentsList, setDepartmentsList] = useState<{ id?: string; name: string }[]>([]);
+  const [deptName, setDeptName] = useState("");
+  const [idPrefixInput, setIdPrefixInput] = useState("MCS");
+  const [isUpdatingIdRules, setIsUpdatingIdRules] = useState(false);
+  const [idRulesSuccess, setIdRulesSuccess] = useState(false);
+
   // Attendance Settings
   const [lateThreshold, setLateThreshold] = useState("10:00");
+  const [lunchDurationLimit, setLunchDurationLimit] = useState(60);
+  const [halfDayThreshold, setHalfDayThreshold] = useState("11:30");
   const [isUpdatingSettings, setIsUpdatingSettings] = useState(false);
+  const [settingsSuccess, setSettingsSuccess] = useState(false);
 
   useEffect(() => {
     const unsubCats = onSnapshot(query(collection(db, "categories"), orderBy("name")), (snap) => {
@@ -107,9 +117,22 @@ export default function Settings({ user, role }: { user: User; role: UserRole })
       setBanks(snap.docs.map(d => ({ id: d.id, ...d.data() } as Bank)));
     });
 
+    const unsubDepts = onSnapshot(query(collection(db, "departments"), orderBy("name")), (snap) => {
+      setDepartmentsList(snap.docs.map(d => ({ id: d.id, name: d.data().name } as { id?: string; name: string })));
+    });
+
+    const unsubIdSettings = onSnapshot(doc(db, "settings", "employeeId"), (docSnap) => {
+      if (docSnap.exists()) {
+        setIdPrefixInput(docSnap.data().prefix || "MCS");
+      }
+    });
+
     const unsubSettings = onSnapshot(doc(db, "settings", "attendance"), (doc) => {
       if (doc.exists()) {
-        setLateThreshold(doc.data().lateThreshold || "10:00");
+        const data = doc.data();
+        setLateThreshold(data.lateThreshold || "10:00");
+        setLunchDurationLimit(data.lunchDurationLimit ?? 60);
+        setHalfDayThreshold(data.halfDayThreshold || "11:30");
       }
     });
 
@@ -120,7 +143,13 @@ export default function Settings({ user, role }: { user: User; role: UserRole })
       });
     }
 
-    return () => { unsubCats(); unsubBanks(); unsubProfiles(); };
+    return () => { 
+      unsubCats(); 
+      unsubBanks(); 
+      unsubProfiles(); 
+      unsubDepts(); 
+      unsubIdSettings(); 
+    };
   }, [role]);
 
   const handleUpdateRole = async (uid: string, newRole: UserRole) => {
@@ -154,21 +183,57 @@ export default function Settings({ user, role }: { user: User; role: UserRole })
     } catch (e) { handleFirestoreError(e, OperationType.CREATE, "banks"); }
   };
 
-  const handleDelete = async (coll: string, id: string) => {
-    if (!confirm("Remove this entry?")) return;
-    try { await deleteDoc(doc(db, coll, id)); }
-    catch (e) { handleFirestoreError(e, OperationType.DELETE, coll); }
+  const handleAddDept = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!deptName) return;
+    try {
+      await addDoc(collection(db, "departments"), { name: deptName });
+      setDeptName("");
+    } catch (e) { handleFirestoreError(e, OperationType.CREATE, "departments"); }
+  };
+
+  const saveEmployeeIdSettings = async () => {
+    setIsUpdatingIdRules(true);
+    setIdRulesSuccess(false);
+    try {
+      await setDoc(doc(db, "settings", "employeeId"), {
+        prefix: idPrefixInput.trim(),
+        lastUpdated: new Date().toISOString(),
+        updatedBy: user.uid
+      });
+      setIdRulesSuccess(true);
+      setTimeout(() => setIdRulesSuccess(false), 4000);
+    } catch (e) {
+      handleFirestoreError(e, OperationType.UPDATE, "settings");
+    } finally {
+      setIsUpdatingIdRules(false);
+    }
+  };
+
+  const [deleteConfirm, setDeleteConfirm] = useState<{ coll: string; id: string } | null>(null);
+
+  const executeDelete = async (coll: string, id: string) => {
+    try { 
+      await deleteDoc(doc(db, coll, id)); 
+      setDeleteConfirm(null);
+    } catch (e) { 
+      handleFirestoreError(e, OperationType.DELETE, coll); 
+    }
   };
 
   const saveAttendanceSettings = async () => {
     setIsUpdatingSettings(true);
+    setSettingsSuccess(false);
     try {
       await setDoc(doc(db, "settings", "attendance"), {
         lateThreshold,
+        lunchDurationLimit: Number(lunchDurationLimit),
+        halfDayThreshold,
         lastUpdated: new Date().toISOString(),
         updatedBy: user.uid
       });
-      alert("Attendance policy updated.");
+      setSettingsSuccess(true);
+      setTimeout(() => setSettingsSuccess(false), 4000);
     } catch (e) {
       handleFirestoreError(e, OperationType.UPDATE, "settings");
     } finally {
@@ -245,8 +310,8 @@ export default function Settings({ user, role }: { user: User; role: UserRole })
             </form>
 
             <div className="space-y-2 max-h-[400px] overflow-y-auto pr-2 scrollbar-hide">
-              {categories.map(cat => (
-                <div key={cat.id} className="flex items-center justify-between p-3 border border-gray-50 rounded-2xl hover:bg-gray-50 transition-all group">
+              {categories.map((cat, idx) => (
+                <div key={cat.id || `cat-${idx}`} className="flex items-center justify-between p-3 border border-gray-50 rounded-2xl hover:bg-gray-50 transition-all group">
                   <div className="flex items-center gap-3">
                     <div className={cn(
                       "w-2 h-2 rounded-full",
@@ -254,12 +319,30 @@ export default function Settings({ user, role }: { user: User; role: UserRole })
                     )} />
                     <span className="font-semibold text-gray-700">{cat.name}</span>
                   </div>
-                  <button 
-                    onClick={() => handleDelete("categories", cat.id!)}
-                    className="opacity-0 group-hover:opacity-100 p-1.5 text-gray-300 hover:text-red-500 transition-all"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
+                  {deleteConfirm?.coll === "categories" && deleteConfirm?.id === cat.id ? (
+                    <div className="flex items-center gap-1 shrink-0 animate-in fade-in duration-100">
+                      <button 
+                        onClick={() => executeDelete("categories", cat.id!)}
+                        className="px-2 py-1 text-[9px] font-black uppercase tracking-wider bg-red-600 hover:bg-red-700 text-white rounded-md cursor-pointer transition-all"
+                      >
+                        Confirm
+                      </button>
+                      <button 
+                        onClick={() => setDeleteConfirm(null)}
+                        className="px-2 py-1 text-[9px] font-black uppercase tracking-wider bg-gray-105 dark:bg-zinc-800 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-zinc-700/60 rounded-md cursor-pointer transition-all"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  ) : (
+                    <button 
+                      onClick={() => setDeleteConfirm({ coll: "categories", id: cat.id! })}
+                      className="opacity-100 md:opacity-0 group-hover:opacity-100 p-1.5 text-gray-400 hover:text-red-500 dark:text-zinc-500 dark:hover:text-red-400 transition-all cursor-pointer"
+                      title="Delete Category"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  )}
                 </div>
               ))}
             </div>
@@ -296,8 +379,8 @@ export default function Settings({ user, role }: { user: User; role: UserRole })
             </form>
 
             <div className="space-y-3">
-              {banks.map(bank => (
-                <div key={bank.id} className="p-4 bg-gray-50 rounded-2xl border border-gray-100 flex items-center justify-between group">
+              {banks.map((bank, idx) => (
+                <div key={bank.id || `bank-${idx}`} className="p-4 bg-gray-50 rounded-2xl border border-gray-100 flex items-center justify-between group">
                   <div className="flex items-center gap-4">
                     <div className="w-10 h-10 bg-white rounded-xl flex items-center justify-center border border-gray-100">
                       <Landmark className="w-5 h-5 text-gray-400" />
@@ -309,12 +392,30 @@ export default function Settings({ user, role }: { user: User; role: UserRole })
                   </div>
                   <div className="flex items-center gap-4">
                     <p className="font-mono font-bold text-lg text-gray-700">৳{bank.balance.toLocaleString()}</p>
-                    <button 
-                      onClick={() => handleDelete("banks", bank.id!)}
-                      className="opacity-0 group-hover:opacity-100 p-2 text-gray-300 hover:text-red-500 transition-all bg-white rounded-lg border border-gray-100"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
+                    {deleteConfirm?.coll === "banks" && deleteConfirm?.id === bank.id ? (
+                      <div className="flex items-center gap-1 shrink-0 animate-in fade-in duration-100">
+                        <button 
+                          onClick={() => executeDelete("banks", bank.id!)}
+                          className="px-2 py-1 text-[9px] font-black uppercase tracking-wider bg-red-650 hover:bg-red-750 text-white rounded-md cursor-pointer transition-all"
+                        >
+                          Confirm
+                        </button>
+                        <button 
+                          onClick={() => setDeleteConfirm(null)}
+                          className="px-2 py-1 text-[9px] font-black uppercase tracking-wider bg-gray-150 dark:bg-zinc-850 text-gray-600 dark:text-gray-400 hover:bg-gray-250 dark:hover:bg-zinc-750 rounded-md cursor-pointer transition-all"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    ) : (
+                      <button 
+                        onClick={() => setDeleteConfirm({ coll: "banks", id: bank.id! })}
+                        className="opacity-100 md:opacity-0 group-hover:opacity-100 p-2 text-gray-400 hover:text-red-500 dark:text-zinc-500 dark:hover:text-red-400 transition-all bg-white dark:bg-zinc-900 rounded-lg border border-gray-100 dark:border-zinc-800 cursor-pointer"
+                        title="Delete Bank Account"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    )}
                   </div>
                 </div>
               ))}
@@ -323,30 +424,191 @@ export default function Settings({ user, role }: { user: User; role: UserRole })
         </div>
       </div>
 
+      {/* Departments & Employee ID Generator Config section */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-10">
+        {/* Custom Employee Departments Section */}
+        <div className="space-y-6">
+          <h3 className="text-lg font-bold flex items-center gap-2">
+            <Briefcase className="w-5 h-5 text-gray-400" />
+            Employee Departments Customizer
+          </h3>
+          <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm space-y-6">
+            <form onSubmit={handleAddDept} className="flex gap-2">
+              <input 
+                placeholder="New Department (e.g. Sales, Accounts, IT)..." 
+                value={deptName} 
+                onChange={e => setDeptName(e.target.value)}
+                className="flex-1 px-4 py-3 bg-gray-50 rounded-xl border-none focus:ring-2 focus:ring-gray-200"
+              />
+              <button type="submit" className="p-3 bg-gray-900 text-white rounded-xl hover:bg-gray-800 transition-all">
+                <Plus className="w-5 h-5" />
+              </button>
+            </form>
+
+            <div className="space-y-2 max-h-[300px] overflow-y-auto pr-2 scrollbar-hide">
+              {departmentsList.length === 0 ? (
+                <p className="text-xs text-gray-400 italic py-4 pl-1">No custom departments yet. Default system categories will be loaded (Sales, Accounts, Marketing, IT / Support, Management, Delivery, Others).</p>
+              ) : (
+                departmentsList.map((dept, idx) => (
+                  <div key={dept.id || `dept-${idx}`} className="flex items-center justify-between p-3 border border-gray-50 rounded-2xl hover:bg-gray-50 transition-all group">
+                    <span className="font-semibold text-gray-700">{dept.name}</span>
+                    {deleteConfirm?.coll === "departments" && deleteConfirm?.id === dept.id ? (
+                      <div className="flex items-center gap-1 shrink-0 animate-in fade-in duration-100">
+                        <button 
+                          onClick={() => executeDelete("departments", dept.id!)}
+                          className="px-2 py-1 text-[9px] font-black uppercase tracking-wider bg-red-605 hover:bg-red-705 text-white rounded-md cursor-pointer transition-all"
+                        >
+                          Confirm
+                        </button>
+                        <button 
+                          onClick={() => setDeleteConfirm(null)}
+                          className="px-2 py-1 text-[9px] font-black uppercase tracking-wider bg-gray-100 dark:bg-zinc-800 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-zinc-700/60 rounded-md cursor-pointer transition-all"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    ) : (
+                      <button 
+                        onClick={() => setDeleteConfirm({ coll: "departments", id: dept.id! })}
+                        className="opacity-100 md:opacity-0 group-hover:opacity-100 p-1.5 text-gray-400 hover:text-red-500 dark:text-zinc-500 dark:hover:text-red-400 transition-all cursor-pointer"
+                        title="Delete Department"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    )}
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Employee ID Format Rule Settings Section */}
+        <div className="space-y-6">
+          <h3 className="text-lg font-bold flex items-center gap-2">
+            <Tag className="w-5 h-5 text-gray-400" />
+            Auto Employee ID Settings
+          </h3>
+          <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm space-y-6">
+            {idRulesSuccess && (
+              <div className="p-3 bg-emerald-50 text-emerald-800 text-[10px] font-bold uppercase tracking-wider rounded-xl border border-emerald-100 flex items-center gap-2 animate-in fade-in slide-in-from-top-1 duration-200">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-ping shrink-0" />
+                Employee ID custom template synchronized perfectly!
+              </div>
+            )}
+            
+            <div className="space-y-3">
+              <div>
+                <label className="text-xs font-bold text-gray-400 uppercase tracking-widest pl-1">Default ID Prefix</label>
+                <input 
+                  placeholder="e.g. MCS" 
+                  value={idPrefixInput} 
+                  onChange={e => setIdPrefixInput(e.target.value)}
+                  className="w-full px-4 py-3 bg-gray-50 rounded-xl border-none focus:ring-2 focus:ring-gray-200 mt-1 font-bold font-mono"
+                />
+              </div>
+
+              <div className="p-4 bg-gray-50 rounded-2xl border border-gray-100">
+                <p className="text-xs font-bold text-gray-600 uppercase mb-1">Quick Preview</p>
+                <div className="flex gap-2 text-xs font-bold font-mono">
+                  <span className="bg-blue-50 text-blue-600 px-2 py-1 rounded">
+                    {idPrefixInput.trim() || "(Empty)"} 01
+                  </span>
+                  <span className="bg-blue-50 text-blue-600 px-2 py-1 rounded">
+                    {idPrefixInput.trim() || "(Empty)"} 02
+                  </span>
+                  <span className="bg-blue-50 text-blue-600 px-2 py-1 rounded">
+                    {idPrefixInput.trim() || "(Empty)"} 03
+                  </span>
+                </div>
+                <p className="text-[10.5px] text-gray-400 mt-2 leading-relaxed">New registrations will calculate the highest digit with matching prefix and suggest sequentially.</p>
+              </div>
+
+              <div className="pt-2 flex justify-end">
+                <button 
+                  onClick={saveEmployeeIdSettings}
+                  disabled={isUpdatingIdRules}
+                  className="px-6 py-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl font-bold text-xs uppercase tracking-wider transition-all disabled:opacity-50 cursor-pointer"
+                >
+                  {isUpdatingIdRules ? "Syncing..." : "Save ID Setup"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
       {/* Attendance Policy Section */}
       <div className="space-y-6">
-        <h3 className="text-lg font-bold flex items-center gap-2">
-          <ShieldAlert className="w-5 h-5 text-gray-400" />
-          Attendance Policy
+        <h3 className="text-lg font-bold flex items-center gap-2 text-gray-900">
+          <ShieldAlert className="w-5 h-5 text-zinc-400" />
+          Attendance Policy & Lunch Configurations
         </h3>
-        <div className="bg-white p-8 rounded-3xl border border-gray-100 shadow-sm flex flex-col md:flex-row items-center justify-between gap-6">
-          <div className="space-y-1">
-            <p className="font-bold text-gray-900">Late Arrival Threshold</p>
-            <p className="text-sm text-gray-400">Staff will be automatically marked as "Late" if they check in after this time.</p>
+        
+        <div className="bg-white rounded-3xl border border-gray-100 shadow-sm overflow-hidden p-6 md:p-8 space-y-6">
+          {settingsSuccess && (
+            <div className="p-4 bg-emerald-50 text-emerald-800 text-xs font-bold uppercase tracking-wider rounded-2xl border border-emerald-100/50 flex items-center gap-2 animate-in fade-in slide-in-from-top-2 duration-300">
+              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping shrink-0" />
+              Attendance parameters updated and synced across all staff registries successfully!
+            </div>
+          )}
+
+          <div className="divide-y divide-gray-100">
+            {/* Setting 1: Late Threshold */}
+            <div className="py-4 first:pt-0 flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <div className="space-y-1">
+                <p className="font-extrabold text-sm text-gray-900 uppercase tracking-tight">Late Arrival Threshold</p>
+                <p className="text-xs text-gray-450">Staff will be automatically marked as <span className="font-bold text-amber-600">"Late"</span> if they check in after this hour.</p>
+              </div>
+              <input 
+                type="time"
+                value={lateThreshold}
+                onChange={e => setLateThreshold(e.target.value)}
+                className="px-4 py-2 text-sm bg-gray-50 border border-gray-100 hover:border-gray-200 focus:border-slate-300 rounded-xl font-bold font-mono outline-none focus:ring-0 max-w-[200px]"
+              />
+            </div>
+
+            {/* Setting 2: Half-Day Threshold */}
+            <div className="py-4 flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <div className="space-y-1">
+                <p className="font-extrabold text-sm text-gray-900 uppercase tracking-tight">Half-Day Arrival Threshold</p>
+                <p className="text-xs text-gray-450">Checking in after this time automatically sets the marker to <span className="font-bold text-yellow-600">"Half Day"</span> status.</p>
+              </div>
+              <input 
+                type="time"
+                value={halfDayThreshold}
+                onChange={e => setHalfDayThreshold(e.target.value)}
+                className="px-4 py-2 text-sm bg-gray-50 border border-gray-100 hover:border-gray-200 focus:border-slate-300 rounded-xl font-bold font-mono outline-none focus:ring-0 max-w-[200px]"
+              />
+            </div>
+
+            {/* Setting 3: Allowed Lunch Break (minutes) */}
+            <div className="py-4 last:pb-0 flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <div className="space-y-1">
+                <p className="font-extrabold text-sm text-gray-900 uppercase tracking-tight">Allowed Lunch Duration (Minutes)</p>
+                <p className="text-xs text-gray-450">The official time given for lunch. Anyone exceeding this limit will trigger an <span className="font-bold text-red-500">Overtime Breach</span> audit flag.</p>
+              </div>
+              <div className="flex items-center gap-2 max-w-[200px] w-full">
+                <input 
+                  type="number"
+                  min="10"
+                  max="180"
+                  value={lunchDurationLimit}
+                  onChange={e => setLunchDurationLimit(Number(e.target.value))}
+                  className="w-full px-4 py-2 text-sm bg-gray-50 border border-gray-100 hover:border-gray-200 focus:border-slate-300 rounded-xl font-black font-mono outline-none focus:ring-0"
+                />
+                <span className="text-xs font-extrabold text-gray-400 uppercase shrink-0">Mins</span>
+              </div>
+            </div>
           </div>
-          <div className="flex items-center gap-4 w-full md:w-auto">
-            <input 
-              type="time"
-              value={lateThreshold}
-              onChange={e => setLateThreshold(e.target.value)}
-              className="px-6 py-3 bg-gray-50 rounded-2xl border-none focus:ring-2 focus:ring-blue-100 font-black text-lg"
-            />
+
+          <div className="pt-4 border-t border-gray-150 flex justify-end">
             <button 
               onClick={saveAttendanceSettings}
               disabled={isUpdatingSettings}
-              className="px-8 py-3 bg-blue-600 text-white rounded-2xl font-bold hover:bg-blue-700 transition-all shadow-lg active:scale-95 disabled:opacity-50"
+              className="px-8 py-3 bg-slate-900 hover:bg-slate-800 text-white rounded-2xl font-black text-xs uppercase tracking-wider transition-all shadow-sm active:scale-95 disabled:opacity-50 cursor-pointer"
             >
-              {isUpdatingSettings ? "Saving..." : "Save Policy"}
+              {isUpdatingSettings ? "Syncing..." : "Save Policy Suite"}
             </button>
           </div>
         </div>
@@ -370,16 +632,18 @@ export default function Settings({ user, role }: { user: User; role: UserRole })
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-50">
-                  {profiles.map(profile => (
-                    <tr key={profile.uid} className="hover:bg-gray-50/50 transition-colors">
+                  {profiles.map((profile, idx) => (
+                    <tr key={profile.id || profile.uid || `prof-${idx}`} className="hover:bg-gray-50/50 transition-colors">
                       <td className="px-6 py-4">
                         <div className="flex items-center gap-3">
                           <div className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center font-bold text-xs text-gray-400">
-                            {profile.displayName[0]}
+                            {profile.displayName ? profile.displayName[0] : "U"}
                           </div>
                           <div>
                             <p className="text-sm font-bold text-gray-900">{profile.displayName}</p>
-                            <p className="text-xs text-gray-400">{profile.email}</p>
+                            <p className="text-xs text-gray-400">
+                              {profile.username || (profile.email && (profile.email.endsWith("@modernmanager.com") ? profile.email.replace("@modernmanager.com", "") : (profile.email.endsWith("@modernmanager.local") ? profile.email.replace("@modernmanager.local", "") : profile.email)))}
+                            </p>
                           </div>
                         </div>
                       </td>

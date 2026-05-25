@@ -14,6 +14,8 @@ export interface UserProfile {
   department?: string;
   status?: "active" | "inactive";
   bio?: string;
+  username?: string;
+  password?: string;
 }
 
 export interface RolePermission {
@@ -33,6 +35,17 @@ export interface Employee {
   status: "active" | "inactive";
   documents?: { name: string; type: string; data: string }[];
   department?: string;
+  phone?: string;
+  email?: string;
+  nidFrontPhoto?: string | null;
+  nidBackPhoto?: string | null;
+  birthCertificatePhoto?: string | null;
+  employeeIdCode?: string;
+}
+
+export interface Department {
+  id?: string;
+  name: string;
 }
 
 export type AttendanceStatus = "present" | "absent" | "late" | "half-day" | "leave" | "holiday";

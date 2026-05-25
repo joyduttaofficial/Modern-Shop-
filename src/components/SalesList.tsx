@@ -4,6 +4,7 @@ import { collection, onSnapshot, query, orderBy, deleteDoc, doc, updateDoc, incr
 import { db, OperationType, handleFirestoreError } from "@/src/lib/firebase";
 import { Transaction, Bank, UserRole, Employee } from "@/src/types";
 import { cn, formatCurrency } from "@/src/lib/utils";
+import { useLanguage } from "../contexts/LanguageContext";
 import { 
   Search, 
   Calendar, 
@@ -47,6 +48,7 @@ interface DailySalesGroup {
 }
 
 export default function SalesList({ user, role, onEditSales }: SalesListProps) {
+  const { language, t, formatDate, formatNumber, translateValue } = useLanguage();
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [banks, setBanks] = useState<Bank[]>([]);
   const [employees, setEmployees] = useState<Employee[]>([]);
@@ -264,8 +266,8 @@ export default function SalesList({ user, role, onEditSales }: SalesListProps) {
       {/* Page Header */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 pb-4 border-b border-slate-100">
         <div>
-          <h2 className="text-3xl font-black tracking-tight text-slate-900">Sales Hub</h2>
-          <p className="text-xs font-semibold text-slate-455 uppercase tracking-wider mt-0.5">Audit log of counter sales & store ledger</p>
+          <h2 className="text-3xl font-black tracking-tight text-slate-900">{t("Sales Hub")}</h2>
+          <p className="text-xs font-semibold text-slate-455 uppercase tracking-wider mt-0.5">{t("Audit log of counter sales & store ledger")}</p>
         </div>
         <div className="flex flex-wrap gap-2">
           <button
@@ -274,7 +276,7 @@ export default function SalesList({ user, role, onEditSales }: SalesListProps) {
             className="px-4 py-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl font-bold text-xs uppercase tracking-wider flex items-center justify-center gap-2 transition-all active:scale-[0.98] disabled:opacity-50 cursor-pointer shadow-md"
           >
             <FileDown className="w-4 h-4 text-slate-350" />
-            Export CSV Ledger
+            {t("Export CSV Ledger")}
           </button>
         </div>
       </div>
@@ -287,7 +289,7 @@ export default function SalesList({ user, role, onEditSales }: SalesListProps) {
             <ShoppingCart className="w-5 h-5" />
           </div>
           <div>
-            <p className="text-[10px] uppercase font-black tracking-widest text-slate-400 mb-0.5">Counter Sales</p>
+            <p className="text-[10px] uppercase font-black tracking-widest text-slate-400 mb-0.5">{t("Counter Sales")}</p>
             <h3 className="text-lg font-black text-slate-850 font-mono tracking-tight">{formatCurrency(aggregateEmployeeSales)}</h3>
           </div>
         </div>
@@ -298,7 +300,7 @@ export default function SalesList({ user, role, onEditSales }: SalesListProps) {
             <Building2 className="w-5 h-5" />
           </div>
           <div>
-            <p className="text-[10px] uppercase font-black tracking-widest text-slate-400 mb-0.5">Wholesale</p>
+            <p className="text-[10px] uppercase font-black tracking-widest text-slate-400 mb-0.5">{t("Wholesale")}</p>
             <h3 className="text-lg font-black text-slate-850 font-mono tracking-tight">{formatCurrency(aggregateWholesaleSales)}</h3>
           </div>
         </div>
@@ -309,7 +311,7 @@ export default function SalesList({ user, role, onEditSales }: SalesListProps) {
             <PiggyBank className="w-5 h-5" />
           </div>
           <div>
-            <p className="text-[10px] uppercase font-black tracking-widest text-slate-400 mb-0.5">Deposited Cash</p>
+            <p className="text-[10px] uppercase font-black tracking-widest text-slate-400 mb-0.5">{t("Deposited Cash")}</p>
             <h3 className="text-lg font-black text-slate-850 font-mono tracking-tight">{formatCurrency(aggregateDeposits)}</h3>
           </div>
         </div>
@@ -320,7 +322,7 @@ export default function SalesList({ user, role, onEditSales }: SalesListProps) {
             <Scale className="w-5 h-5 text-slate-300" />
           </div>
           <div>
-            <p className="text-[10px] uppercase font-black tracking-widest text-white/50 mb-0.5">Aggregate Revenue</p>
+            <p className="text-[10px] uppercase font-black tracking-widest text-white/50 mb-0.5">{t("Aggregate Revenue")}</p>
             <h3 className="text-lg font-black text-white font-mono tracking-tight">{formatCurrency(cumulativeGrandTotal)}</h3>
           </div>
         </div>
@@ -334,7 +336,7 @@ export default function SalesList({ user, role, onEditSales }: SalesListProps) {
             <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
             <input
               type="text"
-              placeholder="Filter staff name, day..."
+              placeholder={t("Filter staff name, day...")}
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200/55 rounded-xl text-xs font-semibold placeholder-slate-400 focus:border-slate-800 outline-none transition-all"
@@ -375,7 +377,7 @@ export default function SalesList({ user, role, onEditSales }: SalesListProps) {
               }}
               className="text-xs font-black uppercase tracking-wider text-rose-600 hover:text-rose-700 cursor-pointer transition-colors"
             >
-              Clear active filters
+              {t("Clear active filters")}
             </button>
           </div>
         )}
@@ -386,14 +388,14 @@ export default function SalesList({ user, role, onEditSales }: SalesListProps) {
         {loading ? (
           <div className="py-20 text-center text-gray-400 font-medium bg-white rounded-3xl border border-gray-100 shadow-sm">
             <div className="w-8 h-8 rounded-full border-2 border-blue-500 border-t-transparent animate-spin mx-auto mb-3" />
-            Gathering daily sales logs...
+            {t("Gathering daily sales logs...")}
           </div>
         ) : sortedFilteredGroups.length === 0 ? (
           <div className="py-16 text-center text-gray-400 bg-white border border-gray-100 rounded-3xl shadow-sm italic p-6">
             <Info className="w-8 h-8 text-gray-300 mx-auto mb-2" />
-            No matching daily sales records exist.
+            {t("No matching daily sales records exist.")}
             <p className="not-italic text-xs text-gray-500 mt-1 font-medium">
-              Create a record in the <b>New Sale</b> tab first.
+              {t("Create a record in the New Sale tab first.")}
             </p>
           </div>
         ) : (

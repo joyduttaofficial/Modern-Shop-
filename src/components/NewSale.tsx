@@ -6,6 +6,7 @@ import { Transaction, UserRole, Employee } from "@/src/types";
 import { cn, formatCurrency } from "@/src/lib/utils";
 import { Calendar, UserCircle, Save, CheckCircle, Loader2, Home, ChevronRight, ShoppingCart } from "lucide-react";
 import { format, startOfDay, endOfDay } from "date-fns";
+import { useLanguage } from "../contexts/LanguageContext";
 
 export default function NewSale({ 
   user, 
@@ -18,6 +19,7 @@ export default function NewSale({
   editDate?: string; 
   onClearEditDate?: () => void; 
 }) {
+  const { language, t, formatCurrency, formatDate, formatNumber, translateValue } = useLanguage();
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [loadingEmployees, setLoadingEmployees] = useState(true);
   const [loadingSales, setLoadingSales] = useState(false);
@@ -297,14 +299,14 @@ export default function NewSale({
         </div>
         <div className="flex items-center gap-2 text-xs font-bold text-gray-400">
           <span className="hover:text-gray-900 cursor-pointer flex items-center gap-1">
-            <Home className="w-3.5 h-3.5" /> Home
+            <Home className="w-3.5 h-3.5" /> {t("Home")}
           </span>
           <ChevronRight className="w-3 h-3" />
-          <span className="hover:text-gray-900 cursor-pointer">Sales List</span>
+          <span className="hover:text-gray-900 cursor-pointer">{t("Sales List")}</span>
           <ChevronRight className="w-3 h-3" />
-          <span className="hover:text-gray-900 cursor-pointer text-gray-900">New Sales</span>
+          <span className="hover:text-gray-900 cursor-pointer text-gray-900">{t("New Sale")}</span>
           <ChevronRight className="w-3 h-3" />
-          <span className="text-blue-600">Sales</span>
+          <span className="text-blue-600">{t("Sales")}</span>
         </div>
       </div>
 
@@ -312,8 +314,8 @@ export default function NewSale({
         <div className="bg-emerald-50 border border-emerald-100 p-4 rounded-2xl flex items-center gap-3 text-emerald-800 animate-in fade-in duration-300">
           <CheckCircle className="w-5 h-5 text-emerald-500 shrink-0" />
           <div>
-            <span className="font-bold text-sm block">Daily sales recorded successfully!</span>
-            <span className="text-xs text-emerald-600">Transactions ledger has been synchronized for the select date.</span>
+            <span className="font-bold text-sm block">{t("Daily sales recorded successfully!")}</span>
+            <span className="text-xs text-emerald-600">{t("Transactions ledger has been synchronized for the select date.")}</span>
           </div>
         </div>
       )}
@@ -326,7 +328,7 @@ export default function NewSale({
             {/* Sales Date field */}
             <div className="space-y-2">
               <label className="text-xs font-bold text-red-500 uppercase tracking-widest flex items-center gap-1.5 pl-1">
-                Sales Date <span className="text-red-500 font-bold">*</span>
+                {t("Sales Date")} <span className="text-red-500 font-bold">*</span>
               </label>
               <div className="relative">
                 <Calendar className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400 pointer-events-none" />
@@ -343,14 +345,14 @@ export default function NewSale({
             {/* Day display field */}
             <div className="space-y-2">
               <label className="text-xs font-bold text-red-500 uppercase tracking-widest pl-1">
-                Day <span className="text-red-500 font-bold">*</span>
+                {t("Day")} <span className="text-red-500 font-bold">*</span>
               </label>
               <select
                 disabled
                 value={dayName}
                 className="w-full px-4 py-4 bg-gray-100 rounded-2xl border-none font-bold text-gray-500 cursor-not-allowed appearance-none"
               >
-                <option value={dayName}>{dayName}</option>
+                <option value={dayName}>{language === "bn" ? translateValue(dayName) : dayName}</option>
               </select>
             </div>
           </div>
@@ -360,29 +362,29 @@ export default function NewSale({
             <div className="flex justify-between items-center px-1">
               <h3 className="font-bold text-gray-800 text-lg flex items-center gap-2">
                 <ShoppingCart className="w-5 h-5 text-gray-500" />
-                Staff Sales Entry
+                {t("Staff Sales Entry")}
               </h3>
               <span className="text-xs font-semibold px-3 py-1 bg-blue-50 text-blue-600 rounded-full">
-                {employees.length} Sales Officers
+                {formatNumber(employees.length)} {t("Sales Officers")}
               </span>
             </div>
 
             <div className="border border-gray-100 rounded-2xl overflow-hidden shadow-sm">
               <div className="grid grid-cols-12 bg-[#2D7BBF] text-white text-sm font-bold p-4">
-                <div className="col-span-8">Employee Name</div>
-                <div className="col-span-4 text-center">Amount</div>
+                <div className="col-span-8">{t("Employee Name")}</div>
+                <div className="col-span-4 text-center">{t("Amount")}</div>
               </div>
 
               {loadingEmployees ? (
                 <div className="py-20 text-center text-gray-400 font-medium">
                   <Loader2 className="w-8 h-8 animate-spin mx-auto mb-3 text-blue-500" />
-                  Loading active staff roster...
+                  {t("Loading active staff roster...")}
                 </div>
               ) : employees.length === 0 ? (
                 <div className="p-16 text-center text-gray-400 bg-gray-50/50 italic">
-                  No active employees exist in the "Sales" department.
+                  {t("No active employees exist in the \"Sales\" department.")}
                   <p className="not-italic text-xs text-gray-500 mt-2 font-medium">
-                    Go to the <b>Employees</b> tab and set their department to <b>Sales</b>.
+                    {t("Go to the Employees tab and set their department to Sales.")}
                   </p>
                 </div>
               ) : (
@@ -404,7 +406,7 @@ export default function NewSale({
                           </div>
                           <div>
                             <p className="font-bold text-gray-900">{emp.name}</p>
-                            <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">{emp.role}</p>
+                            <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">{t(emp.role)}</p>
                           </div>
                         </div>
 
@@ -432,11 +434,11 @@ export default function NewSale({
                     {/* Total Sale */}
                     <div className="grid grid-cols-12 items-center p-4">
                       <div className="col-span-8 text-right font-bold text-gray-700 pr-10 text-sm">
-                        Total Sale
+                        {t("Total Sale")}
                       </div>
                       <div className="col-span-4 flex justify-between items-center px-1">
                         <div className="w-full max-w-xs mx-auto text-right pr-4 font-bold text-gray-900 font-mono text-sm">
-                          {totalSale.toFixed(2)}
+                          {formatNumber(totalSale.toFixed(2))}
                         </div>
                       </div>
                     </div>
@@ -444,14 +446,14 @@ export default function NewSale({
                     {/* Wholesale */}
                     <div className="grid grid-cols-12 items-center p-3">
                       <div className="col-span-8 text-right font-bold text-gray-700 pr-10 text-sm">
-                        Wholesale
+                        {t("Wholesale")}
                       </div>
                       <div className="col-span-4">
                         <div className="relative max-w-xs mx-auto animate-in fade-in duration-200">
                           <input
                             type="number"
                             min="0"
-                            placeholder="Enter wholesale amount"
+                            placeholder={language === "bn" ? "পাইকারি পরিমাণ লিখুন" : "Enter wholesale amount"}
                             value={wholesaleAmount}
                             onChange={(e) => setWholesaleAmount(e.target.value)}
                             disabled={saving || loadingSales}
@@ -464,14 +466,14 @@ export default function NewSale({
                     {/* Total Deposit */}
                     <div className="grid grid-cols-12 items-center p-3">
                       <div className="col-span-8 text-right font-bold text-gray-700 pr-10 text-sm">
-                        Total Deposit
+                        {t("Total Deposit")}
                       </div>
                       <div className="col-span-4">
                         <div className="relative max-w-xs mx-auto animate-in fade-in duration-200">
                           <input
                             type="number"
                             min="0"
-                            placeholder="Enter total deposit"
+                            placeholder={language === "bn" ? "মোট জমা পরিমাণ লিখুন" : "Enter total deposit"}
                             value={depositAmount}
                             onChange={(e) => setDepositAmount(e.target.value)}
                             disabled={saving || loadingSales}
@@ -484,11 +486,11 @@ export default function NewSale({
                     {/* Grand Total */}
                     <div className="grid grid-cols-12 items-center p-4">
                       <div className="col-span-8 text-right font-bold text-gray-700 pr-10 text-sm">
-                        Grand Total
+                        {t("Grand Total")}
                       </div>
                       <div className="col-span-4 flex justify-between items-center px-1">
                         <div className="w-full max-w-xs mx-auto text-right pr-4 font-bold text-gray-900 font-mono text-sm">
-                          {grandTotal.toFixed(2)}
+                          {formatNumber(grandTotal.toFixed(2))}
                         </div>
                       </div>
                     </div>
@@ -509,10 +511,10 @@ export default function NewSale({
                 {saving ? (
                   <div className="flex items-center gap-2">
                     <Loader2 className="w-5 h-5 animate-spin text-white" />
-                    <span>saving...</span>
+                    <span>{t("saving...")}</span>
                   </div>
                 ) : (
-                  <span className="text-base text-white">save</span>
+                  <span className="text-base text-white">{t("save")}</span>
                 )}
               </button>
             </div>

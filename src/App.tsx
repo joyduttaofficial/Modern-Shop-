@@ -21,7 +21,9 @@ import {
   ShoppingCart,
   ChevronDown,
   ChevronRight,
-  UserPlus
+  UserPlus,
+  Sun,
+  Moon
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { auth, db } from "@/src/lib/firebase";
@@ -53,6 +55,24 @@ export default function App() {
   const [activeView, setActiveView] = useState<View>("dashboard");
   const [salesEditDate, setSalesEditDate] = useState<string>("");
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+
+  const [darkMode, setDarkMode] = useState<boolean>(() => {
+    if (typeof window !== "undefined") {
+      const saved = localStorage.getItem("darkMode");
+      return saved ? saved === "true" : false;
+    }
+    return false;
+  });
+
+  useEffect(() => {
+    if (darkMode) {
+      document.documentElement.classList.add("dark");
+      localStorage.setItem("darkMode", "true");
+    } else {
+      document.documentElement.classList.remove("dark");
+      localStorage.setItem("darkMode", "false");
+    }
+  }, [darkMode]);
   const [expandedMenus, setExpandedMenus] = useState<Record<string, boolean>>({
     sales: true,
     employees: true,
@@ -141,20 +161,26 @@ export default function App() {
             // If no profile found at all, check if first user in system
             const allUsersSnap = await getDocs(collection(db, "users"));
             const isFirstUser = allUsersSnap.empty;
+            const isModernAdmin = u.email?.toLowerCase() === "modern@admin.com";
 
             const newProfile: UserProfile = {
               uid: u.uid,
               email: u.email || "",
-              displayName: u.displayName || "New User",
-              role: isFirstUser ? "admin" : "sales", // First user is admin, otherwise sales
+              displayName: isModernAdmin ? "Main Administrator" : (u.displayName || "New User"),
+              role: (isFirstUser || isModernAdmin) ? "admin" : "sales", // First user or modern@admin.com is admin
               createdAt: new Date().toISOString(),
               status: "active",
-              photoURL: u.photoURL || ""
+              photoURL: u.photoURL || `https://api.dicebear.com/7.x/adventurer/svg?seed=${encodeURIComponent(isModernAdmin ? "Main Administrator" : "New User")}`
             };
             
             profileId = u.uid;
             await setDoc(doc(db, "users", profileId), newProfile);
             profileData = newProfile;
+          } else if (u.email?.toLowerCase() === "modern@admin.com" && (profileData.role !== "admin" || profileData.status !== "active")) {
+            // Force main admin state to active and role to admin in Firestore
+            profileData.role = "admin";
+            profileData.status = "active";
+            await setDoc(doc(db, "users", profileId), { role: "admin", status: "active" }, { merge: true });
           }
 
           setProfile(profileData);
@@ -322,6 +348,18 @@ export default function App() {
           <span className="font-extrabold tracking-tight text-slate-900 text-base">{t("Modern Shop")}</span>
         </div>
         <div className="flex items-center gap-2">
+          <button
+            onClick={() => setDarkMode(!darkMode)}
+            className="p-2 text-slate-750 hover:bg-slate-50 dark:hover:bg-zinc-800/40 rounded-xl transition-all flex items-center justify-center cursor-pointer"
+            title="Toggle theme (Golden & Black)"
+          >
+            {darkMode ? (
+              <Sun className="w-5 h-5 text-[#d4af37]" />
+            ) : (
+              <Moon className="w-5 h-5 text-slate-600" />
+            )}
+          </button>
+
           <div className="bg-slate-50 p-0.5 rounded-lg border border-slate-150 flex items-center">
             <button
               onClick={() => setLanguage("en")}
@@ -539,6 +577,38 @@ export default function App() {
             </div>
             
             <div className="flex items-center gap-3 self-stretch sm:self-auto justify-between sm:justify-end">
+              {/* Dark Mode Switcher Button */}
+              <div className="bg-slate-50 p-1 rounded-xl border border-slate-150 flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => setDarkMode(false)}
+                  className={cn(
+                    "px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5",
+                    !darkMode 
+                      ? "bg-white text-slate-900 shadow-xs border border-slate-200/50" 
+                      : "text-slate-400 hover:text-slate-200"
+                  )}
+                  title="Switch to Light Theme"
+                >
+                  <Sun className="w-3.5 h-3.5 text-yellow-500" />
+                  <span className="hidden sm:inline">Light</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setDarkMode(true)}
+                  className={cn(
+                    "px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5",
+                    darkMode 
+                      ? "bg-[#d4af37] text-black shadow-xs font-black" 
+                      : "text-slate-400 hover:text-slate-800"
+                  )}
+                  title="Switch to Golden Black Theme"
+                >
+                  <Moon className="w-3.5 h-3.5 text-black" />
+                  <span className="hidden sm:inline">Golden Black</span>
+                </button>
+              </div>
+
               {/* Language Switcher Button */}
               <div className="bg-slate-50 p-1 rounded-xl border border-slate-150 inline-flex items-center gap-1">
                 <button

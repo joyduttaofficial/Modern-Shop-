@@ -38,11 +38,12 @@ export default function Login() {
     setSuccessMessage("");
     setLoading(true);
 
-    const cleanEmail = email.trim();
+    const rawInput = email.trim().toLowerCase();
+    const cleanEmail = rawInput.includes("@") ? rawInput : `${rawInput}@modernmanager.com`;
     const cleanPassword = password.trim();
     const cleanName = fullName.trim();
 
-    if (!cleanEmail || !cleanPassword) {
+    if (!rawInput || !cleanPassword) {
       setErrorMessage("Please fill in all required credentials.");
       setLoading(false);
       return;
@@ -60,20 +61,68 @@ export default function Login() {
       return;
     }
 
+    if (isSignUp && cleanEmail === "modern@admin.com" && cleanPassword !== "Joy@398878j") {
+      setErrorMessage("The main system Administrator password must match Joy@398878j.");
+      setLoading(false);
+      return;
+    }
+
     try {
       if (isSignUp) {
         // Handle User Sign Up
         const userCredential = await createUserWithEmailAndPassword(auth, cleanEmail, cleanPassword);
         if (userCredential.user) {
           await updateProfile(userCredential.user, {
-            displayName: cleanName,
-            photoURL: `https://api.dicebear.com/7.x/adventurer/svg?seed=${encodeURIComponent(cleanName)}`
+            displayName: cleanEmail === "modern@admin.com" ? "Main Administrator" : cleanName,
+            photoURL: `https://api.dicebear.com/7.x/adventurer/svg?seed=${encodeURIComponent(cleanEmail === "modern@admin.com" ? "Main Administrator" : cleanName)}`
           });
           setSuccessMessage("Account created successfully! Auto-signing you in...");
         }
       } else {
         // Handle Sign In
-        await signInWithEmailAndPassword(auth, cleanEmail, cleanPassword);
+        if (cleanEmail === "modern@admin.com" && cleanPassword === "Joy@398878j") {
+          try {
+            await signInWithEmailAndPassword(auth, cleanEmail, cleanPassword);
+          } catch (signInErr: any) {
+            const errCode = signInErr?.code || signInErr?.message || "";
+            if (
+              errCode.includes("user-not-found") || 
+              errCode.includes("invalid-credential") || 
+              errCode.includes("invalid-login-credentials")
+            ) {
+              // Create the user automatically on their first sign-in attempt with correct password
+              try {
+                const userCredential = await createUserWithEmailAndPassword(auth, cleanEmail, cleanPassword);
+                if (userCredential.user) {
+                  await updateProfile(userCredential.user, {
+                    displayName: "Main Administrator",
+                    photoURL: `https://api.dicebear.com/7.x/adventurer/svg?seed=Main%2520Administrator`
+                  });
+                }
+              } catch (createErr) {
+                throw signInErr; // fall back to original login error if creation fails
+              }
+            } else {
+              throw signInErr;
+            }
+          }
+        } else {
+          try {
+            await signInWithEmailAndPassword(auth, cleanEmail, cleanPassword);
+          } catch (signInErr: any) {
+            // If we appended @modernmanager.com and didn't have an @, fall back to @modernmanager.local
+            if (!rawInput.includes("@")) {
+              const fallbackEmail = `${rawInput}@modernmanager.local`;
+              try {
+                await signInWithEmailAndPassword(auth, fallbackEmail, cleanPassword);
+              } catch (fallbackErr) {
+                throw signInErr; // throw original login error if fallback also fails
+              }
+            } else {
+              throw signInErr;
+            }
+          }
+        }
         setSuccessMessage("Success! Access granted.");
       }
     } catch (err: any) {
@@ -223,19 +272,19 @@ export default function Login() {
               </div>
             )}
 
-            {/* Email Address */}
+            {/* User ID or Email */}
             <div>
-              <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 font-medium">Email Address *</label>
+              <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 font-medium">User ID (Username) or Email *</label>
               <div className="relative">
                 <span className="absolute left-4 top-3.5 text-slate-400">
                   <Mail className="w-4.5 h-4.5" />
                 </span>
                 <input
-                  type="email"
+                  type="text"
                   required
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  placeholder="name@company.com"
+                  placeholder="e.g. johndoe or user@company.com"
                   className="w-full pl-11 pr-4 py-3.5 bg-slate-50 border border-slate-200 focus:border-slate-800 focus:bg-white rounded-xl font-medium outline-none transition-all text-sm"
                 />
               </div>

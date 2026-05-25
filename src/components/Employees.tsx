@@ -32,12 +32,21 @@ export default function Employees({
   const [status, setStatus] = useState<"active" | "inactive">("active");
   const [department, setDepartment] = useState("Sales");
   const [employeeDocuments, setEmployeeDocuments] = useState<{ name: string; type: string; data: string }[]>([]);
+  const [phone, setPhone] = useState("");
+  const [email, setEmail] = useState("");
+  const [nidFrontPhoto, setNidFrontPhoto] = useState<string | null>(null);
+  const [nidBackPhoto, setNidBackPhoto] = useState<string | null>(null);
+  const [birthCertificatePhoto, setBirthCertificatePhoto] = useState<string | null>(null);
   const [showForm, setShowForm] = useState(mode === "new");
   const [editingEmployee, setEditingEmployee] = useState<Employee | null>(null);
   const [viewingProfile, setViewingProfile] = useState<Employee | null>(null);
   const [viewingAttendance, setViewingAttendance] = useState<Employee | null>(null);
   const [showImport, setShowImport] = useState(false);
   const [importText, setImportText] = useState("");
+
+  const [employeeIdCode, setEmployeeIdCode] = useState("");
+  const [idPrefix, setIdPrefix] = useState("MCS");
+  const [customDepts, setCustomDepts] = useState<{ id?: string; name: string }[]>([]);
 
   // Deletion Confirmation State
   const [employeeToDelete, setEmployeeToDelete] = useState<string | null>(null);
@@ -66,8 +75,58 @@ export default function Employees({
       setBanks(snap.docs.map(d => ({ id: d.id, ...d.data() } as Bank)));
     }, (error) => handleFirestoreError(error, OperationType.LIST, "banks"));
 
-    return () => { unsub(); unsubTx(); unsubBanks(); };
+    const unsubIdSettings = onSnapshot(doc(db, "settings", "employeeId"), (docSnap) => {
+      if (docSnap.exists()) {
+        setIdPrefix(docSnap.data().prefix || "MCS");
+      }
+    });
+
+    const unsubDepts = onSnapshot(collection(db, "departments"), (snap) => {
+      setCustomDepts(snap.docs.map(d => ({ id: d.id, name: d.data().name as string })));
+    });
+
+    return () => { 
+      unsub(); 
+      unsubTx(); 
+      unsubBanks(); 
+      unsubIdSettings();
+      unsubDepts();
+    };
   }, []);
+
+  // Sync / Suggest Next Employee ID sequentially
+  useEffect(() => {
+    if (showForm && !editingEmployee) {
+      const prefix = idPrefix.trim() || "MCS";
+      const matchingIds = employees
+        .map(e => e.employeeIdCode || "")
+        .filter(id => id.toUpperCase().startsWith(prefix.toUpperCase()));
+      
+      let maxNum = 0;
+      matchingIds.forEach(id => {
+        const numPart = id.substring(prefix.length).trim();
+        const num = parseInt(numPart, 10);
+        if (!isNaN(num) && num > maxNum) {
+          maxNum = num;
+        }
+      });
+      
+      const nextNum = maxNum + 1;
+      const formattedNum = nextNum < 10 ? `0${nextNum}` : `${nextNum}`;
+      setEmployeeIdCode(`${prefix} ${formattedNum}`);
+    }
+  }, [showForm, editingEmployee, employees, idPrefix]);
+
+  // Handle dynamic default departments
+  useEffect(() => {
+    if (showForm && !editingEmployee) {
+      if (customDepts.length > 0) {
+        setDepartment(customDepts[0].name);
+      } else {
+        setDepartment("Sales");
+      }
+    }
+  }, [showForm, editingEmployee, customDepts]);
 
   const handleBulkImport = async () => {
     if (!importText) return;
@@ -159,17 +218,36 @@ export default function Employees({
     setEmployeeDocuments(prev => prev.filter((_, i) => i !== index));
   };
 
+  const handlePhotoUpload = (e: React.ChangeEvent<HTMLInputElement>, target: "nidFront" | "nidBack" | "birth") => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      const base64Data = reader.result as string;
+      if (target === "nidFront") setNidFrontPhoto(base64Data);
+      else if (target === "nidBack") setNidBackPhoto(base64Data);
+      else if (target === "birth") setBirthCertificatePhoto(base64Data);
+    };
+    reader.readAsDataURL(file);
+  };
+
   const handleAddEmployee = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!name || !empRole || !salary) return;
+    if (!name || !salary) return;
     try {
       const employeeData = {
         name,
-        role: empRole,
+        role: empRole || "",
         salary: parseFloat(salary),
         status: status,
         department: department,
         documents: employeeDocuments,
+        phone,
+        email,
+        nidFrontPhoto,
+        nidBackPhoto,
+        birthCertificatePhoto,
+        employeeIdCode: employeeIdCode.trim(),
         joinedDate: editingEmployee?.joinedDate || new Date().toISOString()
       };
 
@@ -195,6 +273,12 @@ export default function Employees({
     setStatus("active");
     setDepartment("Sales");
     setEmployeeDocuments([]);
+    setPhone("");
+    setEmail("");
+    setNidFrontPhoto(null);
+    setNidBackPhoto(null);
+    setBirthCertificatePhoto(null);
+    setEmployeeIdCode("");
     setShowForm(mode === "new");
     setEditingEmployee(null);
   };
@@ -202,11 +286,17 @@ export default function Employees({
   const startEdit = (emp: Employee) => {
     setEditingEmployee(emp);
     setName(emp.name);
-    setEmpRole(emp.role);
+    setEmpRole(emp.role || "");
     setSalary(emp.salary.toString());
     setStatus(emp.status);
     setDepartment(emp.department || "Sales");
     setEmployeeDocuments(emp.documents || []);
+    setPhone(emp.phone || "");
+    setEmail(emp.email || "");
+    setNidFrontPhoto(emp.nidFrontPhoto || null);
+    setNidBackPhoto(emp.nidBackPhoto || null);
+    setBirthCertificatePhoto(emp.birthCertificatePhoto || null);
+    setEmployeeIdCode(emp.employeeIdCode || "");
     setShowForm(true);
   };
 
@@ -293,7 +383,20 @@ export default function Employees({
             New Employee Registration
           </h3>
           <form onSubmit={handleAddEmployee} className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            <div className="space-y-1.5 md:col-span-2 lg:col-span-1">
+            <div className="space-y-1.5">
+              <label className="text-xs font-bold text-gray-400 uppercase tracking-widest pl-1 flex items-center gap-1.5">
+                Employee ID
+                <span className="text-[9px] font-bold text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded font-mono">Auto generated</span>
+              </label>
+              <input 
+                required
+                placeholder="e.g. MCS 01"
+                value={employeeIdCode}
+                onChange={e => setEmployeeIdCode(e.target.value)}
+                className="w-full px-4 py-4 bg-gray-50 rounded-2xl border-none focus:ring-2 focus:ring-gray-200 font-bold font-mono"
+              />
+            </div>
+            <div className="space-y-1.5 md:col-span-2 lg:col-span-2">
               <label className="text-xs font-bold text-gray-400 uppercase tracking-widest pl-1">Full Name</label>
               <input 
                 required
@@ -304,15 +407,28 @@ export default function Employees({
               />
             </div>
             <div className="space-y-1.5">
-              <label className="text-xs font-bold text-gray-400 uppercase tracking-widest pl-1">Designation</label>
+              <label className="text-xs font-bold text-gray-400 uppercase tracking-widest pl-1">Phone Number</label>
               <input 
                 required
-                placeholder="e.g. Sales Executive"
-                value={empRole}
-                onChange={e => setEmpRole(e.target.value)}
+                type="tel"
+                placeholder="e.g. 017XXXXXXXX"
+                value={phone}
+                onChange={e => setPhone(e.target.value)}
+                className="w-full px-4 py-4 bg-gray-50 rounded-2xl border-none focus:ring-2 focus:ring-gray-200 font-medium font-mono"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-xs font-bold text-gray-400 uppercase tracking-widest pl-1">Email Address</label>
+              <input 
+                required
+                type="email"
+                placeholder="e.g. employee@company.com"
+                value={email}
+                onChange={e => setEmail(e.target.value)}
                 className="w-full px-4 py-4 bg-gray-50 rounded-2xl border-none focus:ring-2 focus:ring-gray-200 font-medium"
               />
             </div>
+
             <div className="space-y-1.5">
               <label className="text-xs font-bold text-gray-400 uppercase tracking-widest pl-1">Monthly Salary (BDT)</label>
               <input 
@@ -344,14 +460,118 @@ export default function Employees({
                 onChange={e => setDepartment(e.target.value)}
                 className="w-full px-4 py-4 bg-gray-50 rounded-2xl border-none focus:ring-2 focus:ring-gray-200 font-medium font-bold outline-none cursor-pointer"
               >
-                <option value="Sales">Sales</option>
-                <option value="Accounts">Accounts</option>
-                <option value="Marketing">Marketing</option>
-                <option value="IT / Support">IT / Support</option>
-                <option value="Management">Management</option>
-                <option value="Delivery">Delivery</option>
-                <option value="Others">Others</option>
+                {customDepts.length > 0 ? (
+                  customDepts.map(d => (
+                    <option key={d.id || d.name} value={d.name}>{d.name}</option>
+                  ))
+                ) : (
+                  <>
+                    <option value="Sales">Sales</option>
+                    <option value="Accounts">Accounts</option>
+                    <option value="Marketing">Marketing</option>
+                    <option value="IT / Support">IT / Support</option>
+                    <option value="Management">Management</option>
+                    <option value="Delivery">Delivery</option>
+                    <option value="Others">Others</option>
+                  </>
+                )}
               </select>
+            </div>
+
+            {/* Custom NID Photo & Birth Certificate Photo Upload Panels */}
+            <div className="md:col-span-2 lg:col-span-3 grid grid-cols-1 md:grid-cols-3 gap-6">
+              {/* NID Front */}
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-gray-400 uppercase tracking-widest pl-1">NID Card Front Photo</label>
+                <div className="relative border-2 border-dashed border-gray-200 rounded-3xl p-4 flex flex-col items-center justify-center min-h-[140px] hover:border-blue-400 hover:bg-blue-50/20 transition-all group">
+                  {nidFrontPhoto ? (
+                    <div className="relative w-full h-full flex flex-col items-center justify-center">
+                      <img src={nidFrontPhoto} alt="NID Front" className="max-h-[100px] object-contain rounded-xl mb-2" />
+                      <button 
+                        type="button" 
+                        onClick={() => setNidFrontPhoto(null)}
+                        className="text-xs text-red-500 font-bold hover:underline"
+                      >
+                        Remove Photo
+                      </button>
+                    </div>
+                  ) : (
+                    <label className="w-full h-full flex flex-col items-center justify-center cursor-pointer text-gray-450 hover:text-blue-500 transition-colors">
+                      <Image className="w-8 h-8 mb-2 text-gray-300 group-hover:text-blue-400" />
+                      <span className="text-xs font-black uppercase tracking-wider">Upload Front Side</span>
+                      <span className="text-[10px] text-gray-400 mt-0.5">Click or drag image</span>
+                      <input 
+                        type="file" 
+                        accept="image/*" 
+                        className="hidden" 
+                        onChange={(e) => handlePhotoUpload(e, "nidFront")} 
+                      />
+                    </label>
+                  )}
+                </div>
+              </div>
+
+              {/* NID Back */}
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-gray-400 uppercase tracking-widest pl-1">NID Card Back Photo</label>
+                <div className="relative border-2 border-dashed border-gray-200 rounded-3xl p-4 flex flex-col items-center justify-center min-h-[140px] hover:border-blue-400 hover:bg-blue-50/20 transition-all group">
+                  {nidBackPhoto ? (
+                    <div className="relative w-full h-full flex flex-col items-center justify-center">
+                      <img src={nidBackPhoto} alt="NID Back" className="max-h-[100px] object-contain rounded-xl mb-2" />
+                      <button 
+                        type="button" 
+                        onClick={() => setNidBackPhoto(null)}
+                        className="text-xs text-red-500 font-bold hover:underline"
+                      >
+                        Remove Photo
+                      </button>
+                    </div>
+                  ) : (
+                    <label className="w-full h-full flex flex-col items-center justify-center cursor-pointer text-gray-450 hover:text-blue-500 transition-colors">
+                      <Image className="w-8 h-8 mb-2 text-gray-300 group-hover:text-blue-400" />
+                      <span className="text-xs font-black uppercase tracking-wider">Upload Back Side</span>
+                      <span className="text-[10px] text-gray-400 mt-0.5">Click or drag image</span>
+                      <input 
+                        type="file" 
+                        accept="image/*" 
+                        className="hidden" 
+                        onChange={(e) => handlePhotoUpload(e, "nidBack")} 
+                      />
+                    </label>
+                  )}
+                </div>
+              </div>
+
+              {/* Birth Certificate */}
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-gray-400 uppercase tracking-widest pl-1">Birth Certificate Photo</label>
+                <div className="relative border-2 border-dashed border-gray-200 rounded-3xl p-4 flex flex-col items-center justify-center min-h-[140px] hover:border-blue-400 hover:bg-blue-50/20 transition-all group">
+                  {birthCertificatePhoto ? (
+                    <div className="relative w-full h-full flex flex-col items-center justify-center">
+                      <img src={birthCertificatePhoto} alt="Birth Certificate" className="max-h-[100px] object-contain rounded-xl mb-2" />
+                      <button 
+                        type="button" 
+                        onClick={() => setBirthCertificatePhoto(null)}
+                        className="text-xs text-red-500 font-bold hover:underline"
+                      >
+                        Remove Photo
+                      </button>
+                    </div>
+                  ) : (
+                    <label className="w-full h-full flex flex-col items-center justify-center cursor-pointer text-gray-450 hover:text-blue-500 transition-colors">
+                      <Image className="w-8 h-8 mb-2 text-gray-300 group-hover:text-blue-400" />
+                      <span className="text-xs font-black uppercase tracking-wider">Upload Certificate</span>
+                      <span className="text-[10px] text-gray-400 mt-0.5">Click or drag image</span>
+                      <input 
+                        type="file" 
+                        accept="image/*" 
+                        className="hidden" 
+                        onChange={(e) => handlePhotoUpload(e, "birth")} 
+                      />
+                    </label>
+                  )}
+                </div>
+              </div>
             </div>
 
             <div className="md:col-span-2 lg:col-span-2 space-y-1.5">
@@ -477,7 +697,20 @@ export default function Employees({
             {editingEmployee ? "Edit Employee Profile" : "New Employee Registration"}
           </h3>
           <form onSubmit={handleAddEmployee} className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            <div className="space-y-1.5 md:col-span-2 lg:col-span-1">
+            <div className="space-y-1.5">
+              <label className="text-xs font-bold text-gray-400 uppercase tracking-widest pl-1 flex items-center gap-1.5">
+                Employee ID
+                <span className="text-[9px] font-bold text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded font-mono">Auto generated</span>
+              </label>
+              <input 
+                required
+                placeholder="e.g. MCS 01"
+                value={employeeIdCode}
+                onChange={e => setEmployeeIdCode(e.target.value)}
+                className="w-full px-4 py-4 bg-gray-50 rounded-2xl border-none focus:ring-2 focus:ring-gray-200 font-bold font-mono"
+              />
+            </div>
+            <div className="space-y-1.5 md:col-span-2 lg:col-span-2">
               <label className="text-xs font-bold text-gray-400 uppercase tracking-widest pl-1">Full Name</label>
               <input 
                 required
@@ -488,15 +721,28 @@ export default function Employees({
               />
             </div>
             <div className="space-y-1.5">
-              <label className="text-xs font-bold text-gray-400 uppercase tracking-widest pl-1">Designation</label>
+              <label className="text-xs font-bold text-gray-400 uppercase tracking-widest pl-1">Phone Number</label>
               <input 
                 required
-                placeholder="e.g. Sales Executive"
-                value={empRole}
-                onChange={e => setEmpRole(e.target.value)}
+                type="tel"
+                placeholder="e.g. 017XXXXXXXX"
+                value={phone}
+                onChange={e => setPhone(e.target.value)}
+                className="w-full px-4 py-4 bg-gray-50 rounded-2xl border-none focus:ring-2 focus:ring-gray-200 font-medium font-mono"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-xs font-bold text-gray-400 uppercase tracking-widest pl-1">Email Address</label>
+              <input 
+                required
+                type="email"
+                placeholder="e.g. employee@company.com"
+                value={email}
+                onChange={e => setEmail(e.target.value)}
                 className="w-full px-4 py-4 bg-gray-50 rounded-2xl border-none focus:ring-2 focus:ring-gray-200 font-medium"
               />
             </div>
+
             <div className="space-y-1.5">
               <label className="text-xs font-bold text-gray-400 uppercase tracking-widest pl-1">Monthly Salary (BDT)</label>
               <input 
@@ -528,14 +774,118 @@ export default function Employees({
                 onChange={e => setDepartment(e.target.value)}
                 className="w-full px-4 py-4 bg-gray-50 rounded-2xl border-none focus:ring-2 focus:ring-gray-200 font-medium"
               >
-                <option value="Sales">Sales</option>
-                <option value="Accounts">Accounts</option>
-                <option value="Marketing">Marketing</option>
-                <option value="IT / Support">IT / Support</option>
-                <option value="Management">Management</option>
-                <option value="Delivery">Delivery</option>
-                <option value="Others">Others</option>
+                {customDepts.length > 0 ? (
+                  customDepts.map(d => (
+                    <option key={d.id || d.name} value={d.name}>{d.name}</option>
+                  ))
+                ) : (
+                  <>
+                    <option value="Sales">Sales</option>
+                    <option value="Accounts">Accounts</option>
+                    <option value="Marketing">Marketing</option>
+                    <option value="IT / Support">IT / Support</option>
+                    <option value="Management">Management</option>
+                    <option value="Delivery">Delivery</option>
+                    <option value="Others">Others</option>
+                  </>
+                )}
               </select>
+            </div>
+
+            {/* Custom NID Photo & Birth Certificate Photo Upload Panels */}
+            <div className="md:col-span-2 lg:col-span-3 grid grid-cols-1 md:grid-cols-3 gap-6">
+              {/* NID Front */}
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-gray-400 uppercase tracking-widest pl-1">NID Card Front Photo</label>
+                <div className="relative border-2 border-dashed border-gray-200 rounded-3xl p-4 flex flex-col items-center justify-center min-h-[140px] hover:border-blue-400 hover:bg-blue-50/20 transition-all group">
+                  {nidFrontPhoto ? (
+                    <div className="relative w-full h-full flex flex-col items-center justify-center">
+                      <img src={nidFrontPhoto} alt="NID Front" className="max-h-[100px] object-contain rounded-xl mb-2" />
+                      <button 
+                        type="button" 
+                        onClick={() => setNidFrontPhoto(null)}
+                        className="text-xs text-red-500 font-bold hover:underline"
+                      >
+                        Remove Photo
+                      </button>
+                    </div>
+                  ) : (
+                    <label className="w-full h-full flex flex-col items-center justify-center cursor-pointer text-gray-450 hover:text-blue-500 transition-colors">
+                      <Image className="w-8 h-8 mb-2 text-gray-300 group-hover:text-blue-400" />
+                      <span className="text-xs font-black uppercase tracking-wider">Upload Front Side</span>
+                      <span className="text-[10px] text-gray-400 mt-0.5">Click or drag image</span>
+                      <input 
+                        type="file" 
+                        accept="image/*" 
+                        className="hidden" 
+                        onChange={(e) => handlePhotoUpload(e, "nidFront")} 
+                      />
+                    </label>
+                  )}
+                </div>
+              </div>
+
+              {/* NID Back */}
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-gray-400 uppercase tracking-widest pl-1">NID Card Back Photo</label>
+                <div className="relative border-2 border-dashed border-gray-200 rounded-3xl p-4 flex flex-col items-center justify-center min-h-[140px] hover:border-blue-400 hover:bg-blue-50/20 transition-all group">
+                  {nidBackPhoto ? (
+                    <div className="relative w-full h-full flex flex-col items-center justify-center">
+                      <img src={nidBackPhoto} alt="NID Back" className="max-h-[100px] object-contain rounded-xl mb-2" />
+                      <button 
+                        type="button" 
+                        onClick={() => setNidBackPhoto(null)}
+                        className="text-xs text-red-500 font-bold hover:underline"
+                      >
+                        Remove Photo
+                      </button>
+                    </div>
+                  ) : (
+                    <label className="w-full h-full flex flex-col items-center justify-center cursor-pointer text-gray-450 hover:text-blue-500 transition-colors">
+                      <Image className="w-8 h-8 mb-2 text-gray-300 group-hover:text-blue-400" />
+                      <span className="text-xs font-black uppercase tracking-wider">Upload Back Side</span>
+                      <span className="text-[10px] text-gray-400 mt-0.5">Click or drag image</span>
+                      <input 
+                        type="file" 
+                        accept="image/*" 
+                        className="hidden" 
+                        onChange={(e) => handlePhotoUpload(e, "nidBack")} 
+                      />
+                    </label>
+                  )}
+                </div>
+              </div>
+
+              {/* Birth Certificate */}
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-gray-400 uppercase tracking-widest pl-1">Birth Certificate Photo</label>
+                <div className="relative border-2 border-dashed border-gray-200 rounded-3xl p-4 flex flex-col items-center justify-center min-h-[140px] hover:border-blue-400 hover:bg-blue-50/20 transition-all group">
+                  {birthCertificatePhoto ? (
+                    <div className="relative w-full h-full flex flex-col items-center justify-center">
+                      <img src={birthCertificatePhoto} alt="Birth Certificate" className="max-h-[100px] object-contain rounded-xl mb-2" />
+                      <button 
+                        type="button" 
+                        onClick={() => setBirthCertificatePhoto(null)}
+                        className="text-xs text-red-500 font-bold hover:underline"
+                      >
+                        Remove Photo
+                      </button>
+                    </div>
+                  ) : (
+                    <label className="w-full h-full flex flex-col items-center justify-center cursor-pointer text-gray-450 hover:text-blue-500 transition-colors">
+                      <Image className="w-8 h-8 mb-2 text-gray-300 group-hover:text-blue-400" />
+                      <span className="text-xs font-black uppercase tracking-wider">Upload Certificate</span>
+                      <span className="text-[10px] text-gray-400 mt-0.5">Click or drag image</span>
+                      <input 
+                        type="file" 
+                        accept="image/*" 
+                        className="hidden" 
+                        onChange={(e) => handlePhotoUpload(e, "birth")} 
+                      />
+                    </label>
+                  )}
+                </div>
+              </div>
             </div>
 
             <div className="md:col-span-2 lg:col-span-2 space-y-1.5">
@@ -613,14 +963,21 @@ export default function Employees({
                       )}
                     </button>
                     <div>
-                      <h3 className="font-bold text-gray-900 group-hover:text-blue-600 transition-colors flex items-center gap-2">
-                        {emp.name}
-                        <button onClick={() => setViewingProfile(emp)} className="p-1 hover:text-blue-600 text-gray-300">
-                          <ExternalLink className="w-3 h-3" />
-                        </button>
-                      </h3>
+                      <div className="flex flex-wrap items-center gap-1.5 mb-0.5">
+                        {emp.employeeIdCode && (
+                          <span className="text-[10px] bg-slate-100 font-extrabold font-mono text-slate-800 px-1.5 py-0.5 rounded leading-none shrink-0 border border-slate-200/50">
+                            {emp.employeeIdCode}
+                          </span>
+                        )}
+                        <h3 className="font-bold text-gray-900 group-hover:text-blue-600 transition-colors flex items-center gap-2">
+                          {emp.name}
+                          <button onClick={() => setViewingProfile(emp)} className="p-1 hover:text-blue-600 text-gray-300">
+                            <ExternalLink className="w-3 h-3" />
+                          </button>
+                        </h3>
+                      </div>
                       <p className="text-xs font-bold text-gray-400 uppercase tracking-widest">
-                        {emp.role} {emp.department ? `• ${emp.department}` : `• Sales`}
+                        {emp.department || "Sales"} {emp.phone ? `• ${emp.phone}` : ""}
                       </p>
                     </div>
                   </div>
@@ -742,9 +1099,15 @@ export default function Employees({
                         {viewingProfile.status}
                       </span>
                     </div>
-                    <p className="text-gray-500 font-bold flex items-center gap-2">
-                       {viewingProfile.role} • Joined {format(new Date(viewingProfile.joinedDate), "MMMM dd, yyyy")}
-                    </p>
+                    <div className="text-sm text-gray-500 font-bold space-y-1 mt-1">
+                      <p>
+                        {viewingProfile.department || "Sales"} • Joined {format(new Date(viewingProfile.joinedDate), "MMMM dd, yyyy")}
+                      </p>
+                      <p className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-blue-600 font-bold">
+                        {viewingProfile.phone && <span>📞 {viewingProfile.phone}</span>}
+                        {viewingProfile.email && <span>✉️ {viewingProfile.email}</span>}
+                      </p>
+                    </div>
                   </div>
                 </div>
                 <button 
@@ -836,6 +1199,66 @@ export default function Employees({
                           No transaction history.
                         </div>
                       )}
+                    </div>
+                  </div>
+
+                  {/* Identification Documents (KYC) Section - takes full width */}
+                  <div className="space-y-4 lg:col-span-2 pt-4">
+                    <h3 className="font-bold text-gray-900 flex items-center gap-2">
+                      <ShieldCheck className="w-5 h-5 text-blue-600" /> 
+                      Official Information & KYC Documents
+                    </h3>
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                      {/* NID Front */}
+                      <div className="bg-white p-5 rounded-[24px] border border-gray-100 shadow-sm flex flex-col items-center justify-center text-center">
+                        <p className="text-xs font-black text-gray-400 uppercase tracking-widest mb-3">NID Card Front</p>
+                        {viewingProfile.nidFrontPhoto ? (
+                          <div className="w-full flex flex-col items-center">
+                            <div className="w-full h-32 bg-gray-50 rounded-2xl overflow-hidden flex items-center justify-center border border-gray-100 mb-3 shadow-inner">
+                              <img src={viewingProfile.nidFrontPhoto} alt="NID Front" className="w-full h-full object-contain p-2" />
+                            </div>
+                            <a href={viewingProfile.nidFrontPhoto} download={`${viewingProfile.name}_NID_Front.png`} className="text-[10px] text-blue-600 font-bold uppercase tracking-wider flex items-center gap-1.5 hover:underline">
+                              <Download className="w-3.5 h-3.5" /> Download
+                            </a>
+                          </div>
+                        ) : (
+                          <p className="text-xs text-gray-400 italic py-8">No Front NID Photo uploaded</p>
+                        )}
+                      </div>
+
+                      {/* NID Back */}
+                      <div className="bg-white p-5 rounded-[24px] border border-gray-100 shadow-sm flex flex-col items-center justify-center text-center">
+                        <p className="text-xs font-black text-gray-400 uppercase tracking-widest mb-3">NID Card Back</p>
+                        {viewingProfile.nidBackPhoto ? (
+                          <div className="w-full flex flex-col items-center">
+                            <div className="w-full h-32 bg-gray-50 rounded-2xl overflow-hidden flex items-center justify-center border border-gray-100 mb-3 shadow-inner">
+                              <img src={viewingProfile.nidBackPhoto} alt="NID Back" className="w-full h-full object-contain p-2" />
+                            </div>
+                            <a href={viewingProfile.nidBackPhoto} download={`${viewingProfile.name}_NID_Back.png`} className="text-[10px] text-blue-600 font-bold uppercase tracking-wider flex items-center gap-1.5 hover:underline">
+                              <Download className="w-3.5 h-3.5" /> Download
+                            </a>
+                          </div>
+                        ) : (
+                          <p className="text-xs text-gray-400 italic py-8">No Back NID Photo uploaded</p>
+                        )}
+                      </div>
+
+                      {/* Birth Certificate */}
+                      <div className="bg-white p-5 rounded-[24px] border border-gray-100 shadow-sm flex flex-col items-center justify-center text-center">
+                        <p className="text-xs font-black text-gray-400 uppercase tracking-widest mb-3">Birth Certificate</p>
+                        {viewingProfile.birthCertificatePhoto ? (
+                          <div className="w-full flex flex-col items-center">
+                            <div className="w-full h-32 bg-gray-50 rounded-2xl overflow-hidden flex items-center justify-center border border-gray-100 mb-3 shadow-inner">
+                              <img src={viewingProfile.birthCertificatePhoto} alt="Birth Certificate" className="w-full h-full object-contain p-2" />
+                            </div>
+                            <a href={viewingProfile.birthCertificatePhoto} download={`${viewingProfile.name}_Birth_Certificate.png`} className="text-[10px] text-blue-600 font-bold uppercase tracking-wider flex items-center gap-1.5 hover:underline">
+                              <Download className="w-3.5 h-3.5" /> Download
+                            </a>
+                          </div>
+                        ) : (
+                          <p className="text-xs text-gray-400 italic py-8">No Birth Certificate uploaded</p>
+                        )}
+                      </div>
                     </div>
                   </div>
                 </div>

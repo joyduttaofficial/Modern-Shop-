@@ -88,13 +88,19 @@ export default function NewSale({
   // Load Employees (filtered in UI/Logic for "Sales" department)
   useEffect(() => {
     setLoadingEmployees(true);
-    const q = query(collection(db, "employees"), orderBy("name"));
-    const unsub = onSnapshot(q, (snap) => {
+    const unsub = onSnapshot(collection(db, "employees"), (snap) => {
       const allEmps = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Employee));
       // Filter for active employees in specified Sales department
       const salesEmps = allEmps.filter(
         emp => emp.status === "active" && emp.department?.toLowerCase() === "sales"
       );
+      // Sort oldest created first
+      salesEmps.sort((a, b) => {
+        const dateA = a.joinedDate ? new Date(a.joinedDate).getTime() : 0;
+        const dateB = b.joinedDate ? new Date(b.joinedDate).getTime() : 0;
+        if (dateA !== dateB) return dateA - dateB;
+        return (a.name || "").localeCompare(b.name || "");
+      });
       setEmployees(salesEmps);
       setLoadingEmployees(false);
     }, (error) => {

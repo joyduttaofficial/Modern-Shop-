@@ -86,7 +86,14 @@ export default function AttendancePage({
     }
 
     const unsubEmps = onSnapshot(query(collection(db, "employees"), where("status", "==", "active")), (snap) => {
-      setEmployees(snap.docs.map(d => ({ id: d.id, ...d.data() } as Employee)));
+      const emps = snap.docs.map(d => ({ id: d.id, ...d.data() } as Employee));
+      emps.sort((a, b) => {
+        const dateA = a.joinedDate ? new Date(a.joinedDate).getTime() : 0;
+        const dateB = b.joinedDate ? new Date(b.joinedDate).getTime() : 0;
+        if (dateA !== dateB) return dateA - dateB;
+        return (a.name || "").localeCompare(b.name || "");
+      });
+      setEmployees(emps);
     }, (error) => handleFirestoreError(error, OperationType.LIST, "employees"));
 
     const unsubSettings = onSnapshot(doc(db, "settings", "attendance"), (doc) => {

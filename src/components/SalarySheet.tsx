@@ -50,7 +50,14 @@ export default function SalarySheet({ user, role }: { user: User; role: UserRole
   useEffect(() => {
     // Snap employees
     const unsubEmps = onSnapshot(collection(db, "employees"), (snap) => {
-      setEmployees(snap.docs.map(d => ({ id: d.id, ...d.data() } as Employee)));
+      const emps = snap.docs.map(d => ({ id: d.id, ...d.data() } as Employee));
+      emps.sort((a, b) => {
+        const dateA = a.joinedDate ? new Date(a.joinedDate).getTime() : 0;
+        const dateB = b.joinedDate ? new Date(b.joinedDate).getTime() : 0;
+        if (dateA !== dateB) return dateA - dateB;
+        return (a.name || "").localeCompare(b.name || "");
+      });
+      setEmployees(emps);
     }, (error) => handleFirestoreError(error, OperationType.LIST, "employees"));
 
     // Snap transactions focused on Staff Salary and Employee Advance

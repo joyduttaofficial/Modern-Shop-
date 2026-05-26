@@ -111,7 +111,14 @@ export default function SalesList({ user, role, onEditSales }: SalesListProps) {
 
     // Sync Employees to display profiles/roles beautifully
     const unsubEmps = onSnapshot(collection(db, "employees"), (snapshot) => {
-      setEmployees(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Employee)));
+      const emps = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Employee));
+      emps.sort((a, b) => {
+        const dateA = a.joinedDate ? new Date(a.joinedDate).getTime() : 0;
+        const dateB = b.joinedDate ? new Date(b.joinedDate).getTime() : 0;
+        if (dateA !== dateB) return dateA - dateB;
+        return (a.name || "").localeCompare(b.name || "");
+      });
+      setEmployees(emps);
     }, (error) => handleFirestoreError(error, OperationType.LIST, "employees"));
 
     return () => {

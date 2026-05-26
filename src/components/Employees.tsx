@@ -59,9 +59,15 @@ export default function Employees({
   const [isPaying, setIsPaying] = useState(false);
 
   useEffect(() => {
-    const q = query(collection(db, "employees"), orderBy("name"));
-    const unsub = onSnapshot(q, (snap) => {
-      setEmployees(snap.docs.map(d => ({ id: d.id, ...d.data() } as Employee)));
+    const unsub = onSnapshot(collection(db, "employees"), (snap) => {
+      const list = snap.docs.map(d => ({ id: d.id, ...d.data() } as Employee));
+      list.sort((a, b) => {
+        const dateA = a.joinedDate ? new Date(a.joinedDate).getTime() : 0;
+        const dateB = b.joinedDate ? new Date(b.joinedDate).getTime() : 0;
+        if (dateA !== dateB) return dateA - dateB;
+        return (a.name || "").localeCompare(b.name || "");
+      });
+      setEmployees(list);
     }, (error) => handleFirestoreError(error, OperationType.LIST, "employees"));
 
     // Also fetch all transactions linked to employees
@@ -102,7 +108,7 @@ export default function Employees({
         .map(e => e.employeeIdCode || "")
         .filter(id => id.toUpperCase().startsWith(prefix.toUpperCase()));
       
-      let maxNum = 0;
+      let maxNum = -1;
       matchingIds.forEach(id => {
         const numPart = id.substring(prefix.length).trim();
         const num = parseInt(numPart, 10);

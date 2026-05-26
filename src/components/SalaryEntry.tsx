@@ -41,6 +41,12 @@ export default function SalaryEntry({ user, role }: { user: User; role: UserRole
   useEffect(() => {
     const unsubEmps = onSnapshot(query(collection(db, "employees"), where("status", "==", "active")), (snap) => {
       const emps = snap.docs.map(d => ({ id: d.id, ...d.data() } as Employee));
+      emps.sort((a, b) => {
+        const dateA = a.joinedDate ? new Date(a.joinedDate).getTime() : 0;
+        const dateB = b.joinedDate ? new Date(b.joinedDate).getTime() : 0;
+        if (dateA !== dateB) return dateA - dateB;
+        return (a.name || "").localeCompare(b.name || "");
+      });
       setEmployees(emps);
       
       // Initialize sheet data if not already set

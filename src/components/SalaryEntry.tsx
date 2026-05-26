@@ -15,6 +15,18 @@ interface RowState {
 }
 
 export default function SalaryEntry({ user, role }: { user: User; role: UserRole }) {
+  if (role !== "admin") {
+    return (
+      <div className="bg-white rounded-[32px] border border-gray-100 p-12 shadow-sm text-center max-w-lg mx-auto my-12 animate-in fade-in duration-350">
+        <AlertCircle className="w-16 h-16 text-rose-500 mx-auto mb-5" />
+        <h2 className="text-2xl font-black text-slate-900 tracking-tight mb-2">Access Denied</h2>
+        <p className="text-slate-500 font-medium text-sm leading-relaxed">
+          Only administrators can view, calculate, or disburse employee salary registers.
+        </p>
+      </div>
+    );
+  }
+
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [banks, setBanks] = useState<Bank[]>([]);
   const [loading, setLoading] = useState(true);

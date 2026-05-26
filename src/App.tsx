@@ -316,6 +316,12 @@ export default function App() {
   const hasAccessToView = (viewId: string) => {
     if (!profile) return false;
     
+    // Only admins can see employee salaries and employee profiles
+    const adminOnlyViews = ["newEmployee", "employeesList", "employees", "salaryEntry", "salarySheet"];
+    if (adminOnlyViews.includes(viewId) && profile.role !== "admin") {
+      return false;
+    }
+
     // Admins always have full, unrestricted access to all menus
     if (profile.role === "admin") return true;
 

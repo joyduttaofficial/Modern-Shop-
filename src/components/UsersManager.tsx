@@ -1018,7 +1018,15 @@ export default function UsersManager({
                         }
                       }
 
-                      return ALL_MENU_IDS.map(menuId => {
+                      const adminOnlyViews = ["newEmployee", "employeesList", "employees", "salaryEntry", "salarySheet"];
+                      const visibleMenuIds = ALL_MENU_IDS.filter(menuId => {
+                        if (adminOnlyViews.includes(menuId) && selectedProfile.role !== "admin") {
+                          return false;
+                        }
+                        return true;
+                      });
+
+                      return visibleMenuIds.map(menuId => {
                         const hasMenu = allowed.includes(menuId);
                         const menuLabel = SYSTEM_MENUS.flatMap(cat => cat.items).find(item => item.id === menuId)?.name || menuId;
                         return (

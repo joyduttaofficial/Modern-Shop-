@@ -23,6 +23,18 @@ import {
 import { format, startOfMonth, endOfMonth, isWithinInterval, parseISO } from "date-fns";
 
 export default function SalarySheet({ user, role }: { user: User; role: UserRole }) {
+  if (role !== "admin") {
+    return (
+      <div className="bg-white rounded-[32px] border border-gray-100 p-12 shadow-sm text-center max-w-lg mx-auto my-12 animate-in fade-in duration-350">
+        <AlertTriangle className="w-16 h-16 text-rose-500 mx-auto mb-5" />
+        <h2 className="text-2xl font-black text-slate-900 tracking-tight mb-2">Access Denied</h2>
+        <p className="text-slate-500 font-medium text-sm leading-relaxed">
+          Only administrators can view the monthly employee salary ledgers and payroll sheets.
+        </p>
+      </div>
+    );
+  }
+
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [banks, setBanks] = useState<Bank[]>([]);

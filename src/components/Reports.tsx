@@ -524,7 +524,9 @@ export default function Reports({ user, role }: { user: User; role: UserRole }) 
         
         <div className="flex flex-col gap-4">
           <div className="flex bg-white p-1.5 rounded-3xl shadow-sm border border-gray-100 overflow-x-auto no-scrollbar">
-            {(["daily", "attendance", "salary", "transactions"] as ReportTab[]).map(tab => (
+            {(["daily", "attendance", "salary", "transactions"] as ReportTab[])
+              .filter(tab => tab !== "salary" || role === "admin")
+              .map(tab => (
               <button 
                 key={tab}
                 onClick={() => setActiveTab(tab)}

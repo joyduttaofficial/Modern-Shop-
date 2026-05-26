@@ -343,6 +343,9 @@ export default function Transactions({ user, role }: { user: User; role: UserRol
   const [filterType, setFilterType] = useState<"all" | "income" | "expense">("all");
 
   const filteredTransactions = transactions.filter(tx => {
+    if (role !== "admin" && (tx.category === "Staff Salary" || tx.category === "Employee Advance")) {
+      return false;
+    }
     const matchesSearch = tx.category.toLowerCase().includes(searchTerm.toLowerCase()) || 
                           (tx.notes && tx.notes.toLowerCase().includes(searchTerm.toLowerCase())) ||
                           (tx.subCategory && tx.subCategory.toLowerCase().includes(searchTerm.toLowerCase()));
@@ -495,7 +498,19 @@ export default function Transactions({ user, role }: { user: User; role: UserRol
                     <option value="">Select Category</option>
                     <option value="Supplier Due Payment">Supplier Due Payment</option>
                     {categories
-                      .filter(c => c.type === "expense" && c.name !== "Supplier Due Payment" && c.name !== "Previous Cash" && c.name !== "Bank Deposit" && c.name !== "Bank Credit" && c.name !== "Loan Deposit" && c.name !== "Loan Credit")
+                      .filter(c => {
+                        if (c.type !== "expense") return false;
+                        if (c.name === "Supplier Due Payment") return false;
+                        if (c.name === "Previous Cash") return false;
+                        if (c.name === "Bank Deposit") return false;
+                        if (c.name === "Bank Credit") return false;
+                        if (c.name === "Loan Deposit") return false;
+                        if (c.name === "Loan Credit") return false;
+                        if (role !== "admin" && (c.name === "Staff Salary" || c.name === "Employee Advance")) {
+                          return false;
+                        }
+                        return true;
+                      })
                       .map(c => (
                         <option key={c.id} value={c.name}>{c.name}</option>
                       ))

@@ -1,0 +1,50 @@
+name: CI/CD - Build and Deploy to GitHub Pages
+
+on:
+  push:
+    branches:
+      - main  # Trigger workflow on pushes to main branch
+  workflow_dispatch:  # Allow triggering the workflow manually
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js Environment
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install Application Dependencies
+        run: npm ci
+
+      - name: Run Quality Verification Tests
+        run: |
+          npm run lint
+          node scripts/verify-release.js
+
+      # Option A: Build with Vite (Recommended for optimal speed, performance, and asset structure)
+      - name: Compile Production Build (Vite)
+        run: npm run build
+        
+      # Option B: Alternative Build with Parcel (If explicitly configured)
+      # Uncomment the next step and comment the upper step if you want to force compile using Parcel.
+      # - name: Compile Production Build (Parcel)
+      #   run: npm run build:parcel
+
+      - name: Deploy Build Artifacts to GitHub Pages
+        uses: JamesIves/github-pages-deploy-action@v4
+        with:
+          folder: dist  # The output folder of our build process
+          branch: gh-pages  # The branch to deploy compiled static assets to
+          clean: true
+
+

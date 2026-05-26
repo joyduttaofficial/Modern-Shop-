@@ -50,6 +50,25 @@ interface DailySalesGroup {
 export default function SalesList({ user, role, onEditSales }: SalesListProps) {
   const { language, t, formatDate, formatNumber, translateValue } = useLanguage();
   const [transactions, setTransactions] = useState<Transaction[]>([]);
+
+  // White-label corporate parameters
+  const [companyName, setCompanyName] = useState("Modern Shop");
+  const [companyPoweredBy, setCompanyPoweredBy] = useState("Powered by ModernManager");
+  const [showPoweredBy, setShowPoweredBy] = useState(true);
+
+  useEffect(() => {
+    const unsub = onSnapshot(doc(db, "settings", "company"), (docSnap) => {
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        setCompanyName(data.companyName || "Modern Shop");
+        setCompanyPoweredBy(data.companyPoweredBy || "Powered by ModernManager");
+        setShowPoweredBy(data.showPoweredBy ?? true);
+      }
+    }, (error) => {
+      handleFirestoreError(error, OperationType.GET, "settings/company");
+    });
+    return () => unsub();
+  }, []);
   const [banks, setBanks] = useState<Bank[]>([]);
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [loading, setLoading] = useState(true);
@@ -629,10 +648,10 @@ export default function SalesList({ user, role, onEditSales }: SalesListProps) {
       {/* Footer copyright block */}
       <div className="flex flex-col sm:flex-row justify-between items-center text-[11px] text-gray-400 pt-6 px-2 font-medium border-t border-gray-100 mt-8">
         <div>
-          Copyright &copy; 2026-2027 All rights reserved. Powered by - <a href="https://moderninnovix.com" target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:underline">moderninnovix.com</a>
+          Copyright &copy; 2026-2027 {companyName}. {showPoweredBy ? companyPoweredBy : "All rights reserved."}
         </div>
         <div className="mt-1 sm:mt-0 font-semibold text-gray-500">
-          Modern System -v2.4
+          Corporate System v2.4
         </div>
       </div>
     </div>

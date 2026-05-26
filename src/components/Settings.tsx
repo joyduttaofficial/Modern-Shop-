@@ -95,6 +95,18 @@ export default function Settings({ user, role }: { user: User; role: UserRole })
   const [bankName, setBankName] = useState("");
   const [bankBalance, setBankBalance] = useState("");
 
+  // Company Branding States
+  const [companyName, setCompanyName] = useState("Modern Shop");
+  const [companyTagline, setCompanyTagline] = useState("Automated POS");
+  const [companyLogoUrl, setCompanyLogoUrl] = useState("");
+  const [companyPhone, setCompanyPhone] = useState("+880 1234 567890");
+  const [companyEmail, setCompanyEmail] = useState("info@modernmanager.com");
+  const [companyAddress, setCompanyAddress] = useState("Dhaka, Bangladesh");
+  const [companyPoweredBy, setCompanyPoweredBy] = useState("Powered by ModernManager");
+  const [showPoweredBy, setShowPoweredBy] = useState(true);
+  const [isUpdatingBranding, setIsUpdatingBranding] = useState(false);
+  const [brandingSuccess, setBrandingSuccess] = useState(false);
+
   // Departments & Employee ID Rule State
   const [departmentsList, setDepartmentsList] = useState<{ id?: string; name: string }[]>([]);
   const [deptName, setDeptName] = useState("");
@@ -117,6 +129,20 @@ export default function Settings({ user, role }: { user: User; role: UserRole })
       setBanks(snap.docs.map(d => ({ id: d.id, ...d.data() } as Bank)));
     });
 
+    const unsubCompanySettings = onSnapshot(doc(db, "settings", "company"), (docSnap) => {
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        setCompanyName(data.companyName || "Modern Shop");
+        setCompanyTagline(data.companyTagline || "Automated POS");
+        setCompanyLogoUrl(data.companyLogoUrl || "");
+        setCompanyPhone(data.companyPhone || "+880 1234 567890");
+        setCompanyEmail(data.companyEmail || "info@modernmanager.com");
+        setCompanyAddress(data.companyAddress || "Dhaka, Bangladesh");
+        setCompanyPoweredBy(data.companyPoweredBy || "Powered by ModernManager");
+        setShowPoweredBy(data.showPoweredBy ?? true);
+      }
+    });
+
     const unsubDepts = onSnapshot(query(collection(db, "departments"), orderBy("name")), (snap) => {
       setDepartmentsList(snap.docs.map(d => ({ id: d.id, name: d.data().name } as { id?: string; name: string })));
     });
@@ -127,9 +153,9 @@ export default function Settings({ user, role }: { user: User; role: UserRole })
       }
     });
 
-    const unsubSettings = onSnapshot(doc(db, "settings", "attendance"), (doc) => {
-      if (doc.exists()) {
-        const data = doc.data();
+    const unsubSettings = onSnapshot(doc(db, "settings", "attendance"), (docSnap) => {
+      if (docSnap.exists()) {
+        const data = docSnap.data();
         setLateThreshold(data.lateThreshold || "10:00");
         setLunchDurationLimit(data.lunchDurationLimit ?? 60);
         setHalfDayThreshold(data.halfDayThreshold || "11:30");
@@ -146,11 +172,38 @@ export default function Settings({ user, role }: { user: User; role: UserRole })
     return () => { 
       unsubCats(); 
       unsubBanks(); 
+      unsubCompanySettings();
       unsubProfiles(); 
       unsubDepts(); 
       unsubIdSettings(); 
+      unsubSettings();
     };
   }, [role]);
+
+  const saveCompanySettings = async () => {
+    setIsUpdatingBranding(true);
+    setBrandingSuccess(false);
+    try {
+      await setDoc(doc(db, "settings", "company"), {
+        companyName: companyName.trim(),
+        companyTagline: companyTagline.trim(),
+        companyLogoUrl: companyLogoUrl.trim(),
+        companyPhone: companyPhone.trim(),
+        companyEmail: companyEmail.trim(),
+        companyAddress: companyAddress.trim(),
+        companyPoweredBy: companyPoweredBy.trim(),
+        showPoweredBy,
+        lastUpdated: new Date().toISOString(),
+        updatedBy: user.uid
+      });
+      setBrandingSuccess(true);
+      setTimeout(() => setBrandingSuccess(false), 4000);
+    } catch (e) {
+      handleFirestoreError(e, OperationType.UPDATE, "settings");
+    } finally {
+      setIsUpdatingBranding(false);
+    }
+  };
 
   const handleUpdateRole = async (uid: string, newRole: UserRole) => {
     if (!confirm(`Change user role to ${newRole}?`)) return;
@@ -267,8 +320,168 @@ export default function Settings({ user, role }: { user: User; role: UserRole })
     <div className="space-y-10">
       <header>
         <h2 className="text-2xl font-bold tracking-tight mb-1">Preferences</h2>
-        <p className="text-sm text-gray-500">Customize your shop's categories and bank accounts.</p>
+        <p className="text-sm text-gray-500">Customize your shop's categories, branding logo, system name, and policies.</p>
       </header>
+
+      {/* Dynamic Branding & Corporate Profile Configuration Block */}
+      <section className="space-y-6">
+        <h3 className="text-lg font-black flex items-center gap-2 text-slate-800">
+          <LayoutGrid className="w-5 h-5 text-indigo-500" />
+          Company Identity & Branding Studio
+        </h3>
+        
+        <div className="bg-white p-6 md:p-8 rounded-3xl border border-gray-100 shadow-sm space-y-6">
+          {brandingSuccess && (
+            <div className="p-4 bg-emerald-50 text-emerald-800 text-xs font-bold uppercase tracking-wider rounded-2xl border border-emerald-100/50 flex items-center gap-2 animate-in fade-in slide-in-from-top-2 duration-300">
+              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping shrink-0" />
+              Dynamic company identity & logo parameters updated and synced across all registers!
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {/* Input Details */}
+            <div className="space-y-4">
+              <div>
+                <label className="text-xs font-bold text-gray-400 uppercase tracking-wider pl-1">System Title / Shop Name</label>
+                <input 
+                  value={companyName}
+                  onChange={e => setCompanyName(e.target.value)}
+                  placeholder="e.g. Dhaka Apparel Studio"
+                  className="w-full px-4 py-3 bg-gray-50 rounded-xl border-none focus:ring-2 focus:ring-gray-200 mt-1 font-bold outline-none text-slate-800"
+                />
+              </div>
+
+              <div>
+                <label className="text-xs font-bold text-gray-400 uppercase tracking-wider pl-1 font-medium">Tagline / Subtitle</label>
+                <input 
+                  value={companyTagline}
+                  onChange={e => setCompanyTagline(e.target.value)}
+                  placeholder="e.g. High Performance Automated POS"
+                  className="w-full px-4 py-3 bg-gray-50 rounded-xl border-none focus:ring-2 focus:ring-gray-200 mt-1 font-semibold outline-none text-slate-700"
+                />
+              </div>
+
+              <div>
+                <label className="text-xs font-bold text-gray-400 uppercase tracking-wider pl-1 font-medium">Custom Logo Image URL</label>
+                <input 
+                  value={companyLogoUrl}
+                  onChange={e => setCompanyLogoUrl(e.target.value)}
+                  placeholder="e.g. https://domain.com/logo.png"
+                  className="w-full px-4 py-3 bg-gray-50 rounded-xl border-none focus:ring-2 focus:ring-gray-200 mt-1 font-mono text-xs outline-none text-slate-600"
+                />
+                <p className="text-[10px] text-gray-400 pl-1 mt-1 leading-relaxed">Provide any publicly hosted secure image URL to override standard visual system dashboards, invoices and PDFs.</p>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="text-xs font-bold text-gray-400 uppercase tracking-wider pl-1 font-medium">Company Phone</label>
+                  <input 
+                    value={companyPhone}
+                    onChange={e => setCompanyPhone(e.target.value)}
+                    placeholder="+880 1700-000000"
+                    className="w-full px-4 py-3 bg-gray-50 rounded-xl border-none focus:ring-2 focus:ring-gray-200 mt-1 font-mono text-xs outline-none text-slate-800"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-bold text-gray-400 uppercase tracking-wider pl-1 font-medium">Company Email</label>
+                  <input 
+                    value={companyEmail}
+                    onChange={e => setCompanyEmail(e.target.value)}
+                    placeholder="billing@company.com"
+                    className="w-full px-4 py-3 bg-gray-50 rounded-xl border-none focus:ring-2 focus:ring-gray-200 mt-1 font-mono text-xs outline-none text-slate-800"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Preview Column */}
+            <div className="space-y-4 bg-gray-50/50 p-6 rounded-2xl border border-gray-100 flex flex-col justify-between">
+              <div>
+                <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3">Instant Brand Shell Preview</h4>
+                
+                {/* Brand Preview layout resembling header-bar logo */}
+                <div className="flex items-center gap-4 bg-white p-4 rounded-xl border border-gray-100 shadow-xs mb-4">
+                  {companyLogoUrl ? (
+                    <img 
+                      src={companyLogoUrl} 
+                      alt="Brand Custom Logo" 
+                      className="w-11 h-11 rounded-xl object-contain border border-gray-100 shrink-0 bg-white" 
+                      referrerPolicy="no-referrer"
+                      onError={(e) => {
+                        (e.target as HTMLImageElement).src = `https://api.dicebear.com/7.x/identicon/svg?seed=${encodeURIComponent(companyName)}`;
+                      }}
+                    />
+                  ) : (
+                    <div className="w-11 h-11 bg-slate-950 rounded-xl flex items-center justify-center shadow-md">
+                      <LayoutGrid className="w-6 h-6 text-white" />
+                    </div>
+                  )}
+                  <div className="truncate">
+                    <span className="text-base font-black tracking-tight text-slate-900 block leading-tight">{companyName}</span>
+                    <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mt-0.5 block truncate">{companyTagline}</span>
+                  </div>
+                </div>
+
+                <div className="space-y-1.5 text-[11px] text-gray-500 pl-1">
+                  <p className="truncate"><span className="font-bold text-gray-700">Address Address:</span> {companyAddress || "Not entered"}</p>
+                  <p><span className="font-bold text-gray-700">Official Contact:</span> {companyPhone}</p>
+                  <p><span className="font-bold text-gray-700">Email Contact:</span> {companyEmail}</p>
+                </div>
+              </div>
+
+              <div className="space-y-4 pt-4 border-t border-gray-150">
+                <div>
+                  <label className="text-xs font-bold text-gray-400 uppercase tracking-wider pl-1 font-medium">Billed Address / Header Location</label>
+                  <input 
+                    value={companyAddress}
+                    onChange={e => setCompanyAddress(e.target.value)}
+                    placeholder="e.g. Block C, Banani, Dhaka"
+                    className="w-full px-4 py-3 bg-white border border-gray-150 rounded-xl focus:ring-2 focus:ring-gray-200 mt-1 font-medium text-xs outline-none text-slate-800"
+                  />
+                </div>
+
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="space-y-0.5">
+                      <p className="text-xs font-bold text-slate-800">White-Label Branding Footer</p>
+                      <p className="text-[10px] text-gray-400 leading-none">Enable custom Powered-By footnote across pages</p>
+                    </div>
+                    <input 
+                      type="checkbox" 
+                      id="branding-powered-checkbox"
+                      checked={showPoweredBy}
+                      onChange={e => setShowPoweredBy(e.target.checked)}
+                      className="w-4.5 h-4.5 text-indigo-600 rounded-md border-gray-300 focus:ring-indigo-500 bg-white"
+                    />
+                  </div>
+
+                  {showPoweredBy && (
+                    <div className="animate-in fade-in duration-200">
+                      <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider pl-1">Sign-off Attribution Credit Text</label>
+                      <input 
+                        value={companyPoweredBy}
+                        onChange={e => setCompanyPoweredBy(e.target.value)}
+                        placeholder="e.g. Powered by Dhaka Apparel Group"
+                        className="w-full px-3 py-2 bg-white border border-gray-150 rounded-xl focus:ring-2 focus:ring-gray-200 mt-1 font-semibold text-xs outline-none text-slate-800"
+                      />
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="pt-4 border-t border-gray-100 flex justify-end">
+            <button 
+              onClick={saveCompanySettings}
+              disabled={isUpdatingBranding}
+              className="px-8 py-3 bg-slate-900 hover:bg-slate-800 text-white rounded-2xl font-black text-xs uppercase tracking-wider transition-all disabled:opacity-50 cursor-pointer"
+            >
+              {isUpdatingBranding ? "Syncing Identity..." : "Save Corporate Brand"}
+            </button>
+          </div>
+        </div>
+      </section>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-10">
         {/* Categories Section */}

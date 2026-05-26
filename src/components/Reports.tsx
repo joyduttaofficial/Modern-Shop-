@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { User } from "firebase/auth";
-import { collection, query, where, getDocs, orderBy } from "firebase/firestore";
-import { db } from "@/src/lib/firebase";
+import { collection, query, where, getDocs, orderBy, doc, onSnapshot } from "firebase/firestore";
+import { db, OperationType, handleFirestoreError } from "@/src/lib/firebase";
 import { Transaction, UserRole, Bank, Employee } from "@/src/types";
 import { formatCurrency, cn } from "@/src/lib/utils";
 import { format, startOfDay, endOfDay, subDays, isWithinInterval, isBefore, startOfMonth, endOfMonth, eachMonthOfInterval, startOfYear } from "date-fns";
@@ -29,6 +29,31 @@ type ReportTab = "daily" | "attendance" | "salary" | "transactions";
 export default function Reports({ user, role }: { user: User; role: UserRole }) {
   const { language, t, formatCurrency, formatDate, formatNumber, translateValue } = useLanguage();
   const [activeTab, setActiveTab] = useState<ReportTab>("daily");
+
+  // Dynamic company settings context
+  const [companyName, setCompanyName] = useState("Modern Shop");
+  const [companyTagline, setCompanyTagline] = useState("Automated POS");
+  const [companyLogoUrl, setCompanyLogoUrl] = useState("");
+  const [companyPhone, setCompanyPhone] = useState("+880 1234 567890");
+  const [companyEmail, setCompanyEmail] = useState("info@modernmanager.com");
+  const [companyAddress, setCompanyAddress] = useState("Dhaka, Bangladesh");
+
+  useEffect(() => {
+    const unsubBranding = onSnapshot(doc(db, "settings", "company"), (docSnap) => {
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        setCompanyName(data.companyName || "Modern Shop");
+        setCompanyTagline(data.companyTagline || "Automated POS");
+        setCompanyLogoUrl(data.companyLogoUrl || "");
+        setCompanyPhone(data.companyPhone || "+880 1234 567890");
+        setCompanyEmail(data.companyEmail || "info@modernmanager.com");
+        setCompanyAddress(data.companyAddress || "Dhaka, Bangladesh");
+      }
+    }, (error) => {
+      handleFirestoreError(error, OperationType.GET, "settings/company");
+    });
+    return () => unsubBranding();
+  }, []);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [banks, setBanks] = useState<Bank[]>([]);
   const [employees, setEmployees] = useState<Employee[]>([]);
@@ -287,13 +312,21 @@ export default function Reports({ user, role }: { user: User; role: UserRole }) 
     const doc = new jsPDF();
     const pageWidth = doc.internal.pageSize.getWidth();
     
-    // Logo / Header
+    // Dynamic Corporate Branding Header
     doc.setFont("helvetica", "bold");
-    doc.setFontSize(28);
-    doc.setTextColor(220, 38, 38); // Red
-    doc.text("M", pageWidth/2 - 15, 20);
-    doc.setTextColor(30, 58, 138); // Blue
-    doc.text("odern", pageWidth/2 - 5, 20);
+    doc.setFontSize(20);
+    doc.setTextColor(15, 23, 42); // slate-900
+
+    const companyTitleStr = companyName.toUpperCase();
+    const companyTitleWidth = doc.getTextWidth(companyTitleStr);
+    doc.text(companyTitleStr, pageWidth/2 - (companyTitleWidth/2), 16);
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(8);
+    doc.setTextColor(100, 116, 139); // slate-500
+    const companyTaglineStr = `${companyTagline} • Phone: ${companyPhone} • Address: ${companyAddress}`;
+    const taglineWidth = doc.getTextWidth(companyTaglineStr);
+    doc.text(companyTaglineStr, pageWidth/2 - (taglineWidth/2), 22);
     
     doc.setDrawColor(0);
     doc.setLineWidth(0.5);
@@ -317,7 +350,7 @@ export default function Reports({ user, role }: { user: User; role: UserRole }) 
     doc.text(language === "bn" ? "Date (তারিখ):" : "Date:", pageWidth/2 + 5, boxY + 7);
     doc.text(language === "bn" ? formatDate(new Date(selectedDate)) : format(new Date(selectedDate), "dd/MM/yyyy"), pageWidth - 18, boxY + 7, { align: "right" });
 
-    doc.text("MCS || 2026", pageWidth/2 + 5, boxY + 17);
+    doc.text(`${companyName} || ${new Date().getFullYear()}`, pageWidth/2 + 5, boxY + 17);
     doc.text(language === "bn" ? "Status: Verified (যাচাইকৃত)" : "Status: Verified", pageWidth - 18, boxY + 17, { align: "right" });
 
     // COLUMNS HEADERS

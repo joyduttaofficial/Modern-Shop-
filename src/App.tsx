@@ -26,7 +26,7 @@ import {
   Moon
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
-import { auth, db } from "@/src/lib/firebase";
+import { auth, db, OperationType, handleFirestoreError } from "@/src/lib/firebase";
 import { onAuthStateChanged, signOut, User as FirebaseUser } from "firebase/auth";
 import { doc, getDoc, setDoc, onSnapshot, collection, query, where, getDocs, deleteDoc } from "firebase/firestore";
 import { UserProfile, UserRole, RolePermission } from "@/src/types";
@@ -84,6 +84,25 @@ export default function App() {
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [customRoles, setCustomRoles] = useState<RolePermission[]>([]);
   const [loading, setLoading] = useState(true);
+
+  // Dynamic Company Branding & Profile States
+  const [companyName, setCompanyName] = useState("Modern Shop");
+  const [companyTagline, setCompanyTagline] = useState("Automated POS");
+  const [companyLogoUrl, setCompanyLogoUrl] = useState("");
+
+  useEffect(() => {
+    const unsubBranding = onSnapshot(doc(db, "settings", "company"), (docSnap) => {
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        setCompanyName(data.companyName || "Modern Shop");
+        setCompanyTagline(data.companyTagline || "Automated POS");
+        setCompanyLogoUrl(data.companyLogoUrl || "");
+      }
+    }, (error) => {
+      handleFirestoreError(error, OperationType.GET, "settings/company");
+    });
+    return () => unsubBranding();
+  }, []);
 
   // Load custom roles
   useEffect(() => {
@@ -342,10 +361,22 @@ export default function App() {
       {/* Mobile Header */}
       <div className="lg:hidden fixed top-0 left-0 right-0 h-16 bg-white/95 backdrop-blur border-b border-slate-100 z-50 flex items-center justify-between px-4 print:hidden">
         <div className="flex items-center gap-2">
-          <div className="w-8 h-8 bg-slate-900 rounded-lg flex items-center justify-center">
-            <LayoutDashboard className="w-4 h-4 text-white" />
-          </div>
-          <span className="font-extrabold tracking-tight text-slate-900 text-base">{t("Modern Shop")}</span>
+          {companyLogoUrl ? (
+            <img 
+              src={companyLogoUrl} 
+              alt="Logo" 
+              className="w-8 h-8 rounded-lg object-contain border border-slate-100 shadow-xs bg-white shrink-0" 
+              referrerPolicy="no-referrer"
+              onError={(e) => {
+                (e.target as HTMLImageElement).src = `https://api.dicebear.com/7.x/identicon/svg?seed=${encodeURIComponent(companyName)}`;
+              }}
+            />
+          ) : (
+            <div className="w-8 h-8 bg-slate-900 rounded-lg flex items-center justify-center">
+              <LayoutDashboard className="w-4 h-4 text-white" />
+            </div>
+          )}
+          <span className="font-extrabold tracking-tight text-slate-900 text-base">{companyName}</span>
         </div>
         <div className="flex items-center gap-2">
           <button
@@ -394,12 +425,24 @@ export default function App() {
         <div className="h-full flex flex-col p-5 overflow-y-auto [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:bg-slate-100 [&::-webkit-scrollbar-track]:transparent">
           {/* Menu top logo */}
           <div className="flex items-center gap-3 mb-8 px-2">
-            <div className="w-10 h-10 bg-slate-950 rounded-xl flex items-center justify-center shadow-lg shadow-slate-950/10">
-              <LayoutDashboard className="w-5.5 h-5.5 text-white" />
-            </div>
-            <div>
-              <span className="text-lg font-black tracking-tight text-slate-900 block leading-none">{t("Modern Shop")}</span>
-              <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mt-0.5 block">{t("Automated POS")}</span>
+            {companyLogoUrl ? (
+              <img 
+                src={companyLogoUrl} 
+                alt="Logo" 
+                className="w-10 h-10 rounded-xl object-contain border border-slate-100 shadow-md bg-white shrink-0" 
+                referrerPolicy="no-referrer"
+                onError={(e) => {
+                  (e.target as HTMLImageElement).src = `https://api.dicebear.com/7.x/identicon/svg?seed=${encodeURIComponent(companyName)}`;
+                }}
+              />
+            ) : (
+              <div className="w-10 h-10 bg-slate-950 rounded-xl flex items-center justify-center shadow-lg shadow-slate-950/10">
+                <LayoutDashboard className="w-5.5 h-5.5 text-white" />
+              </div>
+            )}
+            <div className="truncate">
+              <span className="text-lg font-black tracking-tight text-slate-900 block leading-none truncate">{companyName}</span>
+              <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mt-0.5 block truncate">{companyTagline}</span>
             </div>
           </div>
 
@@ -569,7 +612,7 @@ export default function App() {
                    activeView === "usersList" ? "Users List" :
                    activeView === "rolesList" ? "Roles List" :
                    activeView === "newUser" ? "Pre-Register User" :
-                   activeView === "profileView" ? "Profile View" : "Modern Shop")}
+                   activeView === "profileView" ? "Profile View" : companyName)}
               </h1>
               <p className="text-[11px] text-slate-400 font-bold uppercase tracking-wider mt-0.5">
                 {formatDate(new Date())}

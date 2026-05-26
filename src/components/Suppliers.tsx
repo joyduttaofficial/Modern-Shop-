@@ -24,6 +24,31 @@ export default function Suppliers({
 }) {
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [transactions, setTransactions] = useState<SupplierTransaction[]>([]);
+
+  // Corporate identity parameters
+  const [companyName, setCompanyName] = useState("Modern Shop");
+  const [companyTagline, setCompanyTagline] = useState("Automated POS");
+  const [companyLogoUrl, setCompanyLogoUrl] = useState("");
+  const [companyPhone, setCompanyPhone] = useState("+880 1234 567890");
+  const [companyEmail, setCompanyEmail] = useState("info@modernmanager.com");
+  const [companyAddress, setCompanyAddress] = useState("Dhaka, Bangladesh");
+
+  useEffect(() => {
+    const unsubBranding = onSnapshot(doc(db, "settings", "company"), (docSnap) => {
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        setCompanyName(data.companyName || "Modern Shop");
+        setCompanyTagline(data.companyTagline || "Automated POS");
+        setCompanyLogoUrl(data.companyLogoUrl || "");
+        setCompanyPhone(data.companyPhone || "+880 1234 567890");
+        setCompanyEmail(data.companyEmail || "info@modernmanager.com");
+        setCompanyAddress(data.companyAddress || "Dhaka, Bangladesh");
+      }
+    }, (error) => {
+      handleFirestoreError(error, OperationType.GET, "settings/company");
+    });
+    return () => unsubBranding();
+  }, []);
   const [banks, setBanks] = useState<Bank[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -1413,10 +1438,27 @@ export default function Suppliers({
               <div className="p-8 space-y-8 bg-white text-gray-800 print:p-6" id="printable-invoice">
                 {/* Brand Header */}
                 <div className="flex justify-between items-start border-b-2 border-slate-900 pb-6">
-                  <div>
-                    <h1 className="text-2xl font-black tracking-tight text-slate-900 uppercase">Dhaka Accounting Enterprise</h1>
-                    <p className="text-xs text-gray-500 font-mono mt-1">Multi-Supplier Ledger Management Center • Bangladesh</p>
-                    <p className="text-xs text-gray-400 text-left">Date: {new Date().toLocaleDateString('en-GB')}</p>
+                  <div className="flex items-center gap-4">
+                    {companyLogoUrl ? (
+                      <img 
+                        src={companyLogoUrl} 
+                        alt="Logo" 
+                        className="w-14 h-14 rounded-xl object-contain border border-slate-100 shadow-xs bg-white shrink-0" 
+                        referrerPolicy="no-referrer"
+                        onError={(e) => {
+                          (e.target as HTMLImageElement).src = `https://api.dicebear.com/7.x/identicon/svg?seed=${encodeURIComponent(companyName)}`;
+                        }}
+                      />
+                    ) : (
+                      <div className="w-14 h-14 bg-slate-900 rounded-xl flex items-center justify-center shadow-md shrink-0">
+                        <Receipt className="w-8 h-8 text-white" />
+                      </div>
+                    )}
+                    <div>
+                      <h1 className="text-2xl font-black tracking-tight text-slate-900 uppercase">{companyName}</h1>
+                      <p className="text-xs text-gray-500 font-mono mt-1">{companyTagline} • Contact: {companyPhone}</p>
+                      <p className="text-xs text-gray-400 text-left">Date: {new Date().toLocaleDateString('en-GB')} • Email: {companyEmail}</p>
+                    </div>
                   </div>
                   <div className="text-right">
                     <div className="bg-slate-900 text-white text-[10px] font-black uppercase tracking-widest px-3 py-1 rounded inline-block">

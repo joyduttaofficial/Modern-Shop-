@@ -41,6 +41,10 @@ service cloud.firestore {
       allow write: if isSignedIn();
     }
 
+    match /settings/company {
+      allow read: if true;
+    }
+
     match /settings/{settingId} {
       allow write: if isSignedIn();
     }

@@ -1,5 +1,6 @@
-import React, { useState } from "react";
-import { auth, db } from "@/src/lib/firebase";
+import React, { useState, useEffect } from "react";
+import { auth, db, OperationType, handleFirestoreError } from "@/src/lib/firebase";
+import { onSnapshot, doc } from "firebase/firestore";
 import { 
   signInWithEmailAndPassword, 
   createUserWithEmailAndPassword, 
@@ -23,14 +24,35 @@ import {
 import { motion, AnimatePresence } from "motion/react";
 
 export default function Login() {
-  const [isSignUp, setIsSignUp] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [fullName, setFullName] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
+
+  // Branding states
+  const [companyName, setCompanyName] = useState("Modern Shop");
+  const [companyTagline, setCompanyTagline] = useState("Automated POS");
+  const [companyLogoUrl, setCompanyLogoUrl] = useState("");
+  const [companyPoweredBy, setCompanyPoweredBy] = useState("Powered by ModernManager");
+  const [showPoweredBy, setShowPoweredBy] = useState(true);
+
+  useEffect(() => {
+    const unsub = onSnapshot(doc(db, "settings", "company"), (docSnap) => {
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        setCompanyName(data.companyName || "Modern Shop");
+        setCompanyTagline(data.companyTagline || "Automated POS");
+        setCompanyLogoUrl(data.companyLogoUrl || "");
+        setCompanyPoweredBy(data.companyPoweredBy || "Powered by ModernManager");
+        setShowPoweredBy(data.showPoweredBy ?? true);
+      }
+    }, (error) => {
+      handleFirestoreError(error, OperationType.GET, "settings/company");
+    });
+    return () => unsub();
+  }, []);
 
   const handleAuthAction = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -41,7 +63,6 @@ export default function Login() {
     const rawInput = email.trim().toLowerCase();
     const cleanEmail = rawInput.includes("@") ? rawInput : `${rawInput}@modernmanager.com`;
     const cleanPassword = password.trim();
-    const cleanName = fullName.trim();
 
     if (!rawInput || !cleanPassword) {
       setErrorMessage("Please fill in all required credentials.");
@@ -49,82 +70,52 @@ export default function Login() {
       return;
     }
 
-    if (isSignUp && !cleanName) {
-      setErrorMessage("Please enter your display name.");
-      setLoading(false);
-      return;
-    }
-
-    if (isSignUp && cleanPassword.length < 6) {
-      setErrorMessage("Password must be at least 6 characters long.");
-      setLoading(false);
-      return;
-    }
-
-    if (isSignUp && cleanEmail === "modern@admin.com" && cleanPassword !== "Joy@398878j") {
-      setErrorMessage("The main system Administrator password must match Joy@398878j.");
-      setLoading(false);
-      return;
-    }
-
     try {
-      if (isSignUp) {
-        // Handle User Sign Up
-        const userCredential = await createUserWithEmailAndPassword(auth, cleanEmail, cleanPassword);
-        if (userCredential.user) {
-          await updateProfile(userCredential.user, {
-            displayName: cleanEmail === "modern@admin.com" ? "Main Administrator" : cleanName,
-            photoURL: `https://api.dicebear.com/7.x/adventurer/svg?seed=${encodeURIComponent(cleanEmail === "modern@admin.com" ? "Main Administrator" : cleanName)}`
-          });
-          setSuccessMessage("Account created successfully! Auto-signing you in...");
+      // Handle Sign In
+      if (cleanEmail === "modern@admin.com" && cleanPassword === "Joy@398878j") {
+        try {
+          await signInWithEmailAndPassword(auth, cleanEmail, cleanPassword);
+        } catch (signInErr: any) {
+          const errCode = signInErr?.code || signInErr?.message || "";
+          if (
+            errCode.includes("user-not-found") || 
+            errCode.includes("invalid-credential") || 
+            errCode.includes("invalid-login-credentials")
+          ) {
+            // Create the user automatically on their first sign-in attempt with correct password
+            try {
+              const userCredential = await createUserWithEmailAndPassword(auth, cleanEmail, cleanPassword);
+              if (userCredential.user) {
+                await updateProfile(userCredential.user, {
+                  displayName: "Main Administrator",
+                  photoURL: `https://api.dicebear.com/7.x/adventurer/svg?seed=Main%2520Administrator`
+                });
+              }
+            } catch (createErr) {
+              throw signInErr; // fall back to original login error if creation fails
+            }
+          } else {
+            throw signInErr;
+          }
         }
       } else {
-        // Handle Sign In
-        if (cleanEmail === "modern@admin.com" && cleanPassword === "Joy@398878j") {
-          try {
-            await signInWithEmailAndPassword(auth, cleanEmail, cleanPassword);
-          } catch (signInErr: any) {
-            const errCode = signInErr?.code || signInErr?.message || "";
-            if (
-              errCode.includes("user-not-found") || 
-              errCode.includes("invalid-credential") || 
-              errCode.includes("invalid-login-credentials")
-            ) {
-              // Create the user automatically on their first sign-in attempt with correct password
-              try {
-                const userCredential = await createUserWithEmailAndPassword(auth, cleanEmail, cleanPassword);
-                if (userCredential.user) {
-                  await updateProfile(userCredential.user, {
-                    displayName: "Main Administrator",
-                    photoURL: `https://api.dicebear.com/7.x/adventurer/svg?seed=Main%2520Administrator`
-                  });
-                }
-              } catch (createErr) {
-                throw signInErr; // fall back to original login error if creation fails
-              }
-            } else {
-              throw signInErr;
+        try {
+          await signInWithEmailAndPassword(auth, cleanEmail, cleanPassword);
+        } catch (signInErr: any) {
+          // If we appended @modernmanager.com and didn't have an @, fall back to @modernmanager.local
+          if (!rawInput.includes("@")) {
+            const fallbackEmail = `${rawInput}@modernmanager.local`;
+            try {
+              await signInWithEmailAndPassword(auth, fallbackEmail, cleanPassword);
+            } catch (fallbackErr) {
+              throw signInErr; // throw original login error if fallback also fails
             }
-          }
-        } else {
-          try {
-            await signInWithEmailAndPassword(auth, cleanEmail, cleanPassword);
-          } catch (signInErr: any) {
-            // If we appended @modernmanager.com and didn't have an @, fall back to @modernmanager.local
-            if (!rawInput.includes("@")) {
-              const fallbackEmail = `${rawInput}@modernmanager.local`;
-              try {
-                await signInWithEmailAndPassword(auth, fallbackEmail, cleanPassword);
-              } catch (fallbackErr) {
-                throw signInErr; // throw original login error if fallback also fails
-              }
-            } else {
-              throw signInErr;
-            }
+          } else {
+            throw signInErr;
           }
         }
-        setSuccessMessage("Success! Access granted.");
       }
+      setSuccessMessage("Success! Access granted.");
     } catch (err: any) {
       const errMsgStr = (err?.code || err?.message || "").toLowerCase();
       const isExpectedAuthError = 
@@ -182,57 +173,35 @@ export default function Login() {
           
           {/* Brand/Logo Header */}
           <div className="flex items-center gap-3 mb-10">
-            <div className="w-12 h-12 bg-slate-950 rounded-2xl flex items-center justify-center shadow-lg shadow-slate-950/20">
-              <LayoutDashboard className="w-6 h-6 text-white" />
-            </div>
+            {companyLogoUrl ? (
+              <img 
+                src={companyLogoUrl} 
+                alt="Logo" 
+                className="w-12 h-12 rounded-2xl object-contain border border-slate-100 shadow-md bg-white shrink-0" 
+                referrerPolicy="no-referrer"
+                onError={(e) => {
+                  (e.target as HTMLImageElement).src = `https://api.dicebear.com/7.x/identicon/svg?seed=${encodeURIComponent(companyName)}`;
+                }}
+              />
+            ) : (
+              <div className="w-12 h-12 bg-slate-950 rounded-2xl flex items-center justify-center shadow-lg shadow-slate-950/20">
+                <LayoutDashboard className="w-6 h-6 text-white" />
+              </div>
+            )}
             <div>
-              <span className="text-xl font-black tracking-tight text-slate-900 block leading-none">ModernManager</span>
-              <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mt-1 block">Unified Shop POS</span>
+              <span className="text-xl font-black tracking-tight text-slate-900 block leading-none">{companyName}</span>
+              <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mt-1 block">{companyTagline}</span>
             </div>
           </div>
 
           {/* Form Header */}
           <div className="mb-8">
             <h2 className="text-2xl font-black text-slate-900 tracking-tight">
-              {isSignUp ? "Join the Workspace" : "Welcome Back"}
+              Welcome Back
             </h2>
             <p className="text-slate-500 font-medium text-sm mt-1">
-              {isSignUp 
-                ? "Onboard as an administrator or registers your workforce account."
-                : "Sign in with your configured email to access catalogs & ledger registers."}
+              Sign in with your email or username to access your workspace and ledger registers.
             </p>
-          </div>
-
-          {/* Toggle Tab */}
-          <div className="grid grid-cols-2 p-1.5 bg-slate-100 rounded-2xl mb-8">
-            <button
-              onClick={() => {
-                setIsSignUp(false);
-                setErrorMessage("");
-                setSuccessMessage("");
-              }}
-              className={`py-2.5 text-xs font-bold uppercase tracking-wider rounded-xl transition-all ${
-                !isSignUp 
-                  ? "bg-white text-slate-900 shadow-sm" 
-                  : "text-slate-400 hover:text-slate-800"
-              }`}
-            >
-              Sign In
-            </button>
-            <button
-              onClick={() => {
-                setIsSignUp(true);
-                setErrorMessage("");
-                setSuccessMessage("");
-              }}
-              className={`py-2.5 text-xs font-bold uppercase tracking-wider rounded-xl transition-all ${
-                isSignUp 
-                  ? "bg-white text-slate-900 shadow-sm" 
-                  : "text-slate-400 hover:text-slate-800"
-              }`}
-            >
-              Sign Up / Onboard
-            </button>
           </div>
 
           {/* Errors and Success messages */}
@@ -265,26 +234,6 @@ export default function Login() {
           {/* Login/Signup Form */}
           <form onSubmit={handleAuthAction} className="space-y-5">
             
-            {/* Full Name field (Only during Sign Up) */}
-            {isSignUp && (
-              <div>
-                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Display name *</label>
-                <div className="relative">
-                  <span className="absolute left-4 top-3.5 text-slate-400">
-                    <User className="w-4.5 h-4.5" />
-                  </span>
-                  <input
-                    type="text"
-                    required
-                    value={fullName}
-                    onChange={(e) => setFullName(e.target.value)}
-                    placeholder="e.g. Joy Dutta"
-                    className="w-full pl-11 pr-4 py-3.5 bg-slate-50 border border-slate-200 focus:border-slate-800 focus:bg-white rounded-xl font-medium outline-none transition-all text-sm"
-                  />
-                </div>
-              </div>
-            )}
-
             {/* User ID or Email */}
             <div>
               <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 font-medium">User ID (Username) or Email *</label>
@@ -307,17 +256,15 @@ export default function Login() {
             <div>
               <div className="flex justify-between items-center mb-2">
                 <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider font-medium">Password *</label>
-                {!isSignUp && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setErrorMessage("To reset your account password, contact your shop workspace Administrator.");
-                    }}
-                    className="text-[10px] font-bold text-indigo-600 hover:underline cursor-pointer"
-                  >
-                    Forgot Password?
-                  </button>
-                )}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setErrorMessage("To reset your account password, contact your shop workspace Administrator.");
+                  }}
+                  className="text-[10px] font-bold text-indigo-600 hover:underline cursor-pointer"
+                >
+                  Forgot Password?
+                </button>
               </div>
               <div className="relative">
                 <span className="absolute left-4 top-3.5 text-slate-400">
@@ -339,15 +286,6 @@ export default function Login() {
                   {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                 </button>
               </div>
-
-              {/* Real-time feedback for password length if on signup */}
-              {isSignUp && (
-                <p className={`text-[10px] mt-1.5 font-bold uppercase tracking-wider ${
-                  password.trim().length >= 6 ? "text-teal-600" : "text-slate-400"
-                }`}>
-                  {password.trim().length >= 6 ? "✓ Strong Password Option" : "⚡ Must be at least 6 characters"}
-                </p>
-              )}
             </div>
 
             {/* Submit Action Button */}
@@ -363,7 +301,7 @@ export default function Login() {
                 </>
               ) : (
                 <>
-                  <span>{isSignUp ? "Generate User Profile" : "Authenticate Workspace"}</span>
+                  <span>Authenticate Workspace</span>
                   <ArrowRight className="w-4 h-4 text-slate-400 group-hover:translate-x-1 transition-transform" />
                 </>
               )}
@@ -374,7 +312,7 @@ export default function Login() {
           <div className="mt-10 pt-6 border-t border-slate-100 text-center">
             <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest block mb-2">Workspace Guidelines</span>
             <p className="text-[11px] text-slate-500 font-medium leading-relaxed max-w-xs mx-auto">
-              If your email has already been invited by the Administrator, sign up above using that exact email address to automatically link with your assigned permissions.
+              Only authorized personnel can access the system. Contact your workspace Administrator if you do not have credential parameters assigned yet.
             </p>
           </div>
 
@@ -436,7 +374,7 @@ export default function Login() {
         {/* Footer Credit */}
         <div>
           <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest leading-none">
-            © 2026 ModernManager. Licensed workspace.
+            © 2026 {companyName}. {showPoweredBy ? companyPoweredBy : "Licensed Workspace."}
           </p>
         </div>
 

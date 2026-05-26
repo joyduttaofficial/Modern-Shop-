@@ -4,7 +4,7 @@ import { collection, onSnapshot, addDoc, deleteDoc, doc, query, orderBy, where, 
 import { db, OperationType, handleFirestoreError } from "@/src/lib/firebase";
 import { Employee, Transaction, UserRole, Bank } from "@/src/types";
 import { cn, formatCurrency } from "@/src/lib/utils";
-import { Users, Plus, Trash2, UserPlus, CreditCard, History, Wallet, UserCircle, Landmark, X, FileText, FilePlus, Image, Eye, Pencil, ExternalLink, Download, ShieldCheck } from "lucide-react";
+import { Users, Plus, Trash2, UserPlus, CreditCard, History, Wallet, UserCircle, Landmark, X, FileText, FilePlus, Image, Eye, Pencil, ExternalLink, Download, ShieldCheck, Printer, FileDown } from "lucide-react";
 import { format, startOfYear, endOfYear } from "date-fns";
 import { increment, updateDoc, setDoc } from "firebase/firestore";
 import { motion, AnimatePresence } from "motion/react";
@@ -51,6 +51,9 @@ export default function Employees({
   // Deletion Confirmation State
   const [employeeToDelete, setEmployeeToDelete] = useState<string | null>(null);
 
+  // Dynamic Branding
+  const [companyName, setCompanyName] = useState("Modern Shop");
+
   // Quick Pay State
   const [quickPay, setQuickPay] = useState<{ empId: string; type: "Staff Salary" | "Employee Advance" } | null>(null);
   const [payAmount, setPayAmount] = useState("");
@@ -91,12 +94,19 @@ export default function Employees({
       setCustomDepts(snap.docs.map(d => ({ id: d.id, name: d.data().name as string })));
     });
 
+    const unsubCompany = onSnapshot(doc(db, "settings", "company"), (docSnap) => {
+      if (docSnap.exists()) {
+        setCompanyName(docSnap.data().companyName || "Modern Shop");
+      }
+    });
+
     return () => { 
       unsub(); 
       unsubTx(); 
       unsubBanks(); 
       unsubIdSettings();
       unsubDepts();
+      unsubCompany();
     };
   }, []);
 
@@ -298,10 +308,10 @@ export default function Employees({
 
   const startEdit = (emp: Employee) => {
     setEditingEmployee(emp);
-    setName(emp.name);
+    setName(emp.name || "");
     setEmpRole(emp.role || "");
-    setSalary(emp.salary.toString());
-    setStatus(emp.status);
+    setSalary((emp.salary ?? 0).toString());
+    setStatus(emp.status || "active");
     setDepartment(emp.department || "Sales");
     setEmployeeDocuments(emp.documents || []);
     setPhone(emp.phone || "");
@@ -334,6 +344,349 @@ export default function Employees({
       .reduce((sum, tx) => sum + tx.amount, 0);
     
     return { totalPaid, totalAdvance };
+  };
+
+  const handlePrintProfile = (emp: Employee) => {
+    const stats = getEmployeeStats(emp.id!);
+    const joinedStr = emp.joinedDate ? format(new Date(emp.joinedDate), "MMMM dd, yyyy") : "N/A";
+    const formatCurrJS = (amount: number) => {
+      return new Intl.NumberFormat("en-BD", { style: "currency", currency: "BDT" }).format(amount);
+    };
+
+    const iframe = document.createElement("iframe");
+    iframe.style.position = "absolute";
+    iframe.style.width = "0px";
+    iframe.style.height = "0px";
+    iframe.style.border = "none";
+    iframe.style.top = "-9999px";
+    document.body.appendChild(iframe);
+
+    const docToWrite = iframe.contentWindow?.document;
+    if (!docToWrite) return;
+
+    const nidFrontHtml = emp.nidFrontPhoto 
+      ? `<div class="bg-slate-50 p-4 rounded-xl border border-slate-200 text-center">
+           <h4 class="text-xs font-bold text-slate-400 uppercase tracking-widest mb-2">NID Card Front</h4>
+           <div class="h-40 flex items-center justify-center bg-white rounded-lg border border-slate-100 overflow-hidden">
+             <img src="${emp.nidFrontPhoto}" alt="NID Front" class="max-h-full max-w-full object-contain p-1" />
+           </div>
+         </div>`
+      : `<div class="bg-slate-50 p-4 rounded-xl border border-slate-200 text-center flex flex-col justify-center items-center h-48">
+           <span class="text-xs text-slate-400 italic">No Front NID Uploaded</span>
+         </div>`;
+
+    const nidBackHtml = emp.nidBackPhoto 
+      ? `<div class="bg-slate-50 p-4 rounded-xl border border-slate-200 text-center">
+           <h4 class="text-xs font-bold text-slate-400 uppercase tracking-widest mb-2">NID Card Back</h4>
+           <div class="h-40 flex items-center justify-center bg-white rounded-lg border border-slate-100 overflow-hidden">
+             <img src="${emp.nidBackPhoto}" alt="NID Back" class="max-h-full max-w-full object-contain p-1" />
+           </div>
+         </div>`
+      : `<div class="bg-slate-50 p-4 rounded-xl border border-slate-200 text-center flex flex-col justify-center items-center h-48">
+           <span class="text-xs text-slate-400 italic">No Back NID Uploaded</span>
+         </div>`;
+
+    const birthCertHtml = emp.birthCertificatePhoto 
+      ? `<div class="bg-slate-50 p-4 rounded-xl border border-slate-200 text-center">
+           <h4 class="text-xs font-bold text-slate-400 uppercase tracking-widest mb-2">Birth Certificate</h4>
+           <div class="h-40 flex items-center justify-center bg-white rounded-lg border border-slate-100 overflow-hidden">
+             <img src="${emp.birthCertificatePhoto}" alt="Birth Certificate" class="max-h-full max-w-full object-contain p-1" />
+           </div>
+         </div>`
+      : `<div class="bg-slate-50 p-4 rounded-xl border border-slate-200 text-center flex flex-col justify-center items-center h-48">
+           <span class="text-xs text-slate-400 italic">No Birth Certificate Uploaded</span>
+         </div>`;
+
+    const imageHtml = emp.documents?.find(d => d.type.startsWith('image/'))
+      ? `<img src="${emp.documents.find(d => d.type.startsWith('image/'))?.data}" class="w-full h-full object-cover" />`
+      : `<svg class="w-12 h-12 text-slate-300 mx-auto" fill="currentColor" viewBox="0 0 24 24"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>`;
+
+    const financialHtml = role === "admin" 
+      ? `<div class="mb-8">
+          <h3 class="text-base font-extrabold text-slate-900 mb-4 border-b border-slate-100 pb-2">Financial Account Statement</h3>
+          <div class="grid grid-cols-3 gap-4">
+            <div class="border border-slate-200 p-4 rounded-xl text-center bg-slate-50">
+              <p class="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Contracted Monthly Salary</p>
+              <p class="text-base font-black text-slate-900 font-mono">${formatCurrJS(emp.salary || 0)}</p>
+            </div>
+            <div class="border border-slate-200 p-4 rounded-xl text-center bg-emerald-50/50">
+              <p class="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Total Paid To Date</p>
+              <p class="text-base font-black text-emerald-700 font-mono">${formatCurrJS(stats.totalPaid)}</p>
+            </div>
+            <div class="border border-slate-200 p-4 rounded-xl text-center bg-amber-50/50">
+              <p class="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Advance Balance Due</p>
+              <p class="text-base font-black text-amber-700 font-mono">${formatCurrJS(stats.totalAdvance)}</p>
+            </div>
+          </div>
+        </div>`
+      : "";
+
+    docToWrite.write(`
+      <html>
+        <head>
+          <title>${emp.name} - Official Personnel Record</title>
+          <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+          <script src="https://cdn.tailwindcss.com"></script>
+          <style>
+            @media print {
+              body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+              @page { size: portrait; margin: 15mm; }
+            }
+            body {
+              font-family: 'Inter', sans-serif;
+            }
+          </style>
+        </head>
+        <body class="bg-white text-slate-800 p-8">
+          <div class="max-w-4xl mx-auto border border-slate-200 rounded-3xl p-10 bg-white shadow-sm">
+            <!-- Company / Roster Header -->
+            <div class="flex justify-between items-start border-b border-slate-200 pb-8 mb-8">
+              <div>
+                <h1 class="text-3xl font-black text-slate-900 tracking-tight mb-1">${companyName}</h1>
+                <p class="text-xs font-bold text-slate-400 uppercase tracking-widest">OFFICIAL PERSONNEL FILE</p>
+                <p class="text-[10px] text-slate-400 mt-1">Generated: ${format(new Date(), "MMMM dd, yyyy - hh:mm a")}</p>
+              </div>
+              <div class="w-24 h-24 bg-slate-100 rounded-2xl flex items-center justify-center border border-slate-200 overflow-hidden shadow-inner">
+                ${imageHtml}
+              </div>
+            </div>
+
+            <!-- Profile Summary Title -->
+            <div class="mb-6 flex justify-between items-center">
+              <h2 class="text-xl font-extrabold text-slate-950">Employee Information Details</h2>
+              <span class="px-4 py-1.5 bg-blue-100 text-blue-800 rounded-full text-xs font-extrabold uppercase tracking-widest">${emp.status}</span>
+            </div>
+
+            <!-- Profile Grid -->
+            <div class="grid grid-cols-2 gap-y-6 gap-x-8 border border-slate-100 bg-slate-50/50 rounded-2xl p-6 mb-8 text-sm">
+              <div>
+                <span class="block text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-0.5">Full Name</span>
+                <span class="font-extrabold text-slate-900 text-base">${emp.name}</span>
+              </div>
+              <div>
+                <span class="block text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-0.5">Employee ID</span>
+                <span class="font-black text-blue-600 text-base font-mono">${emp.employeeIdCode || "N/A"}</span>
+              </div>
+              
+              <div>
+                <span class="block text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-0.5">Designation / Role</span>
+                <span class="font-extrabold text-slate-800">${emp.role || "N/A"}</span>
+              </div>
+              <div>
+                <span class="block text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-0.5">Department</span>
+                <span class="font-bold text-slate-700">${emp.department || "Sales"}</span>
+              </div>
+
+              <div>
+                <span class="block text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-0.5">Phone Number</span>
+                <span class="font-bold text-slate-800">${emp.phone || "N/A"}</span>
+              </div>
+              <div>
+                <span class="block text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-0.5">Email</span>
+                <span class="font-bold text-slate-700">${emp.email || "N/A"}</span>
+              </div>
+
+              <div>
+                <span class="block text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-0.5">Date of Joining</span>
+                <span class="font-bold text-slate-700">${joinedStr}</span>
+              </div>
+            </div>
+
+            <!-- Financial Records Ledger -->
+            ${financialHtml}
+
+            <!-- KYC Verification Documents -->
+            <div class="mb-10 page-break-inside-avoid">
+              <h3 class="text-base font-extrabold text-slate-900 mb-4 border-b border-slate-100 pb-2">KYC Documentation & Proofs</h3>
+              <div class="grid grid-cols-3 gap-4">
+                ${nidFrontHtml}
+                ${nidBackHtml}
+                ${birthCertHtml}
+              </div>
+            </div>
+
+            <!-- Official Signatures -->
+            <div class="mt-16 pt-8 border-t border-dashed border-slate-300 flex justify-between text-xs font-bold text-slate-500 page-break-inside-avoid">
+              <div class="text-center w-40">
+                <div class="border-b border-slate-400 h-10 mb-2"></div>
+                <p>Prepared By</p>
+                <p class="text-[10px] font-medium text-slate-400">HR Executive</p>
+              </div>
+              <div class="text-center w-40">
+                <div class="border-b border-slate-400 h-10 mb-2"></div>
+                <p>Verified By</p>
+                <p class="text-[10px] font-medium text-slate-400">Finance Manager</p>
+              </div>
+              <div class="text-center w-40">
+                <div class="border-b border-slate-400 h-10 mb-2"></div>
+                <p>Approved By</p>
+                <p class="text-[10px] font-medium text-slate-400">Director / CEO</p>
+              </div>
+            </div>
+          </div>
+
+          <script>
+            window.onload = function() {
+              setTimeout(function() {
+                window.print();
+                setTimeout(function() {
+                  window.parent.document.body.removeChild(window.frameElement);
+                }, 100);
+              }, 800);
+            };
+          </script>
+        </body>
+      </html>
+    `);
+    docToWrite.close();
+  };
+
+  const handlePrintRoster = () => {
+    const iframe = document.createElement("iframe");
+    iframe.style.position = "absolute";
+    iframe.style.width = "0px";
+    iframe.style.height = "0px";
+    iframe.style.border = "none";
+    iframe.style.top = "-9999px";
+    document.body.appendChild(iframe);
+
+    const docToWrite = iframe.contentWindow?.document;
+    if (!docToWrite) return;
+
+    const formatCurrJS = (amount: number) => {
+      return new Intl.NumberFormat("en-BD", { style: "currency", currency: "BDT" }).format(amount);
+    };
+
+    const tableRows = employees.map((emp, idx) => {
+      const stats = getEmployeeStats(emp.id!);
+      const joinedStr = emp.joinedDate ? format(new Date(emp.joinedDate), "MMM dd, yyyy") : "N/A";
+      const financialCells = role === "admin" 
+        ? `<td class="px-4 py-3 text-right font-mono font-black text-slate-950">${formatCurrJS(emp.salary || 0)}</td>
+           <td class="px-4 py-3 text-right font-mono text-emerald-700 font-black">${formatCurrJS(stats.totalPaid)}</td>
+           <td class="px-4 py-3 text-right font-mono text-amber-700 font-black">${formatCurrJS(stats.totalAdvance)}</td>`
+        : "";
+
+      return `
+        <tr class="border-b border-slate-200 hover:bg-slate-50 transition-colors text-xs font-semibold text-slate-700">
+          <td class="px-4 py-3 text-slate-400 font-bold">${idx + 1}</td>
+          <td class="px-4 py-3 font-bold text-slate-900">${emp.employeeIdCode || "—"}</td>
+          <td class="px-4 py-3 font-black text-slate-900">${emp.name}</td>
+          <td class="px-4 py-3 font-extrabold text-slate-800">${emp.role || "—"}</td>
+          <td class="px-4 py-3 text-slate-600">${emp.department || "Sales"}</td>
+          <td class="px-4 py-3 text-slate-600 font-mono">${emp.phone || "—"}</td>
+          <td class="px-4 py-3 text-slate-600">${joinedStr}</td>
+          ${financialCells}
+          <td class="px-4 py-3 text-center">
+            <span class="px-2 py-0.5 rounded-full text-[9px] font-black uppercase leading-tight ${emp.status === 'active' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}">
+              ${emp.status}
+            </span>
+          </td>
+        </tr>
+      `;
+    }).join("");
+
+    const grandTotalSalary = employees.reduce((total, emp) => total + (emp.salary || 0), 0);
+    const grandTotalPaid = employees.reduce((total, emp) => total + getEmployeeStats(emp.id!).totalPaid, 0);
+    const grandTotalAdvance = employees.reduce((total, emp) => total + getEmployeeStats(emp.id!).totalAdvance, 0);
+
+    const financialHeaders = role === "admin" 
+      ? `<th class="px-4 py-3 text-right">Basic Salary</th>
+         <th class="px-4 py-3 text-right">Total Paid</th>
+         <th class="px-4 py-3 text-right">Advance Balance</th>`
+      : "";
+
+    const financialTotals = role === "admin" 
+      ? `<tr class="bg-slate-50 border-t-2 border-slate-300 font-extrabold text-xs text-slate-900">
+          <td colspan="7" class="px-4 py-4 text-right uppercase tracking-wider font-extrabold text-slate-500">Totals:</td>
+          <td class="px-4 py-4 text-right font-mono font-black text-slate-950">${formatCurrJS(grandTotalSalary)}</td>
+          <td class="px-4 py-4 text-right font-mono font-black text-green-700">${formatCurrJS(grandTotalPaid)}</td>
+          <td class="px-4 py-4 text-right font-mono font-black text-amber-700">${formatCurrJS(grandTotalAdvance)}</td>
+          <td></td>
+         </tr>`
+      : "";
+
+    docToWrite.write(`
+      <html>
+        <head>
+          <title>Active Employee Roster - ${companyName}</title>
+          <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+          <script src="https://cdn.tailwindcss.com"></script>
+          <style>
+            @media print {
+              body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+              @page { size: landscape; margin: 10mm; }
+            }
+            body {
+              font-family: 'Inter', sans-serif;
+            }
+          </style>
+        </head>
+        <body class="bg-white text-slate-800 p-6">
+          <div class="max-w-[100%] mx-auto">
+            <!-- Header -->
+            <div class="flex justify-between items-end border-b-2 border-slate-300 pb-4 mb-6">
+              <div>
+                <h1 class="text-3xl font-black text-slate-900 tracking-tight">${companyName}</h1>
+                <h2 class="text-base font-bold text-slate-400 uppercase tracking-widest mt-1">OFFICIAL PERSONNEL & PAYROLL ROSTER</h2>
+              </div>
+              <div class="text-right text-xs text-slate-400">
+                <p>Generated: ${format(new Date(), "MMMM dd, yyyy hh:mm a")}</p>
+                <p>Total Count: <span class="font-extrabold text-slate-700">${employees.length} Staff Members</span></p>
+              </div>
+            </div>
+
+            <!-- Details Table -->
+            <table class="w-full text-left border-collapse">
+              <thead>
+                <tr class="bg-slate-100 border-b border-slate-300 text-[10px] font-black text-slate-400 uppercase tracking-wider">
+                  <th class="px-4 py-3">#</th>
+                  <th class="px-4 py-3">ID Code</th>
+                  <th class="px-4 py-3">Employee Name</th>
+                  <th class="px-4 py-3">Designation / Role</th>
+                  <th class="px-4 py-3">Department</th>
+                  <th class="px-4 py-3">Phone</th>
+                  <th class="px-4 py-3">Joined Date</th>
+                  ${financialHeaders}
+                  <th class="px-4 py-3 text-center">Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${tableRows}
+                ${financialTotals}
+              </tbody>
+            </table>
+
+            <!-- Signatures line -->
+            <div class="mt-16 flex justify-between text-[11px] font-bold text-slate-500 page-break-inside-avoid">
+              <div class="text-center w-48">
+                <div class="border-b border-slate-300 h-10 mb-2"></div>
+                <p>Prepared By HR Office</p>
+              </div>
+              <div class="text-center w-48">
+                <div class="border-b border-slate-300 h-10 mb-2"></div>
+                <p>Audited By Finance Dept</p>
+              </div>
+              <div class="text-center w-48">
+                <div class="border-b border-slate-300 h-10 mb-2"></div>
+                <p>Authorized Signature</p>
+              </div>
+            </div>
+          </div>
+
+          <script>
+            window.onload = function() {
+              setTimeout(function() {
+                window.print();
+                setTimeout(function() {
+                  window.parent.document.body.removeChild(window.frameElement);
+                }, 100);
+              }, 800);
+            };
+          </script>
+        </body>
+      </html>
+    `);
+    docToWrite.close();
   };
 
   if (mode === "new") {
@@ -657,8 +1010,16 @@ export default function Employees({
         </div>
         <div className="flex items-center gap-3">
           <button 
+            type="button"
+            onClick={handlePrintRoster}
+            className="bg-blue-50 text-blue-600 px-6 py-3 rounded-2xl font-bold flex items-center gap-2 hover:bg-blue-100 border border-blue-200 transition-all shadow-sm active:scale-95"
+          >
+            <Printer className="w-5 h-5" />
+            Print Roster
+          </button>
+          <button 
             onClick={() => setShowImport(!showImport)}
-            className="bg-white border-2 border-gray-900 text-gray-900 px-6 py-3 rounded-2xl font-bold flex items-center gap-2 hover:bg-gray-50 transition-all shadow-md active:scale-95"
+            className="bg-white border text-gray-700 px-6 py-3 rounded-2xl font-bold flex items-center gap-2 hover:bg-gray-50 border-gray-200 transition-all shadow-sm active:scale-95"
           >
             <History className="w-5 h-5" />
             Bulk Import
@@ -1048,7 +1409,7 @@ export default function Employees({
                             <p className="font-black text-green-600">{formatCurrency(stats.totalPaid)}</p>
                           </div>
                           <button 
-                            onClick={() => { setQuickPay({ empId: emp.id!, type: "Staff Salary" }); setPayAmount(emp.salary.toString()); }}
+                            onClick={() => { setQuickPay({ empId: emp.id!, type: "Staff Salary" }); setPayAmount((emp.salary ?? 0).toString()); }}
                             className="mt-2 text-[10px] font-bold text-blue-600 uppercase hover:underline text-left flex items-center gap-1"
                           >
                             <CreditCard className="w-3 h-3" /> Record Salary Payment
@@ -1145,12 +1506,22 @@ export default function Employees({
                     </div>
                   </div>
                 </div>
-                <button 
-                  onClick={() => setViewingProfile(null)}
-                  className="p-4 bg-gray-100 hover:bg-gray-200 rounded-2xl transition-all"
-                >
-                  <X className="w-6 h-6 text-gray-500" />
-                </button>
+                <div className="flex items-center gap-2">
+                  <button 
+                    type="button"
+                    onClick={() => handlePrintProfile(viewingProfile)}
+                    title="Print Profile / Save as PDF"
+                    className="p-4 bg-blue-50 text-blue-600 hover:bg-blue-100 rounded-2xl transition-all cursor-pointer"
+                  >
+                    <Printer className="w-5 h-5" />
+                  </button>
+                  <button 
+                    onClick={() => setViewingProfile(null)}
+                    className="p-4 bg-gray-100 hover:bg-gray-200 rounded-2xl transition-all cursor-pointer"
+                  >
+                    <X className="w-6 h-6 text-gray-500" />
+                  </button>
+                </div>
               </div>
 
               {/* Content */}
@@ -1304,16 +1675,23 @@ export default function Employees({
               </div>
 
               {/* Actions Footer */}
-              <div className="p-8 bg-white border-t border-gray-100 flex justify-end gap-4">
+              <div className="p-8 bg-white border-t border-gray-100 flex justify-end gap-4 flex-wrap">
+                <button 
+                  type="button"
+                  onClick={() => handlePrintProfile(viewingProfile)}
+                  className="px-6 py-3 bg-blue-600 text-white hover:bg-blue-700 rounded-2xl font-bold transition-all flex items-center gap-2 cursor-pointer shadow-md"
+                >
+                  <Printer className="w-4 h-4" /> Print / Save PDF
+                </button>
                 <button 
                   onClick={() => { startEdit(viewingProfile); setViewingProfile(null); }}
-                  className="px-6 py-3 bg-blue-50 text-blue-600 hover:bg-blue-600 hover:text-white rounded-2xl font-bold transition-all flex items-center gap-2"
+                  className="px-6 py-3 bg-blue-50 text-blue-600 hover:bg-blue-600 hover:text-white rounded-2xl font-bold transition-all flex items-center gap-2 cursor-pointer"
                 >
                   <Pencil className="w-4 h-4" /> Edit Profile
                 </button>
                 <button 
                   onClick={() => setViewingProfile(null)}
-                  className="px-6 py-3 bg-gray-900 text-white rounded-2xl font-bold hover:bg-gray-800 transition-all"
+                  className="px-6 py-3 bg-gray-900 text-white rounded-2xl font-bold hover:bg-gray-800 transition-all cursor-pointer"
                 >
                   Close Profile
                 </button>

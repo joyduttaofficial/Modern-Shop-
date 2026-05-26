@@ -126,10 +126,23 @@ export default function Login() {
         setSuccessMessage("Success! Access granted.");
       }
     } catch (err: any) {
-      console.error("Auth error:", err);
+      const errMsgStr = (err?.code || err?.message || "").toLowerCase();
+      const isExpectedAuthError = 
+        errMsgStr.includes("user-not-found") || 
+        errMsgStr.includes("wrong-password") || 
+        errMsgStr.includes("invalid-credential") ||
+        errMsgStr.includes("invalid-email") ||
+        errMsgStr.includes("weak-password") ||
+        errMsgStr.includes("email-already-in-use");
+
+      if (!isExpectedAuthError) {
+        console.error("Auth error:", err);
+      } else {
+        console.warn("Auth event expectation info:", errMsgStr);
+      }
+
       let localizedError = "Authentication failed. Please verify your credentials.";
       
-      const errMsgStr = (err?.code || err?.message || "").toLowerCase();
       if (
         errMsgStr.includes("user-not-found") || 
         errMsgStr.includes("wrong-password") || 

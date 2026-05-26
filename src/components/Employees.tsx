@@ -233,17 +233,17 @@ export default function Employees({
 
   const handleAddEmployee = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!name || !salary) return;
+    if (!name.trim()) return;
     try {
       const employeeData = {
-        name,
+        name: name.trim(),
         role: empRole || "",
-        salary: parseFloat(salary),
+        salary: salary ? parseFloat(salary) : 0,
         status: status,
         department: department,
         documents: employeeDocuments,
-        phone,
-        email,
+        phone: phone.trim(),
+        email: email.trim(),
         nidFrontPhoto,
         nidBackPhoto,
         birthCertificatePhoto,
@@ -389,7 +389,6 @@ export default function Employees({
                 <span className="text-[9px] font-bold text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded font-mono">Auto generated</span>
               </label>
               <input 
-                required
                 placeholder="e.g. MCS 01"
                 value={employeeIdCode}
                 onChange={e => setEmployeeIdCode(e.target.value)}
@@ -397,7 +396,7 @@ export default function Employees({
               />
             </div>
             <div className="space-y-1.5 md:col-span-2 lg:col-span-2">
-              <label className="text-xs font-bold text-gray-400 uppercase tracking-widest pl-1">Full Name</label>
+              <label className="text-xs font-bold text-gray-400 uppercase tracking-widest pl-1">Full Name *</label>
               <input 
                 required
                 placeholder="Employee Name"
@@ -409,7 +408,6 @@ export default function Employees({
             <div className="space-y-1.5">
               <label className="text-xs font-bold text-gray-400 uppercase tracking-widest pl-1">Phone Number</label>
               <input 
-                required
                 type="tel"
                 placeholder="e.g. 017XXXXXXXX"
                 value={phone}
@@ -420,7 +418,6 @@ export default function Employees({
             <div className="space-y-1.5">
               <label className="text-xs font-bold text-gray-400 uppercase tracking-widest pl-1">Email Address</label>
               <input 
-                required
                 type="email"
                 placeholder="e.g. employee@company.com"
                 value={email}
@@ -432,7 +429,6 @@ export default function Employees({
             <div className="space-y-1.5">
               <label className="text-xs font-bold text-gray-400 uppercase tracking-widest pl-1">Monthly Salary (BDT)</label>
               <input 
-                required
                 type="number"
                 placeholder="0.00"
                 value={salary}
@@ -703,7 +699,6 @@ export default function Employees({
                 <span className="text-[9px] font-bold text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded font-mono">Auto generated</span>
               </label>
               <input 
-                required
                 placeholder="e.g. MCS 01"
                 value={employeeIdCode}
                 onChange={e => setEmployeeIdCode(e.target.value)}
@@ -711,7 +706,7 @@ export default function Employees({
               />
             </div>
             <div className="space-y-1.5 md:col-span-2 lg:col-span-2">
-              <label className="text-xs font-bold text-gray-400 uppercase tracking-widest pl-1">Full Name</label>
+              <label className="text-xs font-bold text-gray-400 uppercase tracking-widest pl-1">Full Name *</label>
               <input 
                 required
                 placeholder="Employee Name"
@@ -723,7 +718,6 @@ export default function Employees({
             <div className="space-y-1.5">
               <label className="text-xs font-bold text-gray-400 uppercase tracking-widest pl-1">Phone Number</label>
               <input 
-                required
                 type="tel"
                 placeholder="e.g. 017XXXXXXXX"
                 value={phone}
@@ -734,7 +728,6 @@ export default function Employees({
             <div className="space-y-1.5">
               <label className="text-xs font-bold text-gray-400 uppercase tracking-widest pl-1">Email Address</label>
               <input 
-                required
                 type="email"
                 placeholder="e.g. employee@company.com"
                 value={email}
@@ -746,7 +739,6 @@ export default function Employees({
             <div className="space-y-1.5">
               <label className="text-xs font-bold text-gray-400 uppercase tracking-widest pl-1">Monthly Salary (BDT)</label>
               <input 
-                required
                 type="number"
                 placeholder="0.00"
                 value={salary}

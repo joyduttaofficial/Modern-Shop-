@@ -256,9 +256,14 @@ export default function UsersManager({
             await signOut(tempAuth);
           }
         } catch (authErr: any) {
-          console.error("Secondary app registration failed:", authErr);
+          const errCode = authErr?.code || "";
           const msg = authErr?.message || "";
-          if (!msg.includes("email-already-in-use")) {
+          const isEmailInUse = errCode === "auth/email-already-in-use" || msg.includes("email-already-in-use");
+
+          if (isEmailInUse) {
+            console.warn("Target email credential is already registered in Firebase Auth, linking profile to existing credentials.");
+          } else {
+            console.error("Secondary app registration failed:", authErr);
             setErrorMsg("Failed to create credential: " + msg);
             await deleteApp(tempApp);
             return;

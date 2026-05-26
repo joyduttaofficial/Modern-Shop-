@@ -20,18 +20,6 @@ export default function Employees({
   mode?: "new" | "list";
   onSuccess?: () => void;
 }) {
-  if (role !== "admin") {
-    return (
-      <div className="bg-white rounded-[32px] border border-gray-100 p-12 shadow-sm text-center max-w-lg mx-auto my-12 animate-in fade-in duration-350">
-        <UserCircle className="w-16 h-16 text-rose-500 mx-auto mb-5" />
-        <h2 className="text-2xl font-black text-slate-900 tracking-tight mb-2">Access Denied</h2>
-        <p className="text-slate-500 font-medium text-sm leading-relaxed">
-          Only administrators can view employee records, basic salary scales, or staff profile parameters.
-        </p>
-      </div>
-    );
-  }
-
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [banks, setBanks] = useState<Bank[]>([]);
@@ -642,25 +630,27 @@ export default function Employees({
           <h2 className="text-2xl font-bold tracking-tight mb-1">Employee Management</h2>
           <p className="text-sm text-gray-500">Track staff details, salaries, and advances.</p>
         </div>
-        <div className="flex items-center gap-3">
-          <button 
-            onClick={() => setShowImport(!showImport)}
-            className="bg-white border-2 border-gray-900 text-gray-900 px-6 py-3 rounded-2xl font-bold flex items-center gap-2 hover:bg-gray-50 transition-all shadow-md active:scale-95"
-          >
-            <History className="w-5 h-5" />
-            Bulk Import
-          </button>
-          <button 
-            onClick={() => {
-              if (showForm) resetForm();
-              else setShowForm(true);
-            }}
-            className="bg-gray-900 text-white px-6 py-3 rounded-2xl font-bold flex items-center gap-2 hover:bg-gray-800 transition-all shadow-lg active:scale-95"
-          >
-            {showForm ? <Trash2 className="w-5 h-5" /> : <UserPlus className="w-5 h-5" />}
-            {showForm ? "Cancel" : "Add Employee"}
-          </button>
-        </div>
+        {role === "admin" && (
+          <div className="flex items-center gap-3">
+            <button 
+              onClick={() => setShowImport(!showImport)}
+              className="bg-white border-2 border-gray-900 text-gray-900 px-6 py-3 rounded-2xl font-bold flex items-center gap-2 hover:bg-gray-50 transition-all shadow-md active:scale-95"
+            >
+              <History className="w-5 h-5" />
+              Bulk Import
+            </button>
+            <button 
+              onClick={() => {
+                if (showForm) resetForm();
+                else setShowForm(true);
+              }}
+              className="bg-gray-900 text-white px-6 py-3 rounded-2xl font-bold flex items-center gap-2 hover:bg-gray-800 transition-all shadow-lg active:scale-95"
+            >
+              {showForm ? <Trash2 className="w-5 h-5" /> : <UserPlus className="w-5 h-5" />}
+              {showForm ? "Cancel" : "Add Employee"}
+            </button>
+          </div>
+        )}
       </header>
 
       {showImport && (
@@ -985,61 +975,67 @@ export default function Employees({
                       </p>
                     </div>
                   </div>
-                  <div className="flex gap-1">
-                    <button 
-                      onClick={() => startEdit(emp)}
-                      className="p-2 text-gray-300 hover:text-blue-500 hover:bg-blue-50 rounded-xl transition-all"
-                    >
-                      <Pencil className="w-4 h-4" />
-                    </button>
-                    <button 
-                      onClick={() => setEmployeeToDelete(emp.id!)}
-                      className="p-2 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-xl transition-all"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  </div>
+                  {role === "admin" && (
+                    <div className="flex gap-1">
+                      <button 
+                        onClick={() => startEdit(emp)}
+                        className="p-[8px] text-gray-300 hover:text-blue-500 hover:bg-blue-51 rounded-xl transition-all"
+                      >
+                        <Pencil className="w-4 h-4" />
+                      </button>
+                      <button 
+                        onClick={() => setEmployeeToDelete(emp.id!)}
+                        className="p-[8px] text-gray-300 hover:text-red-500 hover:bg-red-51 rounded-xl transition-all"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  )}
                 </div>
 
                 <div className="space-y-4 mb-6">
-                  <div className="flex justify-between items-center px-4 py-3 bg-gray-50 rounded-2xl">
-                    <div className="flex items-center gap-2">
-                      <Wallet className="w-4 h-4 text-gray-400" />
-                      <span className="text-xs font-bold text-gray-500 uppercase tracking-tight">Main Salary</span>
-                    </div>
-                    <span className="font-black text-gray-900">{formatCurrency(emp.salary)}</span>
-                  </div>
-                  
-                  <div className="grid grid-cols-2 gap-2">
-                    <div className="p-4 rounded-2xl border border-gray-50 flex flex-col justify-between">
-                      <div>
-                        <p className="text-[10px] items-center font-bold text-gray-400 uppercase tracking-widest mb-1 flex gap-1">
-                          <CreditCard className="w-3 h-3" /> Paid
-                        </p>
-                        <p className="font-black text-green-600">{formatCurrency(stats.totalPaid)}</p>
+                  {role === "admin" && (
+                    <>
+                      <div className="flex justify-between items-center px-4 py-3 bg-gray-50 rounded-2xl">
+                        <div className="flex items-center gap-2">
+                          <Wallet className="w-4 h-4 text-gray-400" />
+                          <span className="text-xs font-bold text-gray-500 uppercase tracking-tight">Main Salary</span>
+                        </div>
+                        <span className="font-black text-gray-900">{formatCurrency(emp.salary)}</span>
                       </div>
-                      <button 
-                        onClick={() => { setQuickPay({ empId: emp.id!, type: "Staff Salary" }); setPayAmount(emp.salary.toString()); }}
-                        className="mt-2 text-[10px] font-bold text-blue-600 uppercase hover:underline text-left flex items-center gap-1"
-                      >
-                        <CreditCard className="w-3 h-3" /> Record Salary Payment
-                      </button>
-                    </div>
-                    <div className="p-4 rounded-2xl border border-gray-50 flex flex-col justify-between">
-                      <div>
-                        <p className="text-[10px] items-center font-bold text-gray-400 uppercase tracking-widest mb-1 flex gap-1">
-                          <History className="w-3 h-3" /> Advance
-                        </p>
-                        <p className="font-black text-orange-600">{formatCurrency(stats.totalAdvance)}</p>
+                      
+                      <div className="grid grid-cols-2 gap-2">
+                        <div className="p-4 rounded-2xl border border-gray-50 flex flex-col justify-between">
+                          <div>
+                            <p className="text-[10px] items-center font-bold text-gray-400 uppercase tracking-widest mb-1 flex gap-1">
+                              <CreditCard className="w-3 h-3" /> Paid
+                            </p>
+                            <p className="font-black text-green-600">{formatCurrency(stats.totalPaid)}</p>
+                          </div>
+                          <button 
+                            onClick={() => { setQuickPay({ empId: emp.id!, type: "Staff Salary" }); setPayAmount(emp.salary.toString()); }}
+                            className="mt-2 text-[10px] font-bold text-blue-600 uppercase hover:underline text-left flex items-center gap-1"
+                          >
+                            <CreditCard className="w-3 h-3" /> Record Salary Payment
+                          </button>
+                        </div>
+                        <div className="p-4 rounded-2xl border border-gray-50 flex flex-col justify-between">
+                          <div>
+                            <p className="text-[10px] items-center font-bold text-gray-400 uppercase tracking-widest mb-1 flex gap-1">
+                              <History className="w-3 h-3" /> Advance
+                            </p>
+                            <p className="font-black text-orange-600">{formatCurrency(stats.totalAdvance)}</p>
+                          </div>
+                          <button 
+                             onClick={() => { setQuickPay({ empId: emp.id!, type: "Employee Advance" }); setPayAmount(""); }}
+                            className="mt-2 text-[10px] font-bold text-orange-600 uppercase hover:underline text-left"
+                          >
+                            Give Adv
+                          </button>
+                        </div>
                       </div>
-                      <button 
-                         onClick={() => { setQuickPay({ empId: emp.id!, type: "Employee Advance" }); setPayAmount(""); }}
-                        className="mt-2 text-[10px] font-bold text-orange-600 uppercase hover:underline text-left"
-                      >
-                        Give Adv
-                      </button>
-                    </div>
-                  </div>
+                    </>
+                  )}
                   <button 
                     onClick={() => setViewingAttendance(emp)}
                     className="w-full mt-2 py-3 bg-indigo-50 text-indigo-600 rounded-xl font-bold text-[10px] uppercase tracking-wider hover:bg-indigo-600 hover:text-white transition-all flex items-center justify-center gap-2"
@@ -1123,32 +1119,34 @@ export default function Employees({
               </div>
 
               {/* Content */}
-              <div className="flex-1 overflow-y-auto p-8 space-y-8">
+               <div className="flex-1 overflow-y-auto p-8 space-y-8">
                 {/* Stats Grid */}
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm">
-                    <p className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-2 flex items-center gap-2">
-                      <Wallet className="w-4 h-4 text-blue-500" /> Basic Salary
-                    </p>
-                    <p className="text-2xl font-black text-gray-900">{formatCurrency(viewingProfile.salary)}</p>
+                {role === "admin" && (
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm">
+                      <p className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-2 flex items-center gap-2">
+                        <Wallet className="w-4 h-4 text-blue-500" /> Basic Salary
+                      </p>
+                      <p className="text-2xl font-black text-gray-900">{formatCurrency(viewingProfile.salary)}</p>
+                    </div>
+                    <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm">
+                      <p className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-2 flex items-center gap-2">
+                        <CreditCard className="w-4 h-4 text-green-500" /> Total Paid
+                      </p>
+                      <p className="text-2xl font-black text-green-600">{formatCurrency(getEmployeeStats(viewingProfile.id!).totalPaid)}</p>
+                    </div>
+                    <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm">
+                      <p className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-2 flex items-center gap-2">
+                        <History className="w-4 h-4 text-orange-500" /> Advance Balance
+                      </p>
+                      <p className="text-2xl font-black text-orange-600">{formatCurrency(getEmployeeStats(viewingProfile.id!).totalAdvance)}</p>
+                    </div>
                   </div>
-                  <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm">
-                    <p className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-2 flex items-center gap-2">
-                      <CreditCard className="w-4 h-4 text-green-500" /> Total Paid
-                    </p>
-                    <p className="text-2xl font-black text-green-600">{formatCurrency(getEmployeeStats(viewingProfile.id!).totalPaid)}</p>
-                  </div>
-                  <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm">
-                    <p className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-2 flex items-center gap-2">
-                      <History className="w-4 h-4 text-orange-500" /> Advance Balance
-                    </p>
-                    <p className="text-2xl font-black text-orange-600">{formatCurrency(getEmployeeStats(viewingProfile.id!).totalAdvance)}</p>
-                  </div>
-                </div>
+                )}
 
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
                   {/* Documents Section */}
-                  <div className="space-y-4">
+                  <div className={cn("space-y-4", role !== "admin" && "lg:col-span-2")}>
                     <h3 className="font-bold text-gray-900 flex items-center gap-2">
                       <FilePlus className="w-5 h-5 text-gray-400" /> 
                       Employee Documents ({viewingProfile.documents?.length || 0})
@@ -1180,31 +1178,33 @@ export default function Employees({
                   </div>
 
                   {/* Recent Transactions */}
-                  <div className="space-y-4">
-                    <h3 className="font-bold text-gray-900 flex items-center gap-2">
-                      <History className="w-5 h-5 text-gray-400" /> Recent Transactions
-                    </h3>
-                    <div className="space-y-2">
-                      {transactions
-                        .filter(tx => tx.employeeId === viewingProfile.id)
-                        .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
-                        .slice(0, 5)
-                        .map(tx => (
-                          <div key={tx.id} className="bg-white p-4 rounded-2xl flex items-center justify-between border border-gray-50">
-                            <div>
-                              <p className="text-xs font-bold text-gray-900">{tx.category} - {tx.subCategory}</p>
-                              <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">{format(new Date(tx.date), "MMM dd, yyyy")}</p>
+                  {role === "admin" && (
+                    <div className="space-y-4">
+                      <h3 className="font-bold text-gray-900 flex items-center gap-2">
+                        <History className="w-5 h-5 text-gray-400" /> Recent Transactions
+                      </h3>
+                      <div className="space-y-2">
+                        {transactions
+                          .filter(tx => tx.employeeId === viewingProfile.id)
+                          .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+                          .slice(0, 5)
+                          .map(tx => (
+                            <div key={tx.id} className="bg-white p-4 rounded-2xl flex items-center justify-between border border-gray-50">
+                              <div>
+                                <p className="text-xs font-bold text-gray-900">{tx.category} - {tx.subCategory}</p>
+                                <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">{format(new Date(tx.date), "MMM dd, yyyy")}</p>
+                              </div>
+                              <p className="font-black text-gray-900">-{formatCurrency(tx.amount)}</p>
                             </div>
-                            <p className="font-black text-gray-900">-{formatCurrency(tx.amount)}</p>
+                          ))}
+                        {!transactions.filter(tx => tx.employeeId === viewingProfile.id).length && (
+                          <div className="py-8 text-center bg-gray-100/50 rounded-2xl border-2 border-dashed border-gray-200 text-gray-400 font-medium italic">
+                            No transaction history.
                           </div>
-                        ))}
-                      {!transactions.filter(tx => tx.employeeId === viewingProfile.id).length && (
-                        <div className="py-8 text-center bg-gray-100/50 rounded-2xl border-2 border-dashed border-gray-200 text-gray-400 font-medium italic">
-                          No transaction history.
-                        </div>
-                      )}
+                        )}
+                      </div>
                     </div>
-                  </div>
+                  )}
 
                   {/* Identification Documents (KYC) Section - takes full width */}
                   <div className="space-y-4 lg:col-span-2 pt-4">
@@ -1270,12 +1270,14 @@ export default function Employees({
 
               {/* Actions Footer */}
               <div className="p-8 bg-white border-t border-gray-100 flex justify-end gap-4">
-                <button 
-                  onClick={() => { startEdit(viewingProfile); setViewingProfile(null); }}
-                  className="px-6 py-3 bg-blue-50 text-blue-600 hover:bg-blue-600 hover:text-white rounded-2xl font-bold transition-all flex items-center gap-2"
-                >
-                  <Pencil className="w-4 h-4" /> Edit Profile
-                </button>
+                {role === "admin" && (
+                  <button 
+                    onClick={() => { startEdit(viewingProfile); setViewingProfile(null); }}
+                    className="px-6 py-3 bg-blue-50 text-blue-600 hover:bg-blue-600 hover:text-white rounded-2xl font-bold transition-all flex items-center gap-2"
+                  >
+                    <Pencil className="w-4 h-4" /> Edit Profile
+                  </button>
+                )}
                 <button 
                   onClick={() => setViewingProfile(null)}
                   className="px-6 py-3 bg-gray-900 text-white rounded-2xl font-bold hover:bg-gray-800 transition-all"

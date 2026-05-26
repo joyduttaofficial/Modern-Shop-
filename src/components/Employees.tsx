@@ -235,10 +235,9 @@ export default function Employees({
     e.preventDefault();
     if (!name.trim()) return;
     try {
-      const employeeData = {
+      const employeeData: any = {
         name: name.trim(),
         role: empRole || "",
-        salary: salary ? parseFloat(salary) : 0,
         status: status,
         department: department,
         documents: employeeDocuments,
@@ -250,6 +249,14 @@ export default function Employees({
         employeeIdCode: employeeIdCode.trim(),
         joinedDate: editingEmployee?.joinedDate || new Date().toISOString()
       };
+
+      if (role === "admin") {
+        employeeData.salary = salary ? parseFloat(salary) : 0;
+      } else if (editingEmployee) {
+        employeeData.salary = editingEmployee.salary || 0;
+      } else {
+        employeeData.salary = 0;
+      }
 
       if (editingEmployee?.id) {
         await updateDoc(doc(db, "employees", editingEmployee.id), employeeData);
@@ -427,15 +434,27 @@ export default function Employees({
             </div>
 
             <div className="space-y-1.5">
-              <label className="text-xs font-bold text-gray-400 uppercase tracking-widest pl-1">Monthly Salary (BDT)</label>
+              <label className="text-xs font-bold text-gray-400 uppercase tracking-widest pl-1">Designation / Role</label>
               <input 
-                type="number"
-                placeholder="0.00"
-                value={salary}
-                onChange={e => setSalary(e.target.value)}
-                className="w-full px-4 py-4 bg-gray-50 rounded-2xl border-none focus:ring-2 focus:ring-gray-200 font-medium font-mono"
+                placeholder="e.g. Sales Officer, Manager"
+                value={empRole}
+                onChange={e => setEmpRole(e.target.value)}
+                className="w-full px-4 py-4 bg-gray-50 rounded-2xl border-none focus:ring-2 focus:ring-gray-200 font-medium"
               />
             </div>
+
+            {role === "admin" && (
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-gray-400 uppercase tracking-widest pl-1">Monthly Salary (BDT)</label>
+                <input 
+                  type="number"
+                  placeholder="0.00"
+                  value={salary}
+                  onChange={e => setSalary(e.target.value)}
+                  className="w-full px-4 py-4 bg-gray-50 rounded-2xl border-none focus:ring-2 focus:ring-gray-200 font-medium font-mono"
+                />
+              </div>
+            )}
 
             <div className="space-y-1.5">
               <label className="text-xs font-bold text-gray-400 uppercase tracking-widest pl-1">Employment Status</label>
@@ -630,27 +649,25 @@ export default function Employees({
           <h2 className="text-2xl font-bold tracking-tight mb-1">Employee Management</h2>
           <p className="text-sm text-gray-500">Track staff details, salaries, and advances.</p>
         </div>
-        {role === "admin" && (
-          <div className="flex items-center gap-3">
-            <button 
-              onClick={() => setShowImport(!showImport)}
-              className="bg-white border-2 border-gray-900 text-gray-900 px-6 py-3 rounded-2xl font-bold flex items-center gap-2 hover:bg-gray-50 transition-all shadow-md active:scale-95"
-            >
-              <History className="w-5 h-5" />
-              Bulk Import
-            </button>
-            <button 
-              onClick={() => {
-                if (showForm) resetForm();
-                else setShowForm(true);
-              }}
-              className="bg-gray-900 text-white px-6 py-3 rounded-2xl font-bold flex items-center gap-2 hover:bg-gray-800 transition-all shadow-lg active:scale-95"
-            >
-              {showForm ? <Trash2 className="w-5 h-5" /> : <UserPlus className="w-5 h-5" />}
-              {showForm ? "Cancel" : "Add Employee"}
-            </button>
-          </div>
-        )}
+        <div className="flex items-center gap-3">
+          <button 
+            onClick={() => setShowImport(!showImport)}
+            className="bg-white border-2 border-gray-900 text-gray-900 px-6 py-3 rounded-2xl font-bold flex items-center gap-2 hover:bg-gray-50 transition-all shadow-md active:scale-95"
+          >
+            <History className="w-5 h-5" />
+            Bulk Import
+          </button>
+          <button 
+            onClick={() => {
+              if (showForm) resetForm();
+              else setShowForm(true);
+            }}
+            className="bg-gray-900 text-white px-6 py-3 rounded-2xl font-bold flex items-center gap-2 hover:bg-gray-800 transition-all shadow-lg active:scale-95"
+          >
+            {showForm ? <Trash2 className="w-5 h-5" /> : <UserPlus className="w-5 h-5" />}
+            {showForm ? "Cancel" : "Add Employee"}
+          </button>
+        </div>
       </header>
 
       {showImport && (
@@ -739,15 +756,27 @@ export default function Employees({
             </div>
 
             <div className="space-y-1.5">
-              <label className="text-xs font-bold text-gray-400 uppercase tracking-widest pl-1">Monthly Salary (BDT)</label>
+              <label className="text-xs font-bold text-gray-400 uppercase tracking-widest pl-1">Designation / Role</label>
               <input 
-                type="number"
-                placeholder="0.00"
-                value={salary}
-                onChange={e => setSalary(e.target.value)}
-                className="w-full px-4 py-4 bg-gray-50 rounded-2xl border-none focus:ring-2 focus:ring-gray-200 font-medium font-mono"
+                placeholder="e.g. Sales Officer, Manager"
+                value={empRole}
+                onChange={e => setEmpRole(e.target.value)}
+                className="w-full px-4 py-4 bg-gray-50 rounded-2xl border-none focus:ring-2 focus:ring-gray-200 font-medium"
               />
             </div>
+
+            {role === "admin" && (
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-gray-400 uppercase tracking-widest pl-1">Monthly Salary (BDT)</label>
+                <input 
+                  type="number"
+                  placeholder="0.00"
+                  value={salary}
+                  onChange={e => setSalary(e.target.value)}
+                  className="w-full px-4 py-4 bg-gray-50 rounded-2xl border-none focus:ring-2 focus:ring-gray-200 font-medium font-mono"
+                />
+              </div>
+            )}
 
             <div className="space-y-1.5">
               <label className="text-xs font-bold text-gray-400 uppercase tracking-widest pl-1">Employment Status</label>
@@ -975,22 +1004,22 @@ export default function Employees({
                       </p>
                     </div>
                   </div>
-                  {role === "admin" && (
-                    <div className="flex gap-1">
-                      <button 
-                        onClick={() => startEdit(emp)}
-                        className="p-[8px] text-gray-300 hover:text-blue-500 hover:bg-blue-51 rounded-xl transition-all"
-                      >
-                        <Pencil className="w-4 h-4" />
-                      </button>
+                  <div className="flex gap-1">
+                    <button 
+                      onClick={() => startEdit(emp)}
+                      className="p-[8px] text-gray-300 hover:text-blue-500 hover:bg-blue-51 rounded-xl transition-all"
+                    >
+                      <Pencil className="w-4 h-4" />
+                    </button>
+                    {role === "admin" && (
                       <button 
                         onClick={() => setEmployeeToDelete(emp.id!)}
                         className="p-[8px] text-gray-300 hover:text-red-500 hover:bg-red-51 rounded-xl transition-all"
                       >
                         <Trash2 className="w-4 h-4" />
                       </button>
-                    </div>
-                  )}
+                    )}
+                  </div>
                 </div>
 
                 <div className="space-y-4 mb-6">
@@ -1270,14 +1299,12 @@ export default function Employees({
 
               {/* Actions Footer */}
               <div className="p-8 bg-white border-t border-gray-100 flex justify-end gap-4">
-                {role === "admin" && (
-                  <button 
-                    onClick={() => { startEdit(viewingProfile); setViewingProfile(null); }}
-                    className="px-6 py-3 bg-blue-50 text-blue-600 hover:bg-blue-600 hover:text-white rounded-2xl font-bold transition-all flex items-center gap-2"
-                  >
-                    <Pencil className="w-4 h-4" /> Edit Profile
-                  </button>
-                )}
+                <button 
+                  onClick={() => { startEdit(viewingProfile); setViewingProfile(null); }}
+                  className="px-6 py-3 bg-blue-50 text-blue-600 hover:bg-blue-600 hover:text-white rounded-2xl font-bold transition-all flex items-center gap-2"
+                >
+                  <Pencil className="w-4 h-4" /> Edit Profile
+                </button>
                 <button 
                   onClick={() => setViewingProfile(null)}
                   className="px-6 py-3 bg-gray-900 text-white rounded-2xl font-bold hover:bg-gray-800 transition-all"

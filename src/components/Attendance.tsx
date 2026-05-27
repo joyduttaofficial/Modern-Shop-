@@ -793,149 +793,197 @@ export default function AttendancePage({
         </div>
 
         {/* Custom Slide-over page / Centered interactive Timing Modal with Submit Option */}
-        {selectedEmpForTime && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-xs">
-            <motion.div 
-              initial={{ scale: 0.95, opacity: 0, y: 10 }}
-              animate={{ scale: 1, opacity: 1, y: 0 }}
-              exit={{ scale: 0.95, opacity: 0, y: 10 }}
-              className="bg-white rounded-[32px] max-w-md w-full p-6 md:p-8 shadow-2xl border border-slate-100 flex flex-col gap-5 overflow-y-auto max-h-[90vh]"
-            >
-              <div className="flex items-start justify-between">
-                <div>
-                  <h3 className="text-xl font-black text-gray-950 leading-tight">Time & Lunch Submission</h3>
-                  <p className="text-[11px] text-gray-400 font-bold uppercase tracking-wider mt-0.5">
-                    {format(selectedDate, "EEEE, dd MMMM yyyy")}
-                  </p>
+        {selectedEmpForTime && (() => {
+          const mRecord = getAttendanceForDay(selectedEmpForTime.id!, selectedDate);
+          return (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-xs">
+              <motion.div 
+                initial={{ scale: 0.95, opacity: 0, y: 10 }}
+                animate={{ scale: 1, opacity: 1, y: 0 }}
+                exit={{ scale: 0.95, opacity: 0, y: 10 }}
+                className="bg-white rounded-[32px] max-w-md w-full p-6 md:p-8 shadow-2xl border border-slate-100 flex flex-col gap-5 overflow-y-auto max-h-[90vh]"
+              >
+                <div className="flex items-start justify-between">
+                  <div>
+                    <h3 className="text-xl font-black text-gray-950 leading-tight">Time & Lunch Submission</h3>
+                    <p className="text-[11px] text-gray-400 font-bold uppercase tracking-wider mt-0.5">
+                      {format(selectedDate, "EEEE, dd MMMM yyyy")}
+                    </p>
+                  </div>
+                  <button 
+                    onClick={() => setSelectedEmpForTime(null)}
+                    className="p-1.5 hover:bg-slate-50 text-gray-400 hover:text-gray-700 rounded-lg transition-colors cursor-pointer"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
                 </div>
-                <button 
-                  onClick={() => setSelectedEmpForTime(null)}
-                  className="p-1.5 hover:bg-slate-50 text-gray-400 hover:text-gray-700 rounded-lg transition-colors cursor-pointer"
-                >
-                  <X className="w-5 h-5" />
-                </button>
-              </div>
 
-              {/* Employee Header */}
-              <div className="flex items-center gap-3 p-3.5 bg-slate-50 rounded-2xl border border-slate-150/50">
-                <div className="w-11 h-11 bg-slate-200 text-slate-700 rounded-xl flex items-center justify-center font-bold text-sm overflow-hidden shrink-0">
-                  {selectedEmpForTime.documents?.find(d => d.type.startsWith('image/')) ? (
-                    <img src={selectedEmpForTime.documents.find(d => d.type.startsWith('image/'))?.data} alt="" className="w-full h-full object-cover" />
-                  ) : selectedEmpForTime.name.charAt(0)}
-                </div>
-                <div>
-                  <h4 className="font-extrabold text-slate-900 leading-tight">{selectedEmpForTime.name}</h4>
-                  <p className="text-[10px] font-bold text-indigo-600 tracking-wider uppercase mt-0.5">{selectedEmpForTime.role}</p>
-                </div>
-              </div>
-
-              {/* Form Content */}
-              <div className="space-y-4">
-                {/* 1. Status Selection */}
-                <div className="space-y-1.5">
-                  <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1 block">Attendance Registry Status</label>
-                  <div className="grid grid-cols-3 gap-1.5">
-                    {(Object.entries(STATUS_CONFIG) as [AttendanceStatus, any][]).map(([status, cfg]) => {
-                      const isSelected = modalStatus === status;
-                      return (
-                        <button
-                          key={status}
-                          type="button"
-                          onClick={() => setModalStatus(status)}
-                          className={cn(
-                            "py-2 px-1.5 rounded-xl border flex flex-col items-center justify-center gap-1 transition-all cursor-pointer text-center",
-                            isSelected 
-                              ? cn(cfg.bg, cfg.color, "border-current font-bold scale-[1.02] shadow-xs") 
-                              : "bg-white text-gray-400 border-gray-150 hover:border-gray-200"
-                          )}
-                        >
-                          <cfg.icon className="w-4 h-4" />
-                          <span className="text-[9px] font-extrabold uppercase tracking-wide leading-none">{cfg.label}</span>
-                        </button>
-                      );
-                    })}
+                {/* Employee Header */}
+                <div className="flex items-center gap-3 p-3.5 bg-slate-50 rounded-2xl border border-slate-150/50">
+                  <div className="w-11 h-11 bg-slate-200 text-slate-700 rounded-xl flex items-center justify-center font-bold text-sm overflow-hidden shrink-0">
+                    {selectedEmpForTime.documents?.find(d => d.type.startsWith('image/')) ? (
+                      <img src={selectedEmpForTime.documents.find(d => d.type.startsWith('image/'))?.data} alt="" className="w-full h-full object-cover" />
+                    ) : selectedEmpForTime.name.charAt(0)}
+                  </div>
+                  <div>
+                    <h4 className="font-extrabold text-slate-900 leading-tight">{selectedEmpForTime.name}</h4>
+                    <p className="text-[10px] font-bold text-indigo-600 tracking-wider uppercase mt-0.5">{selectedEmpForTime.role}</p>
                   </div>
                 </div>
 
-                {/* 2. Shift & Lunch time selectors */}
-                <div className="grid grid-cols-3 gap-3">
+                {/* Form Content */}
+                <div className="space-y-4">
+                  {/* 1. Status Selection */}
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1 block">Attendance Registry Status</label>
+                    <div className="grid grid-cols-3 gap-1.5">
+                      {(Object.entries(STATUS_CONFIG) as [AttendanceStatus, any][]).map(([status, cfg]) => {
+                        const isSelected = modalStatus === status;
+                        return (
+                          <button
+                            key={status}
+                            type="button"
+                            onClick={() => setModalStatus(status)}
+                            className={cn(
+                              "py-2 px-1.5 rounded-xl border flex flex-col items-center justify-center gap-1 transition-all cursor-pointer text-center",
+                              isSelected 
+                                ? cn(cfg.bg, cfg.color, "border-current font-bold scale-[1.02] shadow-xs") 
+                                : "bg-white text-gray-400 border-gray-150 hover:border-gray-200"
+                            )}
+                          >
+                            <cfg.icon className="w-4 h-4" />
+                            <span className="text-[9px] font-extrabold uppercase tracking-wide leading-none">{cfg.label}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* 2. Shift & Lunch time selectors */}
+                  <div className="grid grid-cols-3 gap-3">
+                    <div className="flex flex-col gap-1.5">
+                      <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1 block">In Time</label>
+                      <input 
+                        type="time" 
+                        value={modalCheckIn}
+                        onChange={(e) => setModalCheckIn(e.target.value)}
+                        className="px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold text-xs focus:ring-2 focus:ring-blue-105 outline-none cursor-pointer"
+                      />
+                    </div>
+
+                    <div className="flex flex-col gap-1.5">
+                      <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1 block">Lunch Out</label>
+                      <input 
+                        type="time" 
+                        value={modalLunchOut}
+                        onChange={(e) => setModalLunchOut(e.target.value)}
+                        className="px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold text-xs focus:ring-2 focus:ring-blue-105 outline-none cursor-pointer"
+                      />
+                    </div>
+
+                    <div className="flex flex-col gap-1.5">
+                      <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1 block">Lunch In</label>
+                      <input 
+                        type="time" 
+                        value={modalLunchIn}
+                        onChange={(e) => setModalLunchIn(e.target.value)}
+                        className="px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold text-xs focus:ring-2 focus:ring-blue-105 outline-none cursor-pointer"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Overtime violation hint */}
+                  {modalLunchOut && modalLunchIn && (
+                    <div className={cn(
+                      "p-3 rounded-xl border text-[11px] font-bold font-mono text-center",
+                      getLunchDurationMinutes(modalLunchOut, modalLunchIn) > lunchDurationLimit
+                        ? "bg-red-50 border-red-150 text-red-700 animate-pulse"
+                        : "bg-emerald-50 border-emerald-150 text-emerald-800"
+                    )}>
+                      Lunch Duration Taken: {getLunchDurationMinutes(modalLunchOut, modalLunchIn)} mins 
+                      ({getLunchDurationMinutes(modalLunchOut, modalLunchIn) > lunchDurationLimit ? `Exceeds limit of ${lunchDurationLimit}m` : "Within limits"})
+                    </div>
+                  )}
+
+                  {/* 3. Remarks notes */}
                   <div className="flex flex-col gap-1.5">
-                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1 block">In Time</label>
+                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1 block">Notes / Remarks</label>
                     <input 
-                      type="time" 
-                      value={modalCheckIn}
-                      onChange={(e) => setModalCheckIn(e.target.value)}
-                      className="px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold text-xs focus:ring-2 focus:ring-blue-105 outline-none cursor-pointer"
+                      type="text"
+                      placeholder="E.g., late due to traffic, extended shift, etc."
+                      value={modalNotes}
+                      onChange={(e) => setModalNotes(e.target.value)}
+                      className="px-4 py-3 bg-slate-50 border border-slate-250 rounded-xl text-xs font-semibold focus:ring-2 focus:ring-blue-105 outline-none placeholder:text-gray-400"
                     />
                   </div>
-
-                  <div className="flex flex-col gap-1.5">
-                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1 block">Lunch Out</label>
-                    <input 
-                      type="time" 
-                      value={modalLunchOut}
-                      onChange={(e) => setModalLunchOut(e.target.value)}
-                      className="px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold text-xs focus:ring-2 focus:ring-blue-105 outline-none cursor-pointer"
-                    />
-                  </div>
-
-                  <div className="flex flex-col gap-1.5">
-                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1 block">Lunch In</label>
-                    <input 
-                      type="time" 
-                      value={modalLunchIn}
-                      onChange={(e) => setModalLunchIn(e.target.value)}
-                      className="px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold text-xs focus:ring-2 focus:ring-blue-105 outline-none cursor-pointer"
-                    />
-                  </div>
                 </div>
 
-                {/* Overtime violation hint */}
-                {modalLunchOut && modalLunchIn && (
-                  <div className={cn(
-                    "p-3 rounded-xl border text-[11px] font-bold font-mono text-center",
-                    getLunchDurationMinutes(modalLunchOut, modalLunchIn) > lunchDurationLimit
-                      ? "bg-red-50 border-red-150 text-red-700 animate-pulse"
-                      : "bg-emerald-50 border-emerald-150 text-emerald-800"
-                  )}>
-                    Lunch Duration Taken: {getLunchDurationMinutes(modalLunchOut, modalLunchIn)} mins 
-                    ({getLunchDurationMinutes(modalLunchOut, modalLunchIn) > lunchDurationLimit ? `Exceeds limit of ${lunchDurationLimit}m` : "Within limits"})
-                  </div>
-                )}
-
-                {/* 3. Remarks notes */}
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1 block">Notes / Remarks</label>
-                  <input 
-                    type="text"
-                    placeholder="E.g., late due to traffic, extended shift, etc."
-                    value={modalNotes}
-                    onChange={(e) => setModalNotes(e.target.value)}
-                    className="px-4 py-3 bg-slate-50 border border-slate-250 rounded-xl text-xs font-semibold focus:ring-2 focus:ring-blue-105 outline-none placeholder:text-gray-400"
-                  />
+                {/* Submit Buttons footer */}
+                <div className="flex items-center gap-3 mt-1.5">
+                  {mRecord && mRecord.id && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        handleDeleteAttendanceLog(mRecord.id!, selectedEmpForTime.name, mRecord.date);
+                        setSelectedEmpForTime(null);
+                      }}
+                      className="flex-1 py-3 bg-red-50 hover:bg-red-100 text-red-650 rounded-2xl font-black text-xs uppercase tracking-widest border border-red-200 transition-all cursor-pointer text-center flex items-center justify-center gap-1.5 animate-in fade-in"
+                      title="Delete Attendance Log"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      Delete
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setSelectedEmpForTime(null)}
+                    className="flex-1 py-3 bg-gray-50 hover:bg-gray-100 text-gray-500 rounded-2xl font-black text-xs uppercase tracking-widest border border-slate-200 transition-all cursor-pointer text-center"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    disabled={isSaving}
+                    onClick={handleSaveTimeSubmit}
+                    className="flex-2 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-2xl font-black text-xs uppercase tracking-widest transition-all shadow-lg active:scale-95 disabled:opacity-50 cursor-pointer text-center flex items-center justify-center gap-2"
+                  >
+                    <Save className="w-4 h-4" />
+                    {isSaving ? "Saving..." : "Submit Timings"}
+                  </button>
                 </div>
+              </motion.div>
+            </div>
+          );
+        })()}
+
+        {/* Custom Non-blocking Delete Confirmation Modal */}
+        {attendanceToDelete && (
+          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <div className="bg-white rounded-[32px] max-w-md w-full p-8 shadow-2xl border border-gray-100 animate-in zoom-in-95 duration-200">
+              <div className="w-12 h-12 bg-red-55 border border-red-100 rounded-2xl flex items-center justify-center text-red-600 mb-6">
+                <Trash2 className="w-5 h-5" />
               </div>
-
-              {/* Submit Buttons footer */}
-              <div className="flex items-center gap-3 mt-1.5">
+              <h3 className="text-xl font-bold text-gray-900 mb-2">Delete Attendance Log?</h3>
+              <p className="text-sm text-gray-500 mb-6">
+                Are you sure you want to delete the attendance log of <strong className="text-slate-805">{attendanceToDelete.empName}</strong> on <span className="font-semibold">{attendanceToDelete.prettyDate}</span>? This action is permanent and cannot be undone.
+              </p>
+              <div className="flex justify-end gap-3">
                 <button
                   type="button"
-                  onClick={() => setSelectedEmpForTime(null)}
-                  className="flex-1 py-3 bg-gray-50 hover:bg-gray-100 text-gray-500 rounded-2xl font-black text-xs uppercase tracking-widest border border-slate-200 transition-all cursor-pointer text-center"
+                  onClick={() => setAttendanceToDelete(null)}
+                  className="px-5 py-2.5 bg-gray-100 hover:bg-gray-200 text-slate-700 rounded-xl text-xs font-bold transition-all cursor-pointer"
                 >
                   Cancel
                 </button>
                 <button
                   type="button"
-                  disabled={isSaving}
-                  onClick={handleSaveTimeSubmit}
-                  className="flex-2 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-2xl font-black text-xs uppercase tracking-widest transition-all shadow-lg active:scale-95 disabled:opacity-50 cursor-pointer text-center flex items-center justify-center gap-2"
+                  onClick={executeDeleteAttendance}
+                  className="px-5 py-2.5 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-bold transition-all shadow-lg active:scale-95 cursor-pointer"
                 >
-                  <Save className="w-4 h-4" />
-                  {isSaving ? "Saving..." : "Submit Timings"}
+                  Delete Log
                 </button>
               </div>
-            </motion.div>
+            </div>
           </div>
         )}
       </div>

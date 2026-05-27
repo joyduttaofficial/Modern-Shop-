@@ -309,6 +309,11 @@ export default function Reports({ user, role }: { user: User; role: UserRole }) 
   };
 
   const exportDailyPDF = async () => {
+    const confirmMessage = language === "bn"
+      ? "আপনি কি নিশ্চিতভাবে এই দৈনিক রিপোর্ট পিডিএফ ডাউনলোড বা প্রিন্ট করতে চান?"
+      : "Are you sure you want to download or print the Daily Report PDF?";
+    if (!window.confirm(confirmMessage)) return;
+
     const doc = new jsPDF();
     const pageWidth = doc.internal.pageSize.getWidth();
     

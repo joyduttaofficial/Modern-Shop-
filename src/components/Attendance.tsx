@@ -69,6 +69,14 @@ export default function AttendancePage({
   const [halfDayThreshold, setHalfDayThreshold] = useState("11:30");
   const [attendanceToDelete, setAttendanceToDelete] = useState<{ id: string; empName: string; prettyDate: string } | null>(null);
   
+  // Custom detailed timings / submit states for phone and desktop views
+  const [selectedEmpForTime, setSelectedEmpForTime] = useState<Employee | null>(null);
+  const [modalStatus, setModalStatus] = useState<AttendanceStatus>("present");
+  const [modalCheckIn, setModalCheckIn] = useState("09:00");
+  const [modalLunchOut, setModalLunchOut] = useState("13:00");
+  const [modalLunchIn, setModalLunchIn] = useState("14:00");
+  const [modalNotes, setModalNotes] = useState("");
+  
   // List view specific states
   const [listTab, setListTab] = useState<"matrix" | "logs" | "lunch">("matrix");
   const [selectedMonth, setSelectedMonth] = useState<string>(format(new Date(), "yyyy-MM")); // e.g. "2026-05"
@@ -261,6 +269,88 @@ export default function AttendancePage({
     }
   };
 
+  // Timing Modal helper functions
+  const handleOpenTimeModal = (emp: Employee) => {
+    const record = getAttendanceForDay(emp.id!, selectedDate);
+    setSelectedEmpForTime(emp);
+    setModalStatus(record?.status || "present");
+    setModalCheckIn(record?.checkIn || "09:00");
+    setModalLunchOut(record?.lunchOut || "13:00");
+    setModalLunchIn(record?.lunchIn || "14:00");
+    setModalNotes(record?.notes || "");
+  };
+
+  const handleSaveTimeSubmit = async () => {
+    if (!selectedEmpForTime) return;
+    setIsSaving(true);
+    const empId = selectedEmpForTime.id!;
+    const record = getAttendanceForDay(empId, selectedDate);
+    
+    // Compute computed state status based on check-in time
+    const finalStatus = computeStatus(modalCheckIn, modalStatus);
+
+    try {
+      if (record && record.id) {
+        await updateDoc(doc(db, "attendance", record.id), {
+          status: finalStatus,
+          checkIn: modalCheckIn,
+          lunchOut: modalLunchOut,
+          lunchIn: modalLunchIn,
+          notes: modalNotes
+        });
+      } else {
+        await addDoc(collection(db, "attendance"), {
+          employeeId: empId,
+          date: selectedDate.toISOString(),
+          status: finalStatus,
+          checkIn: modalCheckIn,
+          lunchOut: modalLunchOut,
+          lunchIn: modalLunchIn,
+          notes: modalNotes
+        });
+      }
+      setSelectedEmpForTime(null);
+    } catch (e) {
+      handleFirestoreError(e, OperationType.UPDATE, "attendance");
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleTimeFieldChange = async (empId: string, field: "checkIn" | "lunchOut" | "lunchIn", value: string) => {
+    const existing = getAttendanceForDay(empId, selectedDate);
+    const dateStr = selectedDate.toISOString();
+
+    try {
+      if (existing && existing.id) {
+        const updates: any = { [field]: value };
+        if (field === "checkIn") {
+          if (existing.status === "present" || existing.status === "late" || existing.status === "half-day") {
+            updates.status = computeStatus(value, "present");
+          }
+        }
+        await updateDoc(doc(db, "attendance", existing.id), updates);
+      } else {
+        const checkIn = field === "checkIn" ? value : "09:00";
+        const lunchOut = field === "lunchOut" ? value : "13:00";
+        const lunchIn = field === "lunchIn" ? value : "14:00";
+        const finalStatus = computeStatus(checkIn, "present");
+
+        await addDoc(collection(db, "attendance"), {
+          employeeId: empId,
+          date: dateStr,
+          status: finalStatus,
+          checkIn,
+          lunchOut,
+          lunchIn,
+          notes: ""
+        });
+      }
+    } catch (e) {
+      handleFirestoreError(e, OperationType.UPDATE, "attendance");
+    }
+  };
+
   // Filter staff by search box query
   const filteredEmployees = employees.filter(e => 
     e.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -418,8 +508,8 @@ export default function AttendancePage({
           </div>
         </div>
 
-        {/* Daily Attendance Grid Sheet table */}
-        <div className="bg-white rounded-[32px] shadow-sm border border-gray-100 overflow-hidden">
+        {/* Daily Attendance Grid Sheet table - Desktop Version */}
+        <div className="hidden md:block bg-white rounded-[32px] shadow-sm border border-gray-100 overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full text-left border-collapse min-w-[700px]">
               <thead>
@@ -485,46 +575,44 @@ export default function AttendancePage({
 
                       {/* Shift schedule info */}
                       <td className="px-6 py-5">
-                        <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-                          <div className="flex items-center gap-1.5">
+                        <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+                          <div className="flex items-center gap-1">
                             <span className="text-[10px] font-bold text-gray-400 uppercase">In:</span>
                             <input 
                               type="time" 
                               value={record?.checkIn || ""} 
-                              onChange={async (e) => {
-                                if (record?.id) {
-                                  const newInTime = e.target.value;
-                                  const updates: any = { checkIn: newInTime };
-                                  if (record.status === "present" || record.status === "late" || record.status === "half-day") {
-                                    updates.status = computeStatus(newInTime, "present");
-                                  }
-                                  await updateDoc(doc(db, "attendance", record.id), updates);
-                                }
-                              }}
-                              className="bg-gray-50 border-none rounded-lg text-xs font-bold p-1 w-20 focus:ring-1 focus:ring-blue-100 focus:bg-white outline-none cursor-pointer"
+                              onChange={async (e) => await handleTimeFieldChange(emp.id!, "checkIn", e.target.value)}
+                              className="bg-gray-50 border-none rounded-lg text-xs font-bold p-1 w-18 focus:ring-1 focus:ring-blue-100 focus:bg-white outline-none cursor-pointer"
                             />
                           </div>
 
                           <div className="flex items-center gap-1">
-                            <span className="text-[10px] font-bold text-gray-400 uppercase">Out:</span>
+                            <span className="text-[10px] font-bold text-gray-400 uppercase">L.Out:</span>
                             <input 
                               type="time" 
                               value={record?.lunchOut || ""} 
-                              onChange={async (e) => {
-                                if (record?.id) await updateDoc(doc(db, "attendance", record.id), { lunchOut: e.target.value });
-                              }}
+                              onChange={async (e) => await handleTimeFieldChange(emp.id!, "lunchOut", e.target.value)}
                               className="bg-gray-50 border-none rounded-lg text-xs font-bold p-1 w-18 focus:ring-1 focus:ring-blue-100 focus:bg-white outline-none cursor-pointer"
                             />
-                            <span className="text-gray-300 text-[10px]">-</span>
+                            <span className="text-gray-350 text-[10px]">-</span>
+                            <span className="text-[10px] font-bold text-gray-400 uppercase">In:</span>
                             <input 
                               type="time" 
                               value={record?.lunchIn || ""} 
-                              onChange={async (e) => {
-                                if (record?.id) await updateDoc(doc(db, "attendance", record.id), { lunchIn: e.target.value });
-                              }}
+                              onChange={async (e) => await handleTimeFieldChange(emp.id!, "lunchIn", e.target.value)}
                               className="bg-gray-50 border-none rounded-lg text-xs font-bold p-1 w-18 focus:ring-1 focus:ring-blue-100 focus:bg-white outline-none cursor-pointer"
                             />
                           </div>
+
+                          {/* Submit / detailed time edit shortcut indicator/button */}
+                          <button
+                            onClick={() => handleOpenTimeModal(emp)}
+                            title="Open interactive check-in/lunch submit details"
+                            className="p-1 px-1.5 bg-blue-50 text-blue-600 hover:bg-blue-100 font-extrabold text-[10px] uppercase tracking-wider rounded-lg border border-blue-105 transition-all hover:scale-105 active:scale-95 cursor-pointer flex items-center gap-1 inline-flex shrink-0 ml-auto"
+                          >
+                            <Clock className="w-3 h-3" />
+                            Submit Options
+                          </button>
                         </div>
                       </td>
 
@@ -571,6 +659,285 @@ export default function AttendancePage({
             </div>
           )}
         </div>
+
+        {/* Mobile View Employee Cards - Visible on mobile only */}
+        <div className="block md:hidden space-y-4">
+          {filteredEmployees.map((emp) => {
+            const record = getAttendanceForDay(emp.id!, selectedDate);
+            const statusConfig = record ? STATUS_CONFIG[record.status] : null;
+
+            return (
+              <motion.div 
+                key={emp.id}
+                layoutId={`emp-mobile-card-${emp.id}`}
+                className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 space-y-4"
+              >
+                <div className="flex items-start justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 bg-gray-100 text-gray-500 rounded-xl flex items-center justify-center font-bold text-sm overflow-hidden shrink-0">
+                      {emp.documents?.find(d => d.type.startsWith('image/')) ? (
+                        <img src={emp.documents.find(d => d.type.startsWith('image/'))?.data} alt="" className="w-full h-full object-cover" />
+                      ) : emp.name.charAt(0)}
+                    </div>
+                    <div>
+                      <p className="font-bold text-gray-900 text-sm leading-none mb-1">{emp.name}</p>
+                      <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">{emp.role} {emp.department ? `• ${emp.department}` : ""}</p>
+                    </div>
+                  </div>
+
+                  {record ? (
+                    <span className={cn(
+                      "inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[9px] font-black uppercase tracking-wider", 
+                      statusConfig?.bg, 
+                      statusConfig?.color
+                    )}>
+                      <span className={cn("w-1 h-1 rounded-full", statusConfig?.dot)} />
+                      {statusConfig?.label}
+                    </span>
+                  ) : (
+                    <span className="text-[9px] font-black text-gray-300 uppercase tracking-wider bg-gray-50 px-2.5 py-1 rounded-full border border-gray-100">
+                      No Registry
+                    </span>
+                  )}
+                </div>
+
+                {/* Direct time selection input fields on mobile */}
+                <div className="bg-gray-50/50 p-3 rounded-xl border border-gray-150 grid grid-cols-4 gap-1.5 text-xs text-gray-500 font-semibold font-mono">
+                  <div>
+                    <span className="text-[9px] font-black text-gray-400 block uppercase mb-1">In</span>
+                    <input 
+                      type="time" 
+                      value={record?.checkIn || ""} 
+                      onChange={async (e) => await handleTimeFieldChange(emp.id!, "checkIn", e.target.value)}
+                      className="bg-white border border-gray-200 rounded-lg text-xs font-bold p-1 w-full text-center focus:ring-1 focus:ring-blue-105 outline-none cursor-pointer"
+                    />
+                  </div>
+                  <div>
+                    <span className="text-[9px] font-black text-gray-400 block uppercase mb-1">L.Out</span>
+                    <input 
+                      type="time" 
+                      value={record?.lunchOut || ""} 
+                      onChange={async (e) => await handleTimeFieldChange(emp.id!, "lunchOut", e.target.value)}
+                      className="bg-white border border-gray-200 rounded-lg text-xs font-bold p-1 w-full text-center focus:ring-1 focus:ring-blue-105 outline-none cursor-pointer"
+                    />
+                  </div>
+                  <div>
+                    <span className="text-[9px] font-black text-gray-400 block uppercase mb-1">L.In</span>
+                    <input 
+                      type="time" 
+                      value={record?.lunchIn || ""} 
+                      onChange={async (e) => await handleTimeFieldChange(emp.id!, "lunchIn", e.target.value)}
+                      className="bg-white border border-gray-200 rounded-lg text-xs font-bold p-1 w-full text-center focus:ring-1 focus:ring-blue-105 outline-none cursor-pointer"
+                    />
+                  </div>
+                  <div>
+                    <span className="text-[9px] font-black text-gray-400 block uppercase mb-2">Overtime</span>
+                    <span className={cn(
+                      "font-black text-xs block text-center pt-1.5",
+                      record?.lunchOut && record?.lunchIn && getLunchDurationMinutes(record.lunchOut, record.lunchIn) > lunchDurationLimit
+                        ? "text-red-650 animate-pulse"
+                        : "text-emerald-650"
+                    )}>
+                      {record?.lunchOut && record?.lunchIn 
+                        ? `${getLunchDurationMinutes(record.lunchOut, record.lunchIn)}m`
+                        : "—"
+                      }
+                    </span>
+                  </div>
+                </div>
+
+                {record?.notes && (
+                  <p className="text-[11px] text-gray-500 italic bg-slate-50/30 p-2.5 rounded-lg border border-slate-100">
+                    <strong className="text-[9px] font-black uppercase text-gray-400 not-italic block mb-0.5">Comment:</strong>
+                    {record.notes}
+                  </p>
+                )}
+
+                {/* Quick Status and Edit triggers */}
+                <div className="flex flex-col sm:flex-row gap-2 pt-1">
+                  <button
+                    onClick={() => handleOpenTimeModal(emp)}
+                    className="flex-1 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-extrabold text-xs uppercase tracking-wider transition-all shadow-md shadow-blue-500/10 flex items-center justify-center gap-1.5 cursor-pointer animate-pulse"
+                  >
+                    <Clock className="w-3.5 h-3.5 animate-spin" style={{ animationDuration: '6s' }} />
+                    Set Times & Submit
+                  </button>
+
+                  <div className="flex items-center gap-1.5 justify-center sm:justify-start">
+                    {(Object.entries(STATUS_CONFIG) as [AttendanceStatus, any][]).map(([status, cfg]) => (
+                      <button
+                        key={status}
+                        onClick={() => handleStatusChange(emp.id!, status)}
+                        title={cfg.label}
+                        className={cn(
+                          "w-10 h-10 rounded-xl transition-all border shrink-0 cursor-pointer flex items-center justify-center",
+                          record?.status === status 
+                            ? cn(cfg.bg, cfg.color, "border-current font-bold scale-105 shadow-sm") 
+                            : "bg-white text-gray-300 border-gray-100 hover:border-gray-200"
+                        )}
+                      >
+                        <cfg.icon className="w-4 h-4" />
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </motion.div>
+            );
+          })}
+
+          {filteredEmployees.length === 0 && (
+            <div className="py-12 bg-white rounded-2xl border border-gray-100 text-center text-gray-400 font-semibold italic">
+              No staff members match the query details.
+            </div>
+          )}
+        </div>
+
+        {/* Custom Slide-over page / Centered interactive Timing Modal with Submit Option */}
+        {selectedEmpForTime && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-xs">
+            <motion.div 
+              initial={{ scale: 0.95, opacity: 0, y: 10 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.95, opacity: 0, y: 10 }}
+              className="bg-white rounded-[32px] max-w-md w-full p-6 md:p-8 shadow-2xl border border-slate-100 flex flex-col gap-5 overflow-y-auto max-h-[90vh]"
+            >
+              <div className="flex items-start justify-between">
+                <div>
+                  <h3 className="text-xl font-black text-gray-950 leading-tight">Time & Lunch Submission</h3>
+                  <p className="text-[11px] text-gray-400 font-bold uppercase tracking-wider mt-0.5">
+                    {format(selectedDate, "EEEE, dd MMMM yyyy")}
+                  </p>
+                </div>
+                <button 
+                  onClick={() => setSelectedEmpForTime(null)}
+                  className="p-1.5 hover:bg-slate-50 text-gray-400 hover:text-gray-700 rounded-lg transition-colors cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Employee Header */}
+              <div className="flex items-center gap-3 p-3.5 bg-slate-50 rounded-2xl border border-slate-150/50">
+                <div className="w-11 h-11 bg-slate-200 text-slate-700 rounded-xl flex items-center justify-center font-bold text-sm overflow-hidden shrink-0">
+                  {selectedEmpForTime.documents?.find(d => d.type.startsWith('image/')) ? (
+                    <img src={selectedEmpForTime.documents.find(d => d.type.startsWith('image/'))?.data} alt="" className="w-full h-full object-cover" />
+                  ) : selectedEmpForTime.name.charAt(0)}
+                </div>
+                <div>
+                  <h4 className="font-extrabold text-slate-900 leading-tight">{selectedEmpForTime.name}</h4>
+                  <p className="text-[10px] font-bold text-indigo-600 tracking-wider uppercase mt-0.5">{selectedEmpForTime.role}</p>
+                </div>
+              </div>
+
+              {/* Form Content */}
+              <div className="space-y-4">
+                {/* 1. Status Selection */}
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1 block">Attendance Registry Status</label>
+                  <div className="grid grid-cols-3 gap-1.5">
+                    {(Object.entries(STATUS_CONFIG) as [AttendanceStatus, any][]).map(([status, cfg]) => {
+                      const isSelected = modalStatus === status;
+                      return (
+                        <button
+                          key={status}
+                          type="button"
+                          onClick={() => setModalStatus(status)}
+                          className={cn(
+                            "py-2 px-1.5 rounded-xl border flex flex-col items-center justify-center gap-1 transition-all cursor-pointer text-center",
+                            isSelected 
+                              ? cn(cfg.bg, cfg.color, "border-current font-bold scale-[1.02] shadow-xs") 
+                              : "bg-white text-gray-400 border-gray-150 hover:border-gray-200"
+                          )}
+                        >
+                          <cfg.icon className="w-4 h-4" />
+                          <span className="text-[9px] font-extrabold uppercase tracking-wide leading-none">{cfg.label}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* 2. Shift & Lunch time selectors */}
+                <div className="grid grid-cols-3 gap-3">
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1 block">In Time</label>
+                    <input 
+                      type="time" 
+                      value={modalCheckIn}
+                      onChange={(e) => setModalCheckIn(e.target.value)}
+                      className="px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold text-xs focus:ring-2 focus:ring-blue-105 outline-none cursor-pointer"
+                    />
+                  </div>
+
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1 block">Lunch Out</label>
+                    <input 
+                      type="time" 
+                      value={modalLunchOut}
+                      onChange={(e) => setModalLunchOut(e.target.value)}
+                      className="px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold text-xs focus:ring-2 focus:ring-blue-105 outline-none cursor-pointer"
+                    />
+                  </div>
+
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1 block">Lunch In</label>
+                    <input 
+                      type="time" 
+                      value={modalLunchIn}
+                      onChange={(e) => setModalLunchIn(e.target.value)}
+                      className="px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold text-xs focus:ring-2 focus:ring-blue-105 outline-none cursor-pointer"
+                    />
+                  </div>
+                </div>
+
+                {/* Overtime violation hint */}
+                {modalLunchOut && modalLunchIn && (
+                  <div className={cn(
+                    "p-3 rounded-xl border text-[11px] font-bold font-mono text-center",
+                    getLunchDurationMinutes(modalLunchOut, modalLunchIn) > lunchDurationLimit
+                      ? "bg-red-50 border-red-150 text-red-700 animate-pulse"
+                      : "bg-emerald-50 border-emerald-150 text-emerald-800"
+                  )}>
+                    Lunch Duration Taken: {getLunchDurationMinutes(modalLunchOut, modalLunchIn)} mins 
+                    ({getLunchDurationMinutes(modalLunchOut, modalLunchIn) > lunchDurationLimit ? `Exceeds limit of ${lunchDurationLimit}m` : "Within limits"})
+                  </div>
+                )}
+
+                {/* 3. Remarks notes */}
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1 block">Notes / Remarks</label>
+                  <input 
+                    type="text"
+                    placeholder="E.g., late due to traffic, extended shift, etc."
+                    value={modalNotes}
+                    onChange={(e) => setModalNotes(e.target.value)}
+                    className="px-4 py-3 bg-slate-50 border border-slate-250 rounded-xl text-xs font-semibold focus:ring-2 focus:ring-blue-105 outline-none placeholder:text-gray-400"
+                  />
+                </div>
+              </div>
+
+              {/* Submit Buttons footer */}
+              <div className="flex items-center gap-3 mt-1.5">
+                <button
+                  type="button"
+                  onClick={() => setSelectedEmpForTime(null)}
+                  className="flex-1 py-3 bg-gray-50 hover:bg-gray-100 text-gray-500 rounded-2xl font-black text-xs uppercase tracking-widest border border-slate-200 transition-all cursor-pointer text-center"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={isSaving}
+                  onClick={handleSaveTimeSubmit}
+                  className="flex-2 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-2xl font-black text-xs uppercase tracking-widest transition-all shadow-lg active:scale-95 disabled:opacity-50 cursor-pointer text-center flex items-center justify-center gap-2"
+                >
+                  <Save className="w-4 h-4" />
+                  {isSaving ? "Saving..." : "Submit Timings"}
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
       </div>
     );
   }

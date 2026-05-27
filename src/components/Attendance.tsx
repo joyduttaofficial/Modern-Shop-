@@ -3,7 +3,7 @@ import { User } from "firebase/auth";
 import { collection, onSnapshot, addDoc, doc, updateDoc, query, where, deleteDoc } from "firebase/firestore";
 import { db, OperationType, handleFirestoreError } from "@/src/lib/firebase";
 import { Employee, UserRole, Attendance, AttendanceStatus } from "@/src/types";
-import { cn } from "@/src/lib/utils";
+import { cn, safeFormat as format } from "@/src/lib/utils";
 import { 
   Calendar, 
   MapPin, 
@@ -35,7 +35,7 @@ import {
   TrendingUp,
   UserCircle
 } from "lucide-react";
-import { format, startOfMonth, endOfMonth, eachDayOfInterval, isSameDay, startOfToday, addDays, subDays, parseISO } from "date-fns";
+import { startOfMonth, endOfMonth, eachDayOfInterval, isSameDay, startOfToday, addDays, subDays, parseISO } from "date-fns";
 import { motion, AnimatePresence } from "motion/react";
 
 const STATUS_CONFIG: Record<AttendanceStatus, { label: string; icon: any; color: string; bg: string; dot: string }> = {

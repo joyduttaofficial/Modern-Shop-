@@ -23,10 +23,14 @@ import {
   ChevronRight,
   UserPlus,
   Sun,
-  Moon
+  Moon,
+  AlertTriangle,
+  ServerOff,
+  RefreshCw,
+  ExternalLink
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
-import { auth, db, OperationType, handleFirestoreError } from "@/src/lib/firebase";
+import { auth, db, OperationType, handleFirestoreError, subscribeToQuotaExceeded } from "@/src/lib/firebase";
 import { onAuthStateChanged, signOut, User as FirebaseUser } from "firebase/auth";
 import { doc, getDoc, setDoc, onSnapshot, collection, query, where, getDocs, deleteDoc } from "firebase/firestore";
 import { UserProfile, UserRole, RolePermission } from "@/src/types";
@@ -80,6 +84,14 @@ export default function App() {
     suppliers: true,
     purchases: true
   });
+  const [isQuotaExceeded, setIsQuotaExceeded] = useState(false);
+
+  useEffect(() => {
+    return subscribeToQuotaExceeded((exceeded) => {
+      setIsQuotaExceeded(exceeded);
+    });
+  }, []);
+
   const [user, setUser] = useState<FirebaseUser | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [customRoles, setCustomRoles] = useState<RolePermission[]>([]);
@@ -116,12 +128,32 @@ export default function App() {
         parsedRoles.push({ id: doc.id, ...doc.data() } as RolePermission);
       });
       setCustomRoles(parsedRoles);
-    }, (err) => console.error("Roles fetch error", err));
+    }, (err) => handleFirestoreError(err, OperationType.LIST, "roles"));
     return () => unsubRoles();
   }, [user]);
 
   useEffect(() => {
     let unsubProfile: (() => void) | null = null;
+
+    if (typeof localStorage !== "undefined" && localStorage.getItem("use_demo_mode") === "true") {
+      setUser({
+        uid: "xIwpE8bPxghPG55PW6oYLNjSU503",
+        email: "modern@admin.com",
+        displayName: "Demo Administrator",
+        photoURL: "https://api.dicebear.com/7.x/adventurer/svg?seed=Main%20Administrator"
+      } as any);
+      setProfile({
+        uid: "xIwpE8bPxghPG55PW6oYLNjSU503",
+        email: "modern@admin.com",
+        displayName: "Demo Administrator",
+        role: "admin",
+        status: "active",
+        createdAt: new Date().toISOString(),
+        photoURL: "https://api.dicebear.com/7.x/adventurer/svg?seed=Main%20Administrator"
+      });
+      setLoading(false);
+      return;
+    }
 
     const unsubscribe = onAuthStateChanged(auth, async (u) => {
       setUser(u);
@@ -212,12 +244,12 @@ export default function App() {
             }, (error) => {
               // Only log if the user is still actively signed in
               if (auth.currentUser) {
-                console.error("Profile sync error", error);
+                handleFirestoreError(error, OperationType.GET, "users");
               }
             });
           }
         } catch (err) {
-          console.error("Error loading user profile:", err);
+          handleFirestoreError(err, OperationType.GET, "users");
         } finally {
           setLoading(false);
         }
@@ -235,9 +267,16 @@ export default function App() {
     };
   }, []);
 
-  const handleLogout = () => signOut(auth);
+  const handleLogout = () => {
+    if (typeof localStorage !== "undefined" && localStorage.getItem("use_demo_mode") === "true") {
+      localStorage.removeItem("use_demo_mode");
+      window.location.reload();
+      return;
+    }
+    signOut(auth);
+  };
 
-  if (loading) {
+  if (loading && !isQuotaExceeded) {
     return (
       <div className="flex items-center justify-center h-screen bg-[#F5F5F4]">
         <div className="animate-spin rounded-full h-12 w-12 border-slate-900 border-b-2"></div>
@@ -626,6 +665,22 @@ export default function App() {
             </div>
             
             <div className="flex items-center gap-3 self-stretch sm:self-auto justify-between sm:justify-end">
+              {/* Sandbox Activation Tracker */}
+              {typeof localStorage !== "undefined" && localStorage.getItem("use_demo_mode") === "true" && (
+                <div className="flex items-center gap-2 px-3 py-1 bg-gradient-to-r from-amber-500 to-orange-500 text-white border border-orange-400 rounded-xl text-[10px] font-black shadow-xs shrink-0 animate-pulse">
+                  <span>⚡ OFFLINE SANDBOX ACTIVE</span>
+                  <button
+                    onClick={() => {
+                      localStorage.removeItem("use_demo_mode");
+                      window.location.reload();
+                    }}
+                    className="uppercase tracking-wider text-[9px] px-2 py-0.5 bg-white hover:bg-slate-50 text-slate-900 rounded-lg transition-all cursor-pointer font-black shadow-3xs"
+                  >
+                    Go Live
+                  </button>
+                </div>
+              )}
+              
               {/* Dark Mode Switcher Button */}
               <div className="bg-slate-50 p-1 rounded-xl border border-slate-150 flex items-center gap-1">
                 <button
@@ -687,6 +742,90 @@ export default function App() {
               </div>
             </div>
           </div>
+
+          {isQuotaExceeded && (
+            <motion.div
+              initial={{ opacity: 0, y: -10 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="mb-8 p-6 bg-gradient-to-br from-red-50 to-orange-50 border border-red-200 rounded-[28px] text-[11px] text-red-955 shadow-md flex flex-col md:flex-row gap-5 items-start justify-between"
+            >
+              <div className="flex-1 space-y-3.5 animate-in fade-in duration-300">
+                <div className="flex items-center gap-2">
+                  <span className="p-1 px-2.5 bg-red-100 text-red-800 font-black tracking-widest uppercase rounded-lg text-[9px] leading-none">Quota Exceeded</span>
+                  <span className="text-sm font-black text-red-950 uppercase tracking-wide flex items-center gap-1.5">
+                    <AlertTriangle className="w-4 h-4 text-red-650" />
+                    Firestore Database Limit Activated
+                  </span>
+                </div>
+                
+                <p className="text-red-800 font-semibold leading-relaxed text-xs">
+                  Your Firestore Database instance has exceeded its Spark free daily limits (50,000 read operations). Reads/writes are blocked until midnight PST or until billing is configured.
+                </p>
+
+                <div className="p-4 bg-white/80 border border-red-100 rounded-2xl max-w-2xl mt-2">
+                  <h4 className="font-extrabold text-red-955 text-xs mb-1 flex items-center gap-1.5">
+                    <span className="p-1 bg-amber-100 text-amber-800 rounded-lg text-[9px] uppercase tracking-wider font-extrabold">Instant Fix</span>
+                    Use Offline Sandbox Mode
+                  </h4>
+                  <p className="text-red-800 font-semibold leading-relaxed text-[11px] mb-3">
+                    Bypass all connection blocks and standard storage restrictions immediately. Maintain complete operational access to POS transactions, items, staff records, and accounts saved safely in local storage.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      localStorage.setItem("use_demo_mode", "true");
+                      window.location.reload();
+                    }}
+                    className="px-5 py-2.5 bg-slate-900 hover:bg-slate-850 text-white font-black rounded-xl text-[10px] uppercase tracking-wider transition-all shadow-xs flex items-center justify-center gap-2 cursor-pointer"
+                  >
+                    <span>⚡ Switch to Offline Sandbox Mode</span>
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-1.5">
+                  <div className="flex gap-2.5 items-start">
+                    <span className="text-red-550 shrink-0 mt-0.5 font-bold">●</span>
+                    <div>
+                      <h4 className="font-extrabold text-red-955 text-xs">Spark / Free Plan Daily Max</h4>
+                      <p className="text-red-750 font-medium text-[11px] leading-relaxed">
+                        Automatic daily reset occurs at 12:00 AM PST. For metrics details, view the <a href="https://firebase.google.com/pricing#cloud-firestore" target="_blank" rel="noreferrer" className="underline font-bold">Firebase Pricing Model</a>.
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex gap-2.5 items-start">
+                    <span className="text-red-550 shrink-0 mt-0.5 font-bold">●</span>
+                    <div>
+                      <h4 className="font-extrabold text-red-955 text-xs">Upgrade Database</h4>
+                      <p className="text-red-750 font-medium text-[11px] leading-relaxed">
+                        Configure a billing instrument in Google Cloud Console / Firebase Console to bypass Spark Limits entirely.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="shrink-0 flex flex-col gap-2.5 w-full md:w-auto">
+                <a
+                  href="https://console.firebase.google.com/project/studio-1767695098-65e9f/firestore/databases/ai-studio-254e2cd5-7d37-444e-878d-72afd87a600f/data?openUpgradeDialog=true"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="px-5 py-3 bg-red-600 hover:bg-red-700 text-white font-black rounded-2xl text-[11px] uppercase tracking-wider transition-all text-center flex items-center justify-center gap-2 shadow-sm cursor-pointer"
+                >
+                  <ExternalLink className="w-3.5 h-3.5" />
+                  Upgrade Firestore Database
+                </a>
+                <button
+                  type="button"
+                  onClick={() => window.location.reload()}
+                  className="px-5 py-2.5 bg-white hover:bg-red-50 text-red-700 font-bold border border-red-200 rounded-2xl text-[10px] uppercase tracking-widest transition-all text-center flex items-center justify-center gap-1.5 cursor-pointer shadow-3xs"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" />
+                  Reload Connection
+                </button>
+              </div>
+            </motion.div>
+          )}
+
           <AnimatePresence mode="wait">
             <motion.div
               key={activeView}

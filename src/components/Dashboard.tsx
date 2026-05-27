@@ -4,7 +4,6 @@ import { collection, query, where, orderBy, limit, onSnapshot, getDocs } from "f
 import { db, OperationType, handleFirestoreError } from "@/src/lib/firebase";
 import { Transaction, Bank, UserRole } from "@/src/types";
 import { PurchaseModel } from "./Purchase";
-import { formatCurrency, cn } from "@/src/lib/utils";
 import { 
   TrendingUp, 
   TrendingDown, 
@@ -37,7 +36,8 @@ import {
   Legend, 
   Cell 
 } from "recharts";
-import { format, subDays, startOfDay, endOfDay } from "date-fns";
+import { subDays, startOfDay, endOfDay } from "date-fns";
+import { formatCurrency, cn, safeFormat as format } from "@/src/lib/utils";
 import { useLanguage } from "../contexts/LanguageContext";
 
 export default function Dashboard({ user, role }: { user: User; role: UserRole }) {
@@ -371,7 +371,7 @@ export default function Dashboard({ user, role }: { user: User; role: UserRole }
         setTrendChartData(days);
 
       } catch (error) {
-        console.error("Error fetching stats:", error);
+        handleFirestoreError(error, OperationType.GET, "dashboard/stats");
       } finally {
         setLoading(false);
       }

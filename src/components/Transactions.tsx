@@ -3,10 +3,9 @@ import { User } from "firebase/auth";
 import { collection, addDoc, query, orderBy, onSnapshot, limit, deleteDoc, doc, updateDoc, increment, where } from "firebase/firestore";
 import { db, OperationType, handleFirestoreError } from "@/src/lib/firebase";
 import { Transaction, TransactionType, Category, Bank, UserRole, Employee, Supplier } from "@/src/types";
-import { cn, formatCurrency } from "@/src/lib/utils";
+import { cn, formatCurrency, safeFormat as format } from "@/src/lib/utils";
 import { Plus, Search, Filter, Trash2, ArrowUpCircle, ArrowDownCircle, Wallet, Landmark, UserCheck, ArrowUpRight, ArrowDownLeft } from "lucide-react";
 import { motion } from "motion/react";
-import { format } from "date-fns";
 
 export default function Transactions({ user, role }: { user: User; role: UserRole }) {
   const [activeTab, setActiveTab ] = useState<TransactionType>("income");

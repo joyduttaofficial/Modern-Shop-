@@ -3,9 +3,9 @@ import { User } from "firebase/auth";
 import { collection, onSnapshot, query, orderBy, doc, getDocs, writeBatch, setDoc, deleteDoc } from "firebase/firestore";
 import { db, OperationType, handleFirestoreError } from "@/src/lib/firebase";
 import { Transaction, UserRole, Employee } from "@/src/types";
-import { cn, formatCurrency } from "@/src/lib/utils";
+import { cn, formatCurrency, safeFormat as format } from "@/src/lib/utils";
 import { Calendar, UserCircle, Save, CheckCircle, Loader2, Home, ChevronRight, ShoppingCart } from "lucide-react";
-import { format, startOfDay, endOfDay } from "date-fns";
+import { startOfDay, endOfDay } from "date-fns";
 import { useLanguage } from "../contexts/LanguageContext";
 
 export default function NewSale({ 

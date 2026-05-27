@@ -139,7 +139,7 @@ export default function UsersManager({
       });
       setRoles(parsedRoles);
     }, (err) => {
-      console.error(err);
+      handleFirestoreError(err, OperationType.LIST, "roles");
     });
 
     // Listen for user profiles
@@ -151,7 +151,7 @@ export default function UsersManager({
       setUsersList(parsedUsers);
       setLoading(false);
     }, (err) => {
-      console.error(err);
+      handleFirestoreError(err, OperationType.LIST, "users");
       setLoading(false);
     });
 

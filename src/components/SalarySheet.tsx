@@ -3,7 +3,7 @@ import { User } from "firebase/auth";
 import { collection, onSnapshot, query, where, deleteDoc, doc, writeBatch, increment } from "firebase/firestore";
 import { db, OperationType, handleFirestoreError } from "@/src/lib/firebase";
 import { Employee, Bank, Transaction, UserRole } from "@/src/types";
-import { cn, formatCurrency } from "@/src/lib/utils";
+import { cn, formatCurrency, safeFormat as format } from "@/src/lib/utils";
 import { 
   FileText, 
   Calendar, 
@@ -20,7 +20,7 @@ import {
   Search,
   Filter
 } from "lucide-react";
-import { format, startOfMonth, endOfMonth, isWithinInterval, parseISO } from "date-fns";
+import { startOfMonth, endOfMonth, isWithinInterval, parseISO } from "date-fns";
 
 export default function SalarySheet({ user, role }: { user: User; role: UserRole }) {
   if (role !== "admin") {

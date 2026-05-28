@@ -3,8 +3,9 @@ import { User } from "firebase/auth";
 import { collection, onSnapshot, addDoc, doc, updateDoc, increment, query, where } from "firebase/firestore";
 import { db, OperationType, handleFirestoreError } from "@/src/lib/firebase";
 import { Employee, Bank, UserRole } from "@/src/types";
-import { cn, formatCurrency, safeFormat as format } from "@/src/lib/utils";
+import { cn, formatCurrency } from "@/src/lib/utils";
 import { Table, Save, Calendar, Landmark, Wallet, CheckCircle2, AlertCircle, Users } from "lucide-react";
+import { format } from "date-fns";
 import { motion } from "motion/react";
 
 interface RowState {

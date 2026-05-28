@@ -1,6 +1,5 @@
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
-import { format as dateFnsFormat } from "date-fns";
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -30,22 +29,3 @@ export function formatCurrency(amount: number) {
   }
   return "৳" + formattedEn;
 }
-
-export function safeFormat(date: any, formatStr: string, fallback: string = ""): string {
-  if (!date) return fallback;
-  try {
-    let d: Date;
-    if (date instanceof Date) {
-      d = date;
-    } else {
-      d = new Date(date);
-    }
-    if (isNaN(d.getTime())) {
-      return fallback;
-    }
-    return dateFnsFormat(d, formatStr);
-  } catch (err) {
-    return fallback;
-  }
-}
-

@@ -23,14 +23,10 @@ import {
   ChevronRight,
   UserPlus,
   Sun,
-  Moon,
-  AlertTriangle,
-  ServerOff,
-  RefreshCw,
-  ExternalLink
+  Moon
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
-import { auth, db, OperationType, handleFirestoreError, subscribeToQuotaExceeded } from "@/src/lib/firebase";
+import { auth, db, OperationType, handleFirestoreError } from "@/src/lib/firebase";
 import { onAuthStateChanged, signOut, User as FirebaseUser } from "firebase/auth";
 import { doc, getDoc, setDoc, onSnapshot, collection, query, where, getDocs, deleteDoc } from "firebase/firestore";
 import { UserProfile, UserRole, RolePermission } from "@/src/types";
@@ -51,6 +47,84 @@ import Suppliers from "./components/Suppliers";
 import Purchase from "./components/Purchase";
 import UsersManager from "./components/UsersManager";
 import Login from "./components/Login";
+
+function QuotaExceededOverlay({ onDismiss, databaseId, projectId }: { onDismiss: () => void; databaseId: string; projectId: string }) {
+  const upgradeUrl = `https://console.firebase.google.com/project/${projectId}/firestore/databases/${databaseId}/data?openUpgradeDialog=true`;
+  const pricingUrl = "https://firebase.google.com/pricing#cloud-firestore";
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs min-h-screen">
+      <motion.div 
+        initial={{ opacity: 0, scale: 0.95, y: 20 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        className="bg-white dark:bg-zinc-900 max-w-lg w-full rounded-2xl border border-amber-200 dark:border-amber-900/40 shadow-2xl p-6 sm:p-8 space-y-6 relative"
+      >
+        <div className="flex items-center gap-3">
+          <div className="w-12 h-12 bg-amber-50 dark:bg-amber-900/20 rounded-xl flex items-center justify-center text-amber-500 shrink-0 border border-amber-100 dark:border-amber-900/30">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-6 h-6">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
+            </svg>
+          </div>
+          <div>
+            <h2 className="text-xl font-bold text-slate-900 dark:text-neutral-100 tracking-tight">
+              Firestore Quota Limit Exceeded
+            </h2>
+            <p className="text-xs text-slate-400 font-mono mt-0.5 uppercase tracking-wider font-semibold">
+              spark plan free tier exhausted
+            </p>
+          </div>
+        </div>
+
+        <div className="space-y-4 text-slate-650 dark:text-neutral-300 text-sm leading-relaxed">
+          <p>
+            The standard Firebase Spark plan has reached its free limit of <strong>daily read units</strong> for this project.
+          </p>
+          <div className="p-4 bg-slate-50 dark:bg-zinc-950 rounded-xl border border-slate-100 dark:border-zinc-800 space-y-2">
+            <p className="font-medium text-slate-805 dark:text-neutral-200 text-xs text-amber-600 dark:text-amber-500 uppercase tracking-widest leading-none">
+              Status & Resolution:
+            </p>
+            <p className="text-xs text-slate-600 dark:text-neutral-400">
+              Firestore read operations are temporarily restricted. Standard daily free tier quotas will automatically reset tomorrow. To instantly restore database connectivity, please enable billing or upgrade the project in the Firebase Console.
+            </p>
+          </div>
+          <p className="text-xs text-slate-500">
+            Detailed quota information is available under the <strong>Spark plan</strong> column in the <strong>Enterprise edition</strong> section of official Firebase Documentation.
+          </p>
+        </div>
+
+        <div className="flex flex-col gap-2 pt-2">
+          <a
+            href={upgradeUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="w-full py-3 bg-slate-950 dark:bg-[#d4af37] dark:text-black hover:bg-slate-850 text-white font-bold text-sm tracking-wider uppercase rounded-xl transition-all flex items-center justify-center gap-2 shadow-lg shadow-slate-950/10 cursor-pointer text-center"
+          >
+            <span>Upgrade & Enable Billing</span>
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
+              <path fillRule="evenodd" d="M5.22 14.78a.75.75 0 001.06 0l7.22-7.22v5.69a.75.75 0 001.5 0v-7.5a.75.75 0 00-.75-.75h-7.5a.75.75 0 000 1.5h5.69l-7.22 7.22a.75.75 0 000 1.06z" clipRule="evenodd" />
+            </svg>
+          </a>
+
+          <a
+            href={pricingUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="w-full py-2.5 bg-slate-50 dark:bg-zinc-850 hover:bg-slate-100 dark:hover:bg-zinc-850 text-slate-705 dark:text-neutral-200 font-bold text-xs tracking-wider uppercase rounded-xl transition-all flex items-center justify-center gap-2 border border-slate-200 dark:border-zinc-700 cursor-pointer text-center"
+          >
+            View Firebase Pricing Tiers
+          </a>
+
+          <button
+            onClick={onDismiss}
+            className="w-full py-2.5 hover:bg-slate-50 dark:hover:bg-zinc-800/40 text-slate-500 hover:text-slate-800 dark:hover:text-neutral-300 font-semibold text-xs tracking-wider uppercase rounded-xl transition-all cursor-pointer text-center"
+          >
+            Dismiss & Attempt with Cached Data
+          </button>
+        </div>
+      </motion.div>
+    </div>
+  );
+}
 
 type View = "dashboard" | "transactions" | "newSale" | "salesList" | "newEmployee" | "employeesList" | "salaryEntry" | "salarySheet" | "addAttendance" | "attendanceList" | "attendance" | "reports" | "settings" | "newSupplier" | "suppliersList" | "suppliers" | "newPurchase" | "purchaseList" | "newUser" | "usersList" | "rolesList" | "profileView";
 
@@ -77,6 +151,74 @@ export default function App() {
       localStorage.setItem("darkMode", "false");
     }
   }, [darkMode]);
+
+  const [quotaExceeded, setQuotaExceeded] = useState(() => {
+    if (typeof window !== "undefined") {
+      return !!(window as any).__firestore_quota_exceeded__;
+    }
+    return false;
+  });
+
+  useEffect(() => {
+    const checkErrorForQuota = (errStr: string) => {
+      if (
+        errStr.toLowerCase().includes("quota exceeded") ||
+        errStr.toLowerCase().includes("quota limit exceeded") ||
+        errStr.toLowerCase().includes("free daily read units") ||
+        errStr.toLowerCase().includes("exceeded free quota")
+      ) {
+        if (typeof window !== "undefined") {
+          (window as any).__firestore_quota_exceeded__ = true;
+        }
+        setQuotaExceeded(true);
+      }
+    };
+
+    const handleError = (event: ErrorEvent) => {
+      const msg = event.message || (event.error && event.error.message) || "";
+      checkErrorForQuota(msg);
+    };
+
+    const handleRejection = (event: PromiseRejectionEvent) => {
+      const reason = event.reason;
+      const msg = reason instanceof Error ? reason.message : String(reason);
+      checkErrorForQuota(msg);
+    };
+
+    const handleCustomEvent = () => {
+      setQuotaExceeded(true);
+    };
+
+    window.addEventListener("error", handleError);
+    window.addEventListener("unhandledrejection", handleRejection);
+    window.addEventListener("firestore-quota-exceeded", handleCustomEvent);
+
+    // Patch console.error to track errors caught and logged by firebase code
+    const originalConsoleError = console.error;
+    console.error = function (...args) {
+      originalConsoleError.apply(console, args);
+      const strArgs = args.map(arg => {
+        try {
+          return typeof arg === "object" ? JSON.stringify(arg) : String(arg);
+        } catch {
+          return String(arg);
+        }
+      }).join(" ");
+      checkErrorForQuota(strArgs);
+    };
+
+    if (typeof window !== "undefined" && (window as any).__firestore_quota_exceeded__) {
+      setQuotaExceeded(true);
+    }
+
+    return () => {
+      window.removeEventListener("error", handleError);
+      window.removeEventListener("unhandledrejection", handleRejection);
+      window.removeEventListener("firestore-quota-exceeded", handleCustomEvent);
+      console.error = originalConsoleError;
+    };
+  }, []);
+
   const [expandedMenus, setExpandedMenus] = useState<Record<string, boolean>>({
     sales: true,
     employees: true,
@@ -84,14 +226,6 @@ export default function App() {
     suppliers: true,
     purchases: true
   });
-  const [isQuotaExceeded, setIsQuotaExceeded] = useState(false);
-
-  useEffect(() => {
-    return subscribeToQuotaExceeded((exceeded) => {
-      setIsQuotaExceeded(exceeded);
-    });
-  }, []);
-
   const [user, setUser] = useState<FirebaseUser | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [customRoles, setCustomRoles] = useState<RolePermission[]>([]);
@@ -128,32 +262,12 @@ export default function App() {
         parsedRoles.push({ id: doc.id, ...doc.data() } as RolePermission);
       });
       setCustomRoles(parsedRoles);
-    }, (err) => handleFirestoreError(err, OperationType.LIST, "roles"));
+    }, (err) => console.error("Roles fetch error", err));
     return () => unsubRoles();
   }, [user]);
 
   useEffect(() => {
     let unsubProfile: (() => void) | null = null;
-
-    if (typeof localStorage !== "undefined" && localStorage.getItem("use_demo_mode") === "true") {
-      setUser({
-        uid: "xIwpE8bPxghPG55PW6oYLNjSU503",
-        email: "modern@admin.com",
-        displayName: "Demo Administrator",
-        photoURL: "https://api.dicebear.com/7.x/adventurer/svg?seed=Main%20Administrator"
-      } as any);
-      setProfile({
-        uid: "xIwpE8bPxghPG55PW6oYLNjSU503",
-        email: "modern@admin.com",
-        displayName: "Demo Administrator",
-        role: "admin",
-        status: "active",
-        createdAt: new Date().toISOString(),
-        photoURL: "https://api.dicebear.com/7.x/adventurer/svg?seed=Main%20Administrator"
-      });
-      setLoading(false);
-      return;
-    }
 
     const unsubscribe = onAuthStateChanged(auth, async (u) => {
       setUser(u);
@@ -244,12 +358,12 @@ export default function App() {
             }, (error) => {
               // Only log if the user is still actively signed in
               if (auth.currentUser) {
-                handleFirestoreError(error, OperationType.GET, "users");
+                console.error("Profile sync error", error);
               }
             });
           }
         } catch (err) {
-          handleFirestoreError(err, OperationType.GET, "users");
+          console.error("Error loading user profile:", err);
         } finally {
           setLoading(false);
         }
@@ -267,20 +381,23 @@ export default function App() {
     };
   }, []);
 
-  const handleLogout = () => {
-    if (typeof localStorage !== "undefined" && localStorage.getItem("use_demo_mode") === "true") {
-      localStorage.removeItem("use_demo_mode");
-      window.location.reload();
-      return;
-    }
-    signOut(auth);
-  };
+  const handleLogout = () => signOut(auth);
 
-  if (loading && !isQuotaExceeded) {
+  if (loading && !quotaExceeded) {
     return (
       <div className="flex items-center justify-center h-screen bg-[#F5F5F4]">
         <div className="animate-spin rounded-full h-12 w-12 border-slate-900 border-b-2"></div>
       </div>
+    );
+  }
+
+  if (quotaExceeded) {
+    return (
+      <QuotaExceededOverlay 
+        onDismiss={() => setQuotaExceeded(false)} 
+        databaseId="ai-studio-254e2cd5-7d37-444e-878d-72afd87a600f"
+        projectId="studio-1767695098-65e9f"
+      />
     );
   }
 
@@ -665,22 +782,6 @@ export default function App() {
             </div>
             
             <div className="flex items-center gap-3 self-stretch sm:self-auto justify-between sm:justify-end">
-              {/* Sandbox Activation Tracker */}
-              {typeof localStorage !== "undefined" && localStorage.getItem("use_demo_mode") === "true" && (
-                <div className="flex items-center gap-2 px-3 py-1 bg-gradient-to-r from-amber-500 to-orange-500 text-white border border-orange-400 rounded-xl text-[10px] font-black shadow-xs shrink-0 animate-pulse">
-                  <span>⚡ OFFLINE SANDBOX ACTIVE</span>
-                  <button
-                    onClick={() => {
-                      localStorage.removeItem("use_demo_mode");
-                      window.location.reload();
-                    }}
-                    className="uppercase tracking-wider text-[9px] px-2 py-0.5 bg-white hover:bg-slate-50 text-slate-900 rounded-lg transition-all cursor-pointer font-black shadow-3xs"
-                  >
-                    Go Live
-                  </button>
-                </div>
-              )}
-              
               {/* Dark Mode Switcher Button */}
               <div className="bg-slate-50 p-1 rounded-xl border border-slate-150 flex items-center gap-1">
                 <button
@@ -742,90 +843,6 @@ export default function App() {
               </div>
             </div>
           </div>
-
-          {isQuotaExceeded && (
-            <motion.div
-              initial={{ opacity: 0, y: -10 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="mb-8 p-6 bg-gradient-to-br from-red-50 to-orange-50 border border-red-200 rounded-[28px] text-[11px] text-red-955 shadow-md flex flex-col md:flex-row gap-5 items-start justify-between"
-            >
-              <div className="flex-1 space-y-3.5 animate-in fade-in duration-300">
-                <div className="flex items-center gap-2">
-                  <span className="p-1 px-2.5 bg-red-100 text-red-800 font-black tracking-widest uppercase rounded-lg text-[9px] leading-none">Quota Exceeded</span>
-                  <span className="text-sm font-black text-red-950 uppercase tracking-wide flex items-center gap-1.5">
-                    <AlertTriangle className="w-4 h-4 text-red-650" />
-                    Firestore Database Limit Activated
-                  </span>
-                </div>
-                
-                <p className="text-red-800 font-semibold leading-relaxed text-xs">
-                  Your Firestore Database instance has exceeded its Spark free daily limits (50,000 read operations). Reads/writes are blocked until midnight PST or until billing is configured.
-                </p>
-
-                <div className="p-4 bg-white/80 border border-red-100 rounded-2xl max-w-2xl mt-2">
-                  <h4 className="font-extrabold text-red-955 text-xs mb-1 flex items-center gap-1.5">
-                    <span className="p-1 bg-amber-100 text-amber-800 rounded-lg text-[9px] uppercase tracking-wider font-extrabold">Instant Fix</span>
-                    Use Offline Sandbox Mode
-                  </h4>
-                  <p className="text-red-800 font-semibold leading-relaxed text-[11px] mb-3">
-                    Bypass all connection blocks and standard storage restrictions immediately. Maintain complete operational access to POS transactions, items, staff records, and accounts saved safely in local storage.
-                  </p>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      localStorage.setItem("use_demo_mode", "true");
-                      window.location.reload();
-                    }}
-                    className="px-5 py-2.5 bg-slate-900 hover:bg-slate-850 text-white font-black rounded-xl text-[10px] uppercase tracking-wider transition-all shadow-xs flex items-center justify-center gap-2 cursor-pointer"
-                  >
-                    <span>⚡ Switch to Offline Sandbox Mode</span>
-                  </button>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-1.5">
-                  <div className="flex gap-2.5 items-start">
-                    <span className="text-red-550 shrink-0 mt-0.5 font-bold">●</span>
-                    <div>
-                      <h4 className="font-extrabold text-red-955 text-xs">Spark / Free Plan Daily Max</h4>
-                      <p className="text-red-750 font-medium text-[11px] leading-relaxed">
-                        Automatic daily reset occurs at 12:00 AM PST. For metrics details, view the <a href="https://firebase.google.com/pricing#cloud-firestore" target="_blank" rel="noreferrer" className="underline font-bold">Firebase Pricing Model</a>.
-                      </p>
-                    </div>
-                  </div>
-                  <div className="flex gap-2.5 items-start">
-                    <span className="text-red-550 shrink-0 mt-0.5 font-bold">●</span>
-                    <div>
-                      <h4 className="font-extrabold text-red-955 text-xs">Upgrade Database</h4>
-                      <p className="text-red-750 font-medium text-[11px] leading-relaxed">
-                        Configure a billing instrument in Google Cloud Console / Firebase Console to bypass Spark Limits entirely.
-                      </p>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <div className="shrink-0 flex flex-col gap-2.5 w-full md:w-auto">
-                <a
-                  href="https://console.firebase.google.com/project/studio-1767695098-65e9f/firestore/databases/ai-studio-254e2cd5-7d37-444e-878d-72afd87a600f/data?openUpgradeDialog=true"
-                  target="_blank"
-                  rel="noreferrer"
-                  className="px-5 py-3 bg-red-600 hover:bg-red-700 text-white font-black rounded-2xl text-[11px] uppercase tracking-wider transition-all text-center flex items-center justify-center gap-2 shadow-sm cursor-pointer"
-                >
-                  <ExternalLink className="w-3.5 h-3.5" />
-                  Upgrade Firestore Database
-                </a>
-                <button
-                  type="button"
-                  onClick={() => window.location.reload()}
-                  className="px-5 py-2.5 bg-white hover:bg-red-50 text-red-700 font-bold border border-red-200 rounded-2xl text-[10px] uppercase tracking-widest transition-all text-center flex items-center justify-center gap-1.5 cursor-pointer shadow-3xs"
-                >
-                  <RefreshCw className="w-3.5 h-3.5" />
-                  Reload Connection
-                </button>
-              </div>
-            </motion.div>
-          )}
-
           <AnimatePresence mode="wait">
             <motion.div
               key={activeView}

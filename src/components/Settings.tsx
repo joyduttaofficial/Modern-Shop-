@@ -3,8 +3,9 @@ import { User } from "firebase/auth";
 import { collection, onSnapshot, addDoc, deleteDoc, doc, updateDoc, query, orderBy, setDoc, getDocs } from "firebase/firestore";
 import { db, OperationType, handleFirestoreError } from "@/src/lib/firebase";
 import { Category, Bank, TransactionType, UserRole, UserProfile } from "@/src/types";
-import { cn, safeFormat as format } from "@/src/lib/utils";
+import { cn } from "@/src/lib/utils";
 import { Plus, Trash2, Landmark, Tag, Briefcase, PlusCircle, LayoutGrid, Users, ShieldAlert } from "lucide-react";
+import { format } from "date-fns";
 
 export default function Settings({ user, role }: { user: User; role: UserRole }) {
   const [categories, setCategories] = useState<Category[]>([]);

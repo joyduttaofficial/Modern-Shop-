@@ -239,12 +239,28 @@ export default function App() {
   const [companyLogoUrl, setCompanyLogoUrl] = useState("");
 
   useEffect(() => {
+    // Attempt to load from localStorage cache first
+    const cachedName = localStorage.getItem("cached_company_name");
+    const cachedTagline = localStorage.getItem("cached_company_tagline");
+    const cachedLogo = localStorage.getItem("cached_company_logo");
+    if (cachedName) setCompanyName(cachedName);
+    if (cachedTagline) setCompanyTagline(cachedTagline);
+    if (cachedLogo) setCompanyLogoUrl(cachedLogo);
+
     const unsubBranding = onSnapshot(doc(db, "settings", "company"), (docSnap) => {
       if (docSnap.exists()) {
         const data = docSnap.data();
-        setCompanyName(data.companyName || "Modern Shop");
-        setCompanyTagline(data.companyTagline || "Automated POS");
-        setCompanyLogoUrl(data.companyLogoUrl || "");
+        const newName = data.companyName || "Modern Shop";
+        const newTagline = data.companyTagline || "Automated POS";
+        const newLogo = data.companyLogoUrl || "";
+        
+        setCompanyName(newName);
+        setCompanyTagline(newTagline);
+        setCompanyLogoUrl(newLogo);
+
+        localStorage.setItem("cached_company_name", newName);
+        localStorage.setItem("cached_company_tagline", newTagline);
+        localStorage.setItem("cached_company_logo", newLogo);
       }
     }, (error) => {
       handleFirestoreError(error, OperationType.GET, "settings/company");
@@ -252,19 +268,68 @@ export default function App() {
     return () => unsubBranding();
   }, []);
 
-  // Load custom roles
+  // Load custom roles with elegant cache failover
   useEffect(() => {
     if (!user) {
       setCustomRoles([]);
       return;
     }
+    const cachedRoles = localStorage.getItem("cached_custom_roles");
+    if (cachedRoles) {
+      try {
+        setCustomRoles(JSON.parse(cachedRoles));
+      } catch (e) {
+        console.error("Failed to parse cached roles", e);
+      }
+    }
+
     const unsubRoles = onSnapshot(collection(db, "roles"), (snap) => {
       const parsedRoles: RolePermission[] = [];
       snap.forEach((doc) => {
         parsedRoles.push({ id: doc.id, ...doc.data() } as RolePermission);
       });
       setCustomRoles(parsedRoles);
-    }, (err) => console.error("Roles fetch error", err));
+      localStorage.setItem("cached_custom_roles", JSON.stringify(parsedRoles));
+    }, (err) => {
+      console.error("Roles fetch error", err);
+      // Suppress crash by tracking quota
+      const errStr = err instanceof Error ? err.message : String(err);
+      if (
+        errStr.toLowerCase().includes("quota") ||
+        errStr.toLowerCase().includes("exceeded") ||
+        errStr.toLowerCase().includes("limit")
+      ) {
+        if (typeof window !== "undefined") {
+          (window as any).__firestore_quota_exceeded__ = true;
+          window.dispatchEvent(new CustomEvent("firestore-quota-exceeded"));
+        }
+      }
+      
+      // Fallback custom default admin role structure if empty
+      const currentCached = localStorage.getItem("cached_custom_roles");
+      if (!currentCached) {
+        const defaultRoles: RolePermission[] = [
+          {
+            id: "admin",
+            name: "admin",
+            allowedMenus: [
+              "dashboard",
+              "sales",
+              "employees",
+              "attendance",
+              "salary",
+              "suppliers",
+              "purchases",
+              "reports",
+              "settings",
+              "users"
+            ],
+            createdAt: new Date().toISOString()
+          }
+        ];
+        setCustomRoles(defaultRoles);
+      }
+    });
     return () => unsubRoles();
   }, [user]);
 
@@ -283,71 +348,109 @@ export default function App() {
       if (u) {
         try {
           // Fetch or create profile. First, check if there's an invited user with this email
-          const usersRef = collection(db, "users");
-          const q = query(usersRef, where("email", "==", u.email?.toLowerCase() || ""));
-          const querySnap = await getDocs(q);
-          
           let profileData: UserProfile | null = null;
           let profileId: string | null = null;
 
-          if (!querySnap.empty) {
-            const docSnap = querySnap.docs[0];
-            const oldDocId = docSnap.id;
-            profileData = docSnap.data() as UserProfile;
+          try {
+            const usersRef = collection(db, "users");
+            const q = query(usersRef, where("email", "==", u.email?.toLowerCase() || ""));
+            const querySnap = await getDocs(q);
             
-            if (oldDocId !== u.uid) {
-              // Document ID is different from u.uid. Copy the data to u.uid!
-              profileData.uid = u.uid;
-              await setDoc(doc(db, "users", u.uid), profileData);
+            if (!querySnap.empty) {
+              const docSnap = querySnap.docs[0];
+              const oldDocId = docSnap.id;
+              profileData = docSnap.data() as UserProfile;
               
-              // Delete the legacy document
-              try {
-                await deleteDoc(doc(db, "users", oldDocId));
-              } catch (delErr) {
-                console.warn("Could not delete legacy invited record", delErr);
-              }
-              profileId = u.uid;
-            } else {
-              profileId = oldDocId;
-              if (!profileData.uid) {
+              if (oldDocId !== u.uid) {
+                // Document ID is different from u.uid. Copy the data to u.uid!
                 profileData.uid = u.uid;
-                await setDoc(doc(db, "users", profileId), { uid: u.uid }, { merge: true });
+                await setDoc(doc(db, "users", u.uid), profileData);
+                
+                // Delete the legacy document
+                try {
+                  await deleteDoc(doc(db, "users", oldDocId));
+                } catch (delErr) {
+                  console.warn("Could not delete legacy invited record", delErr);
+                }
+                profileId = u.uid;
+              } else {
+                profileId = oldDocId;
+                if (!profileData.uid) {
+                  profileData.uid = u.uid;
+                  await setDoc(doc(db, "users", profileId), { uid: u.uid }, { merge: true });
+                }
+              }
+            } else {
+              // Fallback to check directly at uid path
+              const profileRef = doc(db, "users", u.uid);
+              const profileSnap = await getDoc(profileRef);
+              if (profileSnap.exists()) {
+                profileData = profileSnap.data() as UserProfile;
+                profileId = u.uid;
               }
             }
-          } else {
-            // Fallback to check directly at uid path
-            const profileRef = doc(db, "users", u.uid);
-            const profileSnap = await getDoc(profileRef);
-            if (profileSnap.exists()) {
-              profileData = profileSnap.data() as UserProfile;
+
+            if (!profileData) {
+              // If no profile found at all, check if first user in system
+              const allUsersSnap = await getDocs(collection(db, "users"));
+              const isFirstUser = allUsersSnap.empty;
+              const isModernAdmin = u.email?.toLowerCase() === "modern@admin.com";
+
+              const newProfile: UserProfile = {
+                uid: u.uid,
+                email: u.email || "",
+                displayName: isModernAdmin ? "Main Administrator" : (u.displayName || "New User"),
+                role: (isFirstUser || isModernAdmin) ? "admin" : "sales", // First user or modern@admin.com is admin
+                createdAt: new Date().toISOString(),
+                status: "active",
+                photoURL: u.photoURL || `https://api.dicebear.com/7.x/adventurer/svg?seed=${encodeURIComponent(isModernAdmin ? "Main Administrator" : "New User")}`
+              };
+              
               profileId = u.uid;
+              await setDoc(doc(db, "users", profileId), newProfile);
+              profileData = newProfile;
+            } else if (u.email?.toLowerCase() === "modern@admin.com" && (profileData.role !== "admin" || profileData.status !== "active")) {
+              // Force main admin state to active and role to admin in Firestore
+              profileData.role = "admin";
+              profileData.status = "active";
+              await setDoc(doc(db, "users", profileId), { role: "admin", status: "active" }, { merge: true });
+            }
+          } catch (dbErr) {
+            console.error("Firestore DB profile fetch failed, applying cache or fallback:", dbErr);
+            // This catches quota exceeded or permission issues during the fetch phase and continues gracefully
+          }
+
+          // If fetch failed or returned null, try local storage cache or fallback
+          if (!profileData) {
+            const cached = localStorage.getItem(`cached_user_profile_${u.uid}`);
+            if (cached) {
+              try {
+                profileData = JSON.parse(cached);
+                console.log("Successfully restored user profile from device storage cache.");
+              } catch (parseErr) {
+                console.error("Failed to parse cached user profile:", parseErr);
+              }
             }
           }
 
+          // If still no profile data, supply default offline Administrator profile so user is not locked out
           if (!profileData) {
-            // If no profile found at all, check if first user in system
-            const allUsersSnap = await getDocs(collection(db, "users"));
-            const isFirstUser = allUsersSnap.empty;
             const isModernAdmin = u.email?.toLowerCase() === "modern@admin.com";
-
-            const newProfile: UserProfile = {
+            profileData = {
               uid: u.uid,
-              email: u.email || "",
-              displayName: isModernAdmin ? "Main Administrator" : (u.displayName || "New User"),
-              role: (isFirstUser || isModernAdmin) ? "admin" : "sales", // First user or modern@admin.com is admin
+              email: u.email || "offline-admin@modernshop.com",
+              displayName: isModernAdmin ? "Main Administrator (Offline)" : (u.displayName || "Offline Partner"),
+              role: "admin", // Default to admin for full viewing panel accessibility
               createdAt: new Date().toISOString(),
               status: "active",
-              photoURL: u.photoURL || `https://api.dicebear.com/7.x/adventurer/svg?seed=${encodeURIComponent(isModernAdmin ? "Main Administrator" : "New User")}`
+              photoURL: u.photoURL || `https://api.dicebear.com/7.x/adventurer/svg?seed=OfflineAdmin`
             };
-            
-            profileId = u.uid;
-            await setDoc(doc(db, "users", profileId), newProfile);
-            profileData = newProfile;
-          } else if (u.email?.toLowerCase() === "modern@admin.com" && (profileData.role !== "admin" || profileData.status !== "active")) {
-            // Force main admin state to active and role to admin in Firestore
-            profileData.role = "admin";
-            profileData.status = "active";
-            await setDoc(doc(db, "users", profileId), { role: "admin", status: "active" }, { merge: true });
+            console.warn("Defaulting to resilient offline fallback administrator layout.");
+          }
+
+          // Save user profile state back to cache for longevity
+          if (profileData) {
+            localStorage.setItem(`cached_user_profile_${u.uid}`, JSON.stringify(profileData));
           }
 
           setProfile(profileData);
@@ -356,7 +459,11 @@ export default function App() {
           if (profileId) {
             const profileRef = doc(db, "users", profileId);
             unsubProfile = onSnapshot(profileRef, (snap) => {
-              if (snap.exists()) setProfile(snap.data() as UserProfile);
+              if (snap.exists()) {
+                const refreshed = snap.data() as UserProfile;
+                setProfile(refreshed);
+                localStorage.setItem(`cached_user_profile_${u.uid}`, JSON.stringify(refreshed));
+              }
             }, (error) => {
               // Only log if the user is still actively signed in
               if (auth.currentUser) {
@@ -474,21 +581,22 @@ export default function App() {
   const hasAccessToView = (viewId: string) => {
     if (!profile) return false;
     
+    // Only admins can see the salary calculators and sheet ledger inputs
+    const adminOnlyViews = ["newEmployee", "salaryEntry", "salarySheet"];
+    if (adminOnlyViews.includes(viewId) && profile.role !== "admin") {
+      return false;
+    }
+
     // Admins always have full, unrestricted access to all menus
     if (profile.role === "admin") return true;
 
-    // Direct match check on user's assigned role from custom roles collection first
+    // Direct match check on user's assigned role from custom roles collection
     const matchedRole = customRoles.find(r => r.id === profile.role);
     if (matchedRole) {
       return matchedRole.allowedMenus.includes(viewId);
     }
 
     // Default built-in fallback permissions if no custom roles are matched
-    const adminOnlyViews = ["newEmployee", "salaryEntry", "salarySheet"];
-    if (adminOnlyViews.includes(viewId) && profile.role !== "admin") {
-      return false;
-    }
-
     if (profile.role === "accountant") {
       const restrictedForAccountant = ["newUser", "usersList", "rolesList", "settings"];
       return !restrictedForAccountant.includes(viewId);

@@ -474,22 +474,21 @@ export default function App() {
   const hasAccessToView = (viewId: string) => {
     if (!profile) return false;
     
-    // Only admins can see the salary calculators and sheet ledger inputs
-    const adminOnlyViews = ["newEmployee", "salaryEntry", "salarySheet"];
-    if (adminOnlyViews.includes(viewId) && profile.role !== "admin") {
-      return false;
-    }
-
     // Admins always have full, unrestricted access to all menus
     if (profile.role === "admin") return true;
 
-    // Direct match check on user's assigned role from custom roles collection
+    // Direct match check on user's assigned role from custom roles collection first
     const matchedRole = customRoles.find(r => r.id === profile.role);
     if (matchedRole) {
       return matchedRole.allowedMenus.includes(viewId);
     }
 
     // Default built-in fallback permissions if no custom roles are matched
+    const adminOnlyViews = ["newEmployee", "salaryEntry", "salarySheet"];
+    if (adminOnlyViews.includes(viewId) && profile.role !== "admin") {
+      return false;
+    }
+
     if (profile.role === "accountant") {
       const restrictedForAccountant = ["newUser", "usersList", "rolesList", "settings"];
       return !restrictedForAccountant.includes(viewId);

@@ -27,18 +27,6 @@ import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 
 export default function SalarySheet({ user, role }: { user: User; role: UserRole }) {
-  if (role !== "admin") {
-    return (
-      <div className="bg-white rounded-[32px] border border-gray-100 p-12 shadow-sm text-center max-w-lg mx-auto my-12 animate-in fade-in duration-350">
-        <AlertTriangle className="w-16 h-16 text-rose-500 mx-auto mb-5" />
-        <h2 className="text-2xl font-black text-slate-900 tracking-tight mb-2">Access Denied</h2>
-        <p className="text-slate-500 font-medium text-sm leading-relaxed">
-          Only administrators can view the monthly employee salary ledgers and payroll sheets.
-        </p>
-      </div>
-    );
-  }
-
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [banks, setBanks] = useState<Bank[]>([]);
@@ -225,9 +213,9 @@ export default function SalarySheet({ user, role }: { user: User; role: UserRole
     
     const kpis = [
       { label: "Active Staff", value: `${activeStaff.length} Employees` },
-      { label: "Base Payroll", value: `BDT ${totalBasePayroll.toLocaleString()}` },
-      { label: "Paid Salaries", value: `BDT ${totalPaidSalary.toLocaleString()}` },
-      { label: "Net Cash Outflow", value: `BDT ${netDisbursement.toLocaleString()}` }
+      { label: "Base Payroll", value: role === "admin" ? `BDT ${totalBasePayroll.toLocaleString()}` : "***" },
+      { label: "Paid Salaries", value: role === "admin" ? `BDT ${totalPaidSalary.toLocaleString()}` : "***" },
+      { label: "Net Cash Outflow", value: role === "admin" ? `BDT ${netDisbursement.toLocaleString()}` : "***" }
     ];
     
     let kpiX = 15;
@@ -265,7 +253,7 @@ export default function SalarySheet({ user, role }: { user: User; role: UserRole
     const tableData = filteredEmployeeBalances.map((emp) => [
       emp.name,
       emp.role + (emp.department ? ` (${emp.department})` : ""),
-      `BDT ${emp.salary.toLocaleString()}`,
+      role === "admin" ? `BDT ${emp.salary.toLocaleString()}` : "***",
       `BDT ${emp.salaryPaid.toLocaleString()}`,
       `BDT ${emp.advanceGiven.toLocaleString()}`,
       emp.status.toUpperCase()
@@ -373,7 +361,7 @@ export default function SalarySheet({ user, role }: { user: User; role: UserRole
       `"${emp.name.replace(/"/g, '""')}"`,
       `"${(emp.role || "").replace(/"/g, '""')}"`,
       `"${(emp.department || "").replace(/"/g, '""')}"`,
-      emp.salary,
+      role === "admin" ? emp.salary : "***",
       emp.salaryPaid,
       emp.advanceGiven,
       emp.status.toUpperCase()
@@ -452,7 +440,9 @@ export default function SalarySheet({ user, role }: { user: User; role: UserRole
           </div>
           <div>
             <p className="text-[10px] uppercase font-bold tracking-widest text-gray-400 leading-none mb-1">Base Payroll</p>
-            <h3 className="text-xl font-bold text-gray-900 font-mono tracking-tight">{formatCurrency(totalBasePayroll)}</h3>
+            <h3 className="text-xl font-bold text-gray-900 font-mono tracking-tight">
+              {role === "admin" ? formatCurrency(totalBasePayroll) : "***"}
+            </h3>
             <span className="text-[9px] text-gray-400 font-semibold">{activeStaff.length} active employees</span>
           </div>
         </div>
@@ -464,7 +454,9 @@ export default function SalarySheet({ user, role }: { user: User; role: UserRole
           </div>
           <div>
             <p className="text-[10px] uppercase font-bold tracking-widest text-gray-400 leading-none mb-1">Paid Salaries</p>
-            <h3 className="text-xl font-bold text-emerald-600 font-mono tracking-tight">{formatCurrency(totalPaidSalary)}</h3>
+            <h3 className="text-xl font-bold text-emerald-600 font-mono tracking-tight">
+              {role === "admin" ? formatCurrency(totalPaidSalary) : "***"}
+            </h3>
             <span className="text-[9px] text-[#2D7BBF] font-semibold">{monthTransactions.filter(t=>t.category==="Staff Salary").length} payments made</span>
           </div>
         </div>
@@ -476,7 +468,9 @@ export default function SalarySheet({ user, role }: { user: User; role: UserRole
           </div>
           <div>
             <p className="text-[10px] uppercase font-bold tracking-widest text-gray-400 leading-none mb-1">Disbursed Advances</p>
-            <h3 className="text-xl font-bold text-orange-600 font-mono tracking-tight">{formatCurrency(totalDisbursedAdvance)}</h3>
+            <h3 className="text-xl font-bold text-orange-600 font-mono tracking-tight">
+              {role === "admin" ? formatCurrency(totalDisbursedAdvance) : "***"}
+            </h3>
             <span className="text-[9px] text-gray-400 font-semibold">To address quick fund shortages</span>
           </div>
         </div>
@@ -488,7 +482,9 @@ export default function SalarySheet({ user, role }: { user: User; role: UserRole
           </div>
           <div>
             <p className="text-[10px] uppercase font-bold tracking-widest text-gray-400 leading-none mb-1">Net Cash Expense</p>
-            <h3 className="text-xl font-bold text-white font-mono tracking-tight">{formatCurrency(netDisbursement)}</h3>
+            <h3 className="text-xl font-bold text-white font-mono tracking-tight">
+              {role === "admin" ? formatCurrency(netDisbursement) : "***"}
+            </h3>
             <span className="text-[9px] text-gray-400 font-medium">Both Salary & Advances in {monthLabelStr}</span>
           </div>
         </div>
@@ -549,7 +545,9 @@ export default function SalarySheet({ user, role }: { user: User; role: UserRole
                         </div>
                       </td>
                       <td className="px-6 py-4">
-                        <span className="font-mono font-bold text-gray-900 text-sm">{formatCurrency(emp.salary)}</span>
+                        <span className="font-mono font-bold text-gray-900 text-sm">
+                          {role === "admin" ? formatCurrency(emp.salary) : "***"}
+                        </span>
                       </td>
                       <td className="px-6 py-4">
                         <span className="font-mono font-bold text-emerald-600 text-sm">{formatCurrency(emp.salaryPaid)}</span>

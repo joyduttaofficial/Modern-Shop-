@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { User } from "firebase/auth";
-import { collection, addDoc, query, orderBy, onSnapshot, limit, deleteDoc, doc, updateDoc, increment, where } from "firebase/firestore";
-import { db, OperationType, handleFirestoreError } from "@/src/lib/firebase";
+import { collection, addDoc, query, orderBy, onSnapshot, limit, deleteDoc, doc, increment, where } from "firebase/firestore";
+import { db, OperationType, handleFirestoreError, updateDoc } from "@/src/lib/firebase";
 import { Transaction, TransactionType, Category, Bank, UserRole, Employee, Supplier } from "@/src/types";
 import { cn, formatCurrency } from "@/src/lib/utils";
 import { Plus, Search, Filter, Trash2, ArrowUpCircle, ArrowDownCircle, Wallet, Landmark, UserCheck, ArrowUpRight, ArrowDownLeft } from "lucide-react";

@@ -1,6 +1,6 @@
 import { initializeApp } from "firebase/app";
 import { getAuth } from "firebase/auth";
-import { getFirestore, doc, getDocFromServer } from "firebase/firestore";
+import { getFirestore, doc, getDocFromServer, updateDoc as firestoreUpdateDoc, DocumentReference, UpdateData } from "firebase/firestore";
 import firebaseConfig from "@/firebase-applet-config.json";
 
 const app = initializeApp(firebaseConfig);
@@ -12,8 +12,15 @@ async function testConnection() {
   try {
     await getDocFromServer(doc(db, "test", "connection"));
   } catch (error) {
-    if (error instanceof Error && error.message.includes("offline")) {
-      console.error("Firebase is offline. Check configuration.");
+    const errStr = error instanceof Error ? error.message : String(error);
+    const isOfflineOrRestricted = 
+      errStr.toLowerCase().includes("offline") ||
+      errStr.toLowerCase().includes("unavailable") ||
+      errStr.toLowerCase().includes("quota") ||
+      errStr.toLowerCase().includes("could not reach");
+    
+    if (isOfflineOrRestricted) {
+      handleFirestoreError(error, OperationType.GET, "test/connection");
     }
   }
 }
@@ -45,13 +52,16 @@ export function handleFirestoreError(
 ) {
   const errStr = error instanceof Error ? error.message : String(error);
   
-  // Track quota exceeded events globally
-  const isQuota = errStr.toLowerCase().includes("quota exceeded") || 
-                  errStr.toLowerCase().includes("quota limit exceeded") || 
-                  errStr.toLowerCase().includes("free daily read units") ||
-                  errStr.toLowerCase().includes("exceeded free quota");
+  // Track quota exceeded or connection/unavailable events globally
+  const isQuotaOrRestricted = 
+    errStr.toLowerCase().includes("quota exceeded") || 
+    errStr.toLowerCase().includes("quota limit exceeded") || 
+    errStr.toLowerCase().includes("free daily read units") ||
+    errStr.toLowerCase().includes("exceeded free quota") ||
+    errStr.toLowerCase().includes("unavailable") ||
+    errStr.toLowerCase().includes("could not reach cloud firestore backend");
 
-  if (isQuota && typeof window !== "undefined") {
+  if (isQuotaOrRestricted && typeof window !== "undefined") {
     (window as any).__firestore_quota_exceeded__ = true;
     window.dispatchEvent(new CustomEvent("firestore-quota-exceeded"));
   }
@@ -65,6 +75,32 @@ export function handleFirestoreError(
     operationType,
     path,
   };
-  console.error("Firestore Error: ", JSON.stringify(errInfo));
-  throw new Error(JSON.stringify(errInfo));
+  
+  console.warn("Firestore Operation Warning/Restricted: ", JSON.stringify(errInfo));
+
+  // To prevent unhandled crashes in read-only background listeners and page initialization,
+  // do not throw when checking connection or reading datasets during a restricted state.
+  const isReadOp = operationType === OperationType.GET || operationType === OperationType.LIST;
+  if (isQuotaOrRestricted && isReadOp) {
+    return;
+  }
+
+  throw error instanceof Error ? error : new Error(JSON.stringify(errInfo));
 }
+
+export async function updateDoc(reference: DocumentReference<any, any>, data: UpdateData<any>) {
+  try {
+    await firestoreUpdateDoc(reference, data);
+  } catch (error: any) {
+    const errStr = String(error?.message || error);
+    if (
+      errStr.toLowerCase().includes("no document to update") ||
+      error?.code === "not-found"
+    ) {
+      console.warn("Document not found for update, skipping gracefully:", reference.path);
+      return;
+    }
+    throw error;
+  }
+}
+

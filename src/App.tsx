@@ -165,7 +165,9 @@ export default function App() {
         errStr.toLowerCase().includes("quota exceeded") ||
         errStr.toLowerCase().includes("quota limit exceeded") ||
         errStr.toLowerCase().includes("free daily read units") ||
-        errStr.toLowerCase().includes("exceeded free quota")
+        errStr.toLowerCase().includes("exceeded free quota") ||
+        errStr.toLowerCase().includes("unavailable") ||
+        errStr.toLowerCase().includes("could not reach cloud firestore backend")
       ) {
         if (typeof window !== "undefined") {
           (window as any).__firestore_quota_exceeded__ = true;

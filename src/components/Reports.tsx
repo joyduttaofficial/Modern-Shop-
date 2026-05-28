@@ -35,6 +35,7 @@ import {
   BookOpen
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
+import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, LineChart, Line } from "recharts";
 
 type ReportTab = "daily" | "bank" | "salary" | "supplier" | "purchase" | "attendance" | "transactions";
 
@@ -1921,69 +1922,403 @@ function PurchaseReportSection({ suppliers, purchases, companyName, companyAddre
    ========================================================================== */
 function AttendanceReport({ employees, attendance }: { employees: Employee[]; attendance: any[] }) {
   const [selectedMonth, setSelectedMonth] = useState(format(new Date(), "yyyy-MM"));
-  const filteredAttendance = attendance.filter(a => a.date.startsWith(selectedMonth));
-  
+  const [aiAnalysis, setAiAnalysis] = useState<string>("");
+  const [isAiLoading, setIsAiLoading] = useState<boolean>(false);
+  const [aiError, setAiError] = useState<string>("");
+
+  const filteredAttendance = attendance.filter(a => {
+    try {
+      return a.date && a.date.startsWith(selectedMonth);
+    } catch {
+      return false;
+    }
+  });
+
+  // Calculate detailed lateness metrics
+  const getMinutesFromTime = (timeStr?: string): number => {
+    if (!timeStr) return 0;
+    const [h, m] = timeStr.split(":").map(Number);
+    if (isNaN(h) || isNaN(m)) return 0;
+    return h * 60 + m;
+  };
+
+  const getLunchDurationMinutes = (lunchOut?: string, lunchIn?: string): number => {
+    if (!lunchOut || !lunchIn) return 0;
+    const outMins = getMinutesFromTime(lunchOut);
+    const inMins = getMinutesFromTime(lunchIn);
+    return Math.max(0, inMins - outMins);
+  };
+
+  const getStoreLatenessMinutes = (checkIn?: string): number => {
+    if (!checkIn) return 0;
+    const checkInMins = getMinutesFromTime(checkIn);
+    const standardInMins = 540; // 09:00 AM standard
+    return Math.max(0, checkInMins - standardInMins);
+  };
+
+  // Compile stats per employee for the selected month
+  const employeePerformance = employees.map(emp => {
+    const records = filteredAttendance.filter(a => a.employeeId === emp.id);
+    const presentCount = records.filter(r => r.status === "present" || r.status === "late" || r.status === "half-day").length;
+    const absentCount = records.filter(r => r.status === "absent").length;
+    const leaveCount = records.filter(r => r.status === "leave").length;
+    const lateDaysCount = records.filter(r => r.status === "late").length;
+    
+    let totalStoreLateMins = 0;
+    let totalLunchOvertimeMins = 0;
+    let lunchBreachesCount = 0;
+
+    records.forEach(rec => {
+      // Store late minutes (past 09:00 AM standard shift)
+      const lateMins = getStoreLatenessMinutes(rec.checkIn);
+      totalStoreLateMins += lateMins;
+
+      // Lunch overtime minutes (past 60 minutes rule)
+      if (rec.lunchOut) {
+        if (!rec.lunchIn) {
+          // Went out to lunch but didn't return (counted as half-day automatic)
+          // No excess calculation, but we can treat it as lost afternoon time (e.g. 240 mins)
+          totalLunchOvertimeMins += 240; 
+          lunchBreachesCount++;
+        } else {
+          const duration = getLunchDurationMinutes(rec.lunchOut, rec.lunchIn);
+          if (duration > 60) {
+            totalLunchOvertimeMins += (duration - 60);
+            lunchBreachesCount++;
+          }
+        }
+      }
+    });
+
+    // Wage calculations (Minute rate based on monthly salary/208/60)
+    const hourlyWage = (emp.salary || 0) / 208;
+    const minWage = hourlyWage / 60;
+    const totalWastedMinutes = totalStoreLateMins + totalLunchOvertimeMins;
+    const estimatedDeduction = totalWastedMinutes * minWage;
+
+    return {
+      id: emp.id,
+      name: emp.name,
+      role: emp.role,
+      salary: emp.salary,
+      presentDays: presentCount,
+      absentDays: absentCount,
+      leaveDays: leaveCount,
+      lateDays: lateDaysCount,
+      storeLateMinutes: totalStoreLateMins,
+      lunchOvertimeMinutes: totalLunchOvertimeMins,
+      lunchBreaches: lunchBreachesCount,
+      totalWastedMinutes,
+      estimatedDeduction: Math.round(estimatedDeduction)
+    };
+  });
+
+  // Global aggregate summaries
+  const totalStoreLate = employeePerformance.reduce((sum, e) => sum + e.storeLateMinutes, 0);
+  const totalLunchOvertime = employeePerformance.reduce((sum, e) => sum + e.lunchOvertimeMinutes, 0);
+  const totalWastedMins = totalStoreLate + totalLunchOvertime;
+  const totalWastedHrs = Math.round((totalWastedMins / 60) * 10) / 10;
+  const totalDeductions = employeePerformance.reduce((sum, e) => sum + e.estimatedDeduction, 0);
+  const totalLunchBreaches = employeePerformance.reduce((sum, e) => sum + e.lunchBreaches, 0);
+
+  // Chart data: Employees tardiness comparison
+  const chartData = employeePerformance
+    .filter(e => e.totalWastedMinutes > 0)
+    .map(e => ({
+      name: e.name.split(" ")[0], // Use first name for space-efficiency
+      "Store Arrival Late (m)": e.storeLateMinutes,
+      "Lunch Break Overtime (m)": e.lunchOvertimeMinutes,
+      "Excess Loss (BDT)": e.estimatedDeduction
+    }));
+
+  const handleAskGemini = async () => {
+    setIsAiLoading(true);
+    setAiError("");
+    setAiAnalysis("");
+    try {
+      const response = await fetch("/api/gemini/analyze-attendance", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          month: selectedMonth,
+          employees: employees.map(e => ({ id: e.id, name: e.name, role: e.role, salary: e.salary })),
+          attendanceLogs: filteredAttendance,
+          rules: { lunchDurationLimit: 60 }
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error("HTTP connection error to Gemini middleware broker.");
+      }
+
+      const data = await response.json();
+      setAiAnalysis(data.analysis || "No response received.");
+    } catch (err: any) {
+      console.error(err);
+      setAiError("Connection to the server AI assistant failed. Is the API route active?");
+    } finally {
+      setIsAiLoading(false);
+    }
+  };
+
+  // Lightweight beautiful markdown formatter utility to render Gemini results without external dependencies
+  const renderFormattedMarkdown = (rawText: string) => {
+    if (!rawText) return null;
+    return rawText.split("\n").map((line, i) => {
+      // Headings
+      if (line.startsWith("### ")) {
+        return <h5 key={i} className="text-sm font-bold text-gray-900 dark:text-neutral-100 mt-4 mb-1.5 uppercase tracking-wide border-b border-gray-100 dark:border-zinc-850 pb-1">{line.replace("### ", "")}</h5>;
+      }
+      if (line.startsWith("## ")) {
+        return <h4 key={i} className="text-base font-black text-gray-950 dark:text-white mt-5 mb-2 border-l-2 border-[#D12765] pl-2">{line.replace("## ", "")}</h4>;
+      }
+      if (line.startsWith("# ")) {
+        return <h3 key={i} className="text-lg font-black text-gray-950 dark:text-white mt-6 mb-3 tracking-tight">{line.replace("# ", "")}</h3>;
+      }
+
+      // List Items
+      if (line.startsWith("- ") || line.startsWith("* ")) {
+        const textContent = line.replace(/^[-*]\s+/, "");
+        // Format bold fragments
+        return (
+          <li key={i} className="ml-5 list-disc text-xs text-slate-650 dark:text-neutral-300 mb-1 leading-relaxed">
+            {formatBoldText(textContent)}
+          </li>
+        );
+      }
+
+      // Normal paragraph line
+      if (line.trim() === "") return <div key={i} className="h-2" />;
+      return (
+        <p key={i} className="text-xs text-slate-605 dark:text-neutral-300 leading-relaxed mb-1.5">
+          {formatBoldText(line)}
+        </p>
+      );
+    });
+  };
+
+  const formatBoldText = (text: string) => {
+    const parts = text.split(/\*\*([\s\S]*?)\*\*/g);
+    return parts.map((part, index) => {
+      if (index % 2 === 1) {
+        return <strong key={index} className="font-extrabold text-gray-950 dark:text-white">{part}</strong>;
+      }
+      return part;
+    });
+  };
+
   return (
     <div className="space-y-8 animate-in slide-in-from-bottom-5 duration-300">
-      <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-100 flex flex-col md:flex-row items-center justify-between gap-6">
+      {/* KPI Selection Bar */}
+      <div className="bg-white dark:bg-zinc-900 p-6 sm:p-8 rounded-[32px] shadow-sm border border-slate-100 dark:border-zinc-800/40 flex flex-col md:flex-row items-center justify-between gap-6 transition-colors">
         <div className="flex items-center gap-4">
-          <div className="w-12 h-12 bg-blue-50 border border-blue-100 rounded-xl flex items-center justify-center">
-            <Users className="w-6 h-6 text-blue-600" />
+          <div className="w-12 h-12 bg-rose-50 dark:bg-rose-950/30 border border-rose-100 dark:border-rose-900/40 rounded-2xl flex items-center justify-center shrink-0">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5 text-rose-600 dark:text-rose-450">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
           </div>
           <div>
-            <h3 className="text-xl font-extrabold text-slate-900">Attendance Analytics</h3>
-            <p className="text-xs text-slate-500 font-medium">Comprehensive view of staff performance and punctuality metrics.</p>
+            <h3 className="text-xl font-black text-slate-900 dark:text-neutral-100">Time-Wastage & Lateness Report</h3>
+            <p className="text-xs text-slate-500 font-medium">Monthly audit of daily shift tardiness, lunch break policies, and salary deductions.</p>
           </div>
         </div>
-        <input 
-          type="month" 
-          value={selectedMonth}
-          onChange={(e) => setSelectedMonth(e.target.value)}
-          className="px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl font-bold text-sm focus:ring-2 focus:ring-blue-100 outline-none"
-        />
+
+        <div className="flex items-center gap-3 w-full md:w-auto">
+          <input 
+            type="month" 
+            value={selectedMonth}
+            onChange={(e) => setSelectedMonth(e.target.value)}
+            className="px-4 py-2.5 bg-slate-50 dark:bg-zinc-950 border border-slate-200 dark:border-zinc-800 rounded-xl font-bold text-xs text-gray-950 dark:text-white focus:ring-2 focus:ring-rose-100 outline-none cursor-pointer w-full md:w-auto"
+          />
+        </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        {employees.map(emp => {
-          const empRecords = filteredAttendance.filter(a => a.employeeId === emp.id);
-          const present = empRecords.filter(r => r.status === "present").length;
-          const late = empRecords.filter(r => r.status === "late").length;
-          const leave = empRecords.filter(r => r.status === "leave").length;
-          const absent = empRecords.filter(r => r.status === "absent").length;
+      {/* Aggregate metrics */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div className="bg-white dark:bg-zinc-900 p-5 rounded-[22px] border border-slate-100 dark:border-zinc-800/50 flex items-center gap-3">
+          <div className="w-10 h-10 bg-amber-50 dark:bg-amber-950/20 text-amber-600 dark:text-amber-450 rounded-xl flex items-center justify-center shrink-0">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 01-7.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z" />
+            </svg>
+          </div>
+          <div>
+            <p className="text-[9px] uppercase font-bold tracking-widest text-slate-400 mb-0.5">Total Store Late</p>
+            <h3 className="text-lg font-black text-slate-900 dark:text-neutral-100 font-mono leading-none">{totalStoreLate} mins</h3>
+            <span className="text-[8px] text-gray-400 font-semibold uppercase">Shift arrival lost</span>
+          </div>
+        </div>
 
-          return (
-            <div key={emp.id} className="bg-white p-6 rounded-3xl shadow-xs border border-slate-100 hover:shadow-md transition-all group">
-              <div className="flex items-center gap-3.5 mb-5">
-                <div className="w-12 h-12 bg-slate-50 group-hover:bg-slate-900 border border-slate-200 group-hover:border-slate-800 rounded-xl flex items-center justify-center font-bold text-slate-500 group-hover:text-white transition-all text-sm">
-                  {emp.name.charAt(0)}
-                </div>
+        <div className="bg-white dark:bg-zinc-900 p-5 rounded-[22px] border border-slate-100 dark:border-zinc-800/50 flex items-center gap-3">
+          <div className="w-10 h-10 bg-orange-50 dark:bg-orange-950/20 text-orange-600 dark:text-orange-450 rounded-xl flex items-center justify-center shrink-0">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 3v2.25m6.364.386l-1.591 1.591M21 12h-2.25m-.386 6.364l-1.591-1.591M12 18.75V21m-4.773-4.227l-1.591 1.591M5.25 12H3m4.227-4.773L5.636 5.636M15.75 12a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0z" />
+            </svg>
+          </div>
+          <div>
+            <p className="text-[9px] uppercase font-bold tracking-widest text-slate-400 mb-0.5">Lunch Late Break</p>
+            <h3 className="text-lg font-black text-slate-900 dark:text-neutral-100 font-mono leading-none">{totalLunchOvertime} mins</h3>
+            <span className="text-[8px] text-orange-600 font-bold uppercase">{totalLunchBreaches} incidents</span>
+          </div>
+        </div>
+
+        <div className="bg-white dark:bg-zinc-900 p-5 rounded-[22px] border border-slate-100 dark:border-zinc-800/50 flex items-center gap-3">
+          <div className="w-10 h-10 bg-red-50 dark:bg-red-950/20 text-red-600 dark:text-red-450 rounded-xl flex items-center justify-center shrink-0">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+            </svg>
+          </div>
+          <div>
+            <p className="text-[9px] uppercase font-bold tracking-widest text-slate-400 mb-0.5">Total Wasted Hours</p>
+            <h3 className="text-lg font-black text-slate-900 dark:text-neutral-100 font-mono leading-none">{totalWastedHrs} hours</h3>
+            <span className="text-[8px] text-red-500 font-bold uppercase">Store productivity lost</span>
+          </div>
+        </div>
+
+        <div className="bg-white dark:bg-zinc-900 p-5 rounded-[22px] border border-slate-100 dark:border-zinc-800/50 flex items-center gap-3">
+          <div className="w-10 h-10 bg-emerald-50 dark:bg-emerald-950/20 text-emerald-600 dark:text-emerald-450 rounded-xl flex items-center justify-center shrink-0">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+          </div>
+          <div>
+            <p className="text-[9px] uppercase font-bold tracking-widest text-slate-400 mb-0.5">Calculated Deductions</p>
+            <h3 className="text-lg font-black text-emerald-600 dark:text-emerald-400 font-mono leading-none">{totalDeductions.toLocaleString()} BDT</h3>
+            <span className="text-[8px] text-emerald-600 font-semibold uppercase">Recouped in payroll</span>
+          </div>
+        </div>
+      </div>
+
+      {/* Main visual side-by-side: Chart vs Employee Table */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Recharts Graphical Distribution */}
+        <div className="bg-white dark:bg-zinc-900 p-6 rounded-3xl border border-slate-100 dark:border-zinc-800/50 flex flex-col justify-between">
+          <div>
+            <h4 className="text-sm font-black text-slate-900 dark:text-neutral-100 uppercase tracking-wider mb-1">Time Leakage Distributions</h4>
+            <p className="text-[11px] text-slate-400 font-semibold mb-6 uppercase">Store check-in delay (mins) vs lunchtime limit breaches (mins) by active staff</p>
+          </div>
+          
+          <div className="h-64 sm:h-72 w-full font-mono text-[10px]">
+            {chartData.length === 0 ? (
+              <div className="w-full h-full flex items-center justify-center text-slate-450 italic border border-dashed border-slate-100 dark:border-zinc-800 rounded-2xl">
+                100% On-time compliance. No tardiness charted!
+              </div>
+            ) : (
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={chartData}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E5E7EB" />
+                  <XAxis dataKey="name" stroke="#9CA3AF" />
+                  <YAxis stroke="#9CA3AF" />
+                  <Tooltip cursor={{ fill: '#F3F4F6', opacity: 0.5 }} />
+                  <Legend />
+                  <Bar dataKey="Store Arrival Late (m)" fill="#F59E0B" radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="Lunch Break Overtime (m)" fill="#EA580C" radius={[4, 4, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            )}
+          </div>
+        </div>
+
+        {/* Live list ledger of employees */}
+        <div className="bg-white dark:bg-zinc-900 p-6 rounded-3xl border border-slate-100 dark:border-zinc-800/50">
+          <h4 className="text-sm font-black text-slate-900 dark:text-neutral-100 uppercase tracking-wider mb-1">Staff Loss Analysis Ledger</h4>
+          <p className="text-[11px] text-slate-400 font-semibold mb-6 uppercase">Calculation of custom minutes late and dynamic payroll deductions</p>
+          
+          <div className="divide-y divide-slate-50 dark:divide-zinc-850 max-h-[295px] overflow-y-auto pr-1">
+            {employeePerformance.map(item => (
+              <div key={item.id} className="py-3 flex items-center justify-between gap-3 group text-xs">
                 <div>
-                  <h4 className="font-extrabold text-slate-900 truncate max-w-[150px]">{emp.name}</h4>
-                  <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">{emp.role}</p>
+                  <h5 className="font-extrabold text-slate-900 dark:text-neutral-100 group-hover:text-[#D12765] transition-colors">{item.name}</h5>
+                  <p className="text-[9px] font-bold text-gray-400 uppercase tracking-wider">
+                    Store Delay: {item.storeLateMinutes}m | Lunch Overtime: {item.lunchOvertimeMinutes}m ({item.lunchBreaches}x)
+                  </p>
+                </div>
+                <div className="text-right font-mono">
+                  {item.totalWastedMinutes > 0 ? (
+                    <>
+                      <span className="font-black text-rose-600 block">-{item.estimatedDeduction} BDT</span>
+                      <span className="text-[7px] text-gray-400 uppercase font-black leading-none">{item.totalWastedMinutes} mins total</span>
+                    </>
+                  ) : (
+                    <span className="text-[9px] font-black uppercase text-emerald-600 tracking-wider">compliant</span>
+                  )}
                 </div>
               </div>
+            ))}
+          </div>
+        </div>
+      </div>
 
-              <div className="grid grid-cols-2 gap-2 text-xs">
-                <div className="p-2.5 bg-emerald-50 rounded-xl border border-emerald-100 text-center">
-                  <span className="block text-[9px] font-extrabold text-emerald-800 uppercase tracking-widest mb-0.5">Present</span>
-                  <span className="font-black text-emerald-950 text-sm">{present}</span>
+      {/* Dynamic Express Server Powered Gemini Interactive Analyst */}
+      <div className="bg-slate-950 text-white rounded-[32px] p-6 sm:p-8 border border-slate-900 shadow-xl relative overflow-hidden">
+        {/* Subtle decorative background shine */}
+        <div className="absolute -right-20 -top-20 w-80 h-80 bg-rose-500/10 rounded-full blur-3xl pointer-events-none" />
+        <div className="absolute -left-20 -bottom-20 w-80 h-80 bg-blue-500/10 rounded-full blur-3xl pointer-events-none" />
+
+        <div className="flex flex-col md:flex-row md:items-start justify-between gap-6 relative z-10">
+          <div className="space-y-2">
+            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-rose-500/10 text-rose-400 border border-rose-500/20 text-[9px] font-black uppercase tracking-widest leading-none">
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" className="w-3 h-3 animate-spin" style={{ animationDuration: '4s' }}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 21l-.813-5.096L3.096 15.125l5.096-.813L9 9.125l.813 5.096 5.096.813-5.096.813zM19.5 5.25l-.375 2.25L16.875 8l2.25.375.375 2.25.375-2.25 2.25-.375-2.25-.375-.375-2.25z" />
+              </svg>
+              Gemini AI Productivity Coach
+            </span>
+            <h3 className="text-2xl font-black tracking-tight text-white leading-tight">Generate AI Attendance Audit</h3>
+            <p className="text-xs text-slate-300 font-medium font-sans">Our intelligent assistant analyzes time-stamps to explain store wasted hours and suggest actionable improvements.</p>
+          </div>
+
+          <button
+            onClick={handleAskGemini}
+            disabled={isAiLoading}
+            className="px-6 py-3 bg-white hover:bg-slate-100 text-slate-950 font-black text-xs uppercase tracking-wider rounded-2xl flex items-center gap-2 shadow-xl hover:shadow-2xl transition-all active:scale-95 disabled:opacity-50 shrink-0 self-start md:self-auto cursor-pointer border-none"
+          >
+            {isAiLoading ? (
+              <>
+                <div className="w-3.5 h-3.5 border-2 border-slate-950 border-t-transparent rounded-full animate-spin" />
+                <span>Auditing logs...</span>
+              </>
+            ) : (
+              <>
+                <Award className="w-4 h-4 text-[#D12765]" />
+                <span>Explain through AI</span>
+              </>
+            )}
+          </button>
+        </div>
+
+        {/* Gemini Output Block */}
+        <AnimatePresence mode="wait">
+          {(aiAnalysis || isAiLoading || aiError) && (
+            <motion.div
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: "auto", opacity: 1 }}
+              exit={{ height: 0, opacity: 0 }}
+              transition={{ duration: 0.3 }}
+              className="mt-6 pt-6 border-t border-slate-800/60 font-sans relative z-10"
+            >
+              {isAiLoading && (
+                <div className="py-12 flex flex-col items-center justify-center text-center gap-3">
+                  <div className="w-8 h-8 rounded-full border-4 border-rose-500 border-t-transparent animate-spin" />
+                  <p className="text-xs font-black text-slate-400 uppercase tracking-widest animate-pulse">Consulting Gemini retail decision engine...</p>
                 </div>
-                <div className="p-2.5 bg-amber-50 rounded-xl border border-amber-100 text-center">
-                  <span className="block text-[9px] font-extrabold text-amber-800 uppercase tracking-widest mb-0.5">Late</span>
-                  <span className="font-black text-amber-950 text-sm">{late}</span>
+              )}
+
+              {aiError && (
+                <div className="p-4 bg-red-950/40 border border-red-900/40 rounded-2xl text-xs text-red-400 font-bold flex items-center gap-2">
+                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4 text-red-400">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                  </svg>
+                  {aiError}
                 </div>
-                <div className="p-2.5 bg-indigo-50 rounded-xl border border-indigo-100 text-center">
-                  <span className="block text-[9px] font-extrabold text-indigo-800 uppercase tracking-widest mb-0.5">Leaves</span>
-                  <span className="font-black text-indigo-950 text-sm">{leave}</span>
+              )}
+
+              {aiAnalysis && (
+                <div className="bg-slate-900/60 rounded-3xl p-6 sm:p-8 border border-slate-800 text-left font-sans">
+                  {renderFormattedMarkdown(aiAnalysis)}
                 </div>
-                <div className="p-2.5 bg-rose-50 rounded-xl border border-rose-100 text-center">
-                  <span className="block text-[9px] font-extrabold text-rose-800 uppercase tracking-widest mb-0.5">Absent</span>
-                  <span className="font-black text-rose-950 text-sm">{absent}</span>
-                </div>
-              </div>
-            </div>
-          );
-        })}
+              )}
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
     </div>
   );

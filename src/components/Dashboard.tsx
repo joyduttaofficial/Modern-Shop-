@@ -371,7 +371,11 @@ export default function Dashboard({ user, role }: { user: User; role: UserRole }
         setTrendChartData(days);
 
       } catch (error) {
-        console.error("Error fetching stats:", error);
+        const isQuota = (error instanceof Error ? error.message : String(error)).toLowerCase().includes("quota");
+        if (!isQuota) {
+          console.error("Error fetching stats:", error);
+        }
+        handleFirestoreError(error, OperationType.LIST, "dashboard-stats");
       } finally {
         setLoading(false);
       }

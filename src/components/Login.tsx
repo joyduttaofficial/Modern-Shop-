@@ -118,6 +118,16 @@ export default function Login() {
       setSuccessMessage("Success! Access granted.");
     } catch (err: any) {
       const errMsgStr = (err?.code || err?.message || "").toLowerCase();
+      const isQuotaOrApiKey = errMsgStr.includes("quota") || 
+                              errMsgStr.includes("api-key") || 
+                              errMsgStr.includes("api key") || 
+                              errMsgStr.includes("api_key");
+
+      if (isQuotaOrApiKey) {
+        handleFirestoreError(err, OperationType.GET, "auth");
+        return;
+      }
+
       const isExpectedAuthError = 
         errMsgStr.includes("user-not-found") || 
         errMsgStr.includes("wrong-password") || 

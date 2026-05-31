@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { User } from "firebase/auth";
-import { collection, onSnapshot, addDoc, doc, query, where, deleteDoc } from "firebase/firestore";
-import { db, OperationType, handleFirestoreError, updateDoc } from "@/src/lib/firebase";
+import { collection, onSnapshot, addDoc, doc, updateDoc, query, where, deleteDoc } from "firebase/firestore";
+import { db, OperationType, handleFirestoreError } from "@/src/lib/firebase";
 import { Employee, UserRole, Attendance, AttendanceStatus } from "@/src/types";
 import { cn } from "@/src/lib/utils";
 import { 
@@ -157,18 +157,9 @@ export default function AttendancePage({
     }
   };
 
-  const computeStatus = (
-    checkInTime: string, 
-    desiredStatus: AttendanceStatus, 
-    lunchOut?: string, 
-    lunchIn?: string
-  ): AttendanceStatus => {
+  const computeStatus = (checkInTime: string, desiredStatus: AttendanceStatus): AttendanceStatus => {
     if (desiredStatus !== "present" && desiredStatus !== "late" && desiredStatus !== "half-day") {
       return desiredStatus;
-    }
-    // If lunchOut is filled but lunchIn is empty/falsy, count as half-day
-    if (lunchOut && !lunchIn) {
-      return "half-day";
     }
     if (!checkInTime) return "present";
     if (checkInTime > halfDayThreshold) {
@@ -185,9 +176,7 @@ export default function AttendancePage({
     const dateStr = selectedDate.toISOString();
     
     const currentIn = existing?.checkIn || "09:00";
-    const currentLunchOut = existing?.lunchOut || "";
-    const currentLunchIn = existing?.lunchIn || "";
-    const finalStatus = computeStatus(currentIn, status, currentLunchOut, currentLunchIn);
+    const finalStatus = computeStatus(currentIn, status);
 
     try {
       if (existing) {
@@ -207,8 +196,8 @@ export default function AttendancePage({
           date: dateStr,
           status: finalStatus,
           checkIn: defaultIn,
-          lunchOut: "",
-          lunchIn: "",
+          lunchOut: "13:00",
+          lunchIn: "14:00",
           notes: ""
         });
       }
@@ -223,9 +212,7 @@ export default function AttendancePage({
       for (const emp of employees) {
         const existing = getAttendanceForDay(emp.id!, selectedDate);
         const currentIn = existing?.checkIn || "09:00";
-        const currentLunchOut = existing?.lunchOut || "";
-        const currentLunchIn = existing?.lunchIn || "";
-        const finalStatus = computeStatus(currentIn, status, currentLunchOut, currentLunchIn);
+        const finalStatus = computeStatus(currentIn, status);
 
         if (!existing) {
           let defaultIn = "09:00";
@@ -240,8 +227,8 @@ export default function AttendancePage({
             date: selectedDate.toISOString(),
             status: finalStatus,
             checkIn: defaultIn,
-            lunchOut: "",
-            lunchIn: "",
+            lunchOut: "13:00",
+            lunchIn: "14:00",
             notes: ""
           });
         } else if (existing.id) {
@@ -288,8 +275,8 @@ export default function AttendancePage({
     setSelectedEmpForTime(emp);
     setModalStatus(record?.status || "present");
     setModalCheckIn(record?.checkIn || "09:00");
-    setModalLunchOut(record?.lunchOut || "");
-    setModalLunchIn(record?.lunchIn || "");
+    setModalLunchOut(record?.lunchOut || "13:00");
+    setModalLunchIn(record?.lunchIn || "14:00");
     setModalNotes(record?.notes || "");
   };
 
@@ -299,8 +286,8 @@ export default function AttendancePage({
     const empId = selectedEmpForTime.id!;
     const record = getAttendanceForDay(empId, selectedDate);
     
-    // Compute computed state status based on check-in time and lunch status
-    const finalStatus = computeStatus(modalCheckIn, modalStatus, modalLunchOut, modalLunchIn);
+    // Compute computed state status based on check-in time
+    const finalStatus = computeStatus(modalCheckIn, modalStatus);
 
     try {
       if (record && record.id) {
@@ -337,19 +324,17 @@ export default function AttendancePage({
     try {
       if (existing && existing.id) {
         const updates: any = { [field]: value };
-        const checkIn = field === "checkIn" ? value : (existing.checkIn || "09:00");
-        const lunchOut = field === "lunchOut" ? value : (existing.lunchOut || "");
-        const lunchIn = field === "lunchIn" ? value : (existing.lunchIn || "");
-        
-        if (existing.status === "present" || existing.status === "late" || existing.status === "half-day") {
-          updates.status = computeStatus(checkIn, existing.status, lunchOut, lunchIn);
+        if (field === "checkIn") {
+          if (existing.status === "present" || existing.status === "late" || existing.status === "half-day") {
+            updates.status = computeStatus(value, "present");
+          }
         }
         await updateDoc(doc(db, "attendance", existing.id), updates);
       } else {
         const checkIn = field === "checkIn" ? value : "09:00";
-        const lunchOut = field === "lunchOut" ? value : "";
-        const lunchIn = field === "lunchIn" ? value : "";
-        const finalStatus = computeStatus(checkIn, "present", lunchOut, lunchIn);
+        const lunchOut = field === "lunchOut" ? value : "13:00";
+        const lunchIn = field === "lunchIn" ? value : "14:00";
+        const finalStatus = computeStatus(checkIn, "present");
 
         await addDoc(collection(db, "attendance"), {
           employeeId: empId,

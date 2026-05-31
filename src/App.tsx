@@ -47,84 +47,7 @@ import Suppliers from "./components/Suppliers";
 import Purchase from "./components/Purchase";
 import UsersManager from "./components/UsersManager";
 import Login from "./components/Login";
-
-function QuotaExceededOverlay({ onDismiss, databaseId, projectId }: { onDismiss: () => void; databaseId: string; projectId: string }) {
-  const upgradeUrl = `https://console.firebase.google.com/project/${projectId}/firestore/databases/${databaseId}/data?openUpgradeDialog=true`;
-  const pricingUrl = "https://firebase.google.com/pricing#cloud-firestore";
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs min-h-screen">
-      <motion.div 
-        initial={{ opacity: 0, scale: 0.95, y: 20 }}
-        animate={{ opacity: 1, scale: 1, y: 0 }}
-        className="bg-white dark:bg-zinc-900 max-w-lg w-full rounded-2xl border border-amber-200 dark:border-amber-900/40 shadow-2xl p-6 sm:p-8 space-y-6 relative"
-      >
-        <div className="flex items-center gap-3">
-          <div className="w-12 h-12 bg-amber-50 dark:bg-amber-900/20 rounded-xl flex items-center justify-center text-amber-500 shrink-0 border border-amber-100 dark:border-amber-900/30">
-            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-6 h-6">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
-            </svg>
-          </div>
-          <div>
-            <h2 className="text-xl font-bold text-slate-900 dark:text-neutral-100 tracking-tight">
-              Firestore Quota Limit Exceeded
-            </h2>
-            <p className="text-xs text-slate-400 font-mono mt-0.5 uppercase tracking-wider font-semibold">
-              spark plan free tier exhausted
-            </p>
-          </div>
-        </div>
-
-        <div className="space-y-4 text-slate-650 dark:text-neutral-300 text-sm leading-relaxed">
-          <p>
-            The standard Firebase Spark plan has reached its free limit of <strong>daily read units</strong> for this project.
-          </p>
-          <div className="p-4 bg-slate-50 dark:bg-zinc-950 rounded-xl border border-slate-100 dark:border-zinc-800 space-y-2">
-            <p className="font-medium text-slate-805 dark:text-neutral-200 text-xs text-amber-600 dark:text-amber-500 uppercase tracking-widest leading-none">
-              Status & Resolution:
-            </p>
-            <p className="text-xs text-slate-600 dark:text-neutral-400">
-              Firestore read operations are temporarily restricted. Standard daily free tier quotas will automatically reset tomorrow. To instantly restore database connectivity, please enable billing or upgrade the project in the Firebase Console.
-            </p>
-          </div>
-          <p className="text-xs text-slate-500">
-            Detailed quota information is available under the <strong>Spark plan</strong> column in the <strong>Enterprise edition</strong> section of official Firebase Documentation.
-          </p>
-        </div>
-
-        <div className="flex flex-col gap-2 pt-2">
-          <a
-            href={upgradeUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="w-full py-3 bg-slate-950 dark:bg-[#d4af37] dark:text-black hover:bg-slate-850 text-white font-bold text-sm tracking-wider uppercase rounded-xl transition-all flex items-center justify-center gap-2 shadow-lg shadow-slate-950/10 cursor-pointer text-center"
-          >
-            <span>Upgrade & Enable Billing</span>
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
-              <path fillRule="evenodd" d="M5.22 14.78a.75.75 0 001.06 0l7.22-7.22v5.69a.75.75 0 001.5 0v-7.5a.75.75 0 00-.75-.75h-7.5a.75.75 0 000 1.5h5.69l-7.22 7.22a.75.75 0 000 1.06z" clipRule="evenodd" />
-            </svg>
-          </a>
-
-          <a
-            href={pricingUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="w-full py-2.5 bg-slate-50 dark:bg-zinc-850 hover:bg-slate-100 dark:hover:bg-zinc-850 text-slate-705 dark:text-neutral-200 font-bold text-xs tracking-wider uppercase rounded-xl transition-all flex items-center justify-center gap-2 border border-slate-200 dark:border-zinc-700 cursor-pointer text-center"
-          >
-            View Firebase Pricing Tiers
-          </a>
-
-          <button
-            onClick={onDismiss}
-            className="w-full py-2.5 hover:bg-slate-50 dark:hover:bg-zinc-800/40 text-slate-500 hover:text-slate-800 dark:hover:text-neutral-300 font-semibold text-xs tracking-wider uppercase rounded-xl transition-all cursor-pointer text-center"
-          >
-            Dismiss & Attempt with Cached Data
-          </button>
-        </div>
-      </motion.div>
-    </div>
-  );
-}
+import QuotaExceededView from "./components/QuotaExceededView";
 
 type View = "dashboard" | "transactions" | "newSale" | "salesList" | "newEmployee" | "employeesList" | "salaryEntry" | "salarySheet" | "addAttendance" | "attendanceList" | "attendance" | "reports" | "settings" | "newSupplier" | "suppliersList" | "suppliers" | "newPurchase" | "purchaseList" | "newUser" | "usersList" | "rolesList" | "profileView";
 
@@ -151,76 +74,6 @@ export default function App() {
       localStorage.setItem("darkMode", "false");
     }
   }, [darkMode]);
-
-  const [quotaExceeded, setQuotaExceeded] = useState(() => {
-    if (typeof window !== "undefined") {
-      return !!(window as any).__firestore_quota_exceeded__;
-    }
-    return false;
-  });
-
-  useEffect(() => {
-    const checkErrorForQuota = (errStr: string) => {
-      if (
-        errStr.toLowerCase().includes("quota exceeded") ||
-        errStr.toLowerCase().includes("quota limit exceeded") ||
-        errStr.toLowerCase().includes("free daily read units") ||
-        errStr.toLowerCase().includes("exceeded free quota") ||
-        errStr.toLowerCase().includes("unavailable") ||
-        errStr.toLowerCase().includes("could not reach cloud firestore backend")
-      ) {
-        if (typeof window !== "undefined") {
-          (window as any).__firestore_quota_exceeded__ = true;
-        }
-        setQuotaExceeded(true);
-      }
-    };
-
-    const handleError = (event: ErrorEvent) => {
-      const msg = event.message || (event.error && event.error.message) || "";
-      checkErrorForQuota(msg);
-    };
-
-    const handleRejection = (event: PromiseRejectionEvent) => {
-      const reason = event.reason;
-      const msg = reason instanceof Error ? reason.message : String(reason);
-      checkErrorForQuota(msg);
-    };
-
-    const handleCustomEvent = () => {
-      setQuotaExceeded(true);
-    };
-
-    window.addEventListener("error", handleError);
-    window.addEventListener("unhandledrejection", handleRejection);
-    window.addEventListener("firestore-quota-exceeded", handleCustomEvent);
-
-    // Patch console.error to track errors caught and logged by firebase code
-    const originalConsoleError = console.error;
-    console.error = function (...args) {
-      originalConsoleError.apply(console, args);
-      const strArgs = args.map(arg => {
-        try {
-          return typeof arg === "object" ? JSON.stringify(arg) : String(arg);
-        } catch {
-          return String(arg);
-        }
-      }).join(" ");
-      checkErrorForQuota(strArgs);
-    };
-
-    if (typeof window !== "undefined" && (window as any).__firestore_quota_exceeded__) {
-      setQuotaExceeded(true);
-    }
-
-    return () => {
-      window.removeEventListener("error", handleError);
-      window.removeEventListener("unhandledrejection", handleRejection);
-      window.removeEventListener("firestore-quota-exceeded", handleCustomEvent);
-      console.error = originalConsoleError;
-    };
-  }, []);
-
   const [expandedMenus, setExpandedMenus] = useState<Record<string, boolean>>({
     sales: true,
     employees: true,
@@ -232,6 +85,73 @@ export default function App() {
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [customRoles, setCustomRoles] = useState<RolePermission[]>([]);
   const [loading, setLoading] = useState(true);
+  const [quotaError, setQuotaError] = useState<any>(null);
+
+  // Global listeners for Firestore Quota Limit Exceeded errors
+  useEffect(() => {
+    const handleQuotaExceeded = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      setQuotaError(detail);
+    };
+
+    const handleGlobalError = (event: ErrorEvent) => {
+      let msg = "";
+      if (event?.error) {
+        const err = event.error;
+        msg = err instanceof Error ? err.message : (typeof err === "object" ? JSON.stringify(err) : String(err));
+      } else {
+        msg = event?.message || "";
+      }
+      const isQuotaOrApiKey = msg.toLowerCase().includes("quota") || 
+                              msg.toLowerCase().includes("api-key") || 
+                              msg.toLowerCase().includes("api key") || 
+                              msg.toLowerCase().includes("api_key") ||
+                              msg.toLowerCase().includes("offline") ||
+                              msg.toLowerCase().includes("unavailable") ||
+                              msg.toLowerCase().includes("network") ||
+                              msg.toLowerCase().includes("credential");
+      if (isQuotaOrApiKey) {
+        setQuotaError(msg);
+      }
+    };
+
+    const handlePromiseRejection = (event: PromiseRejectionEvent) => {
+      const reason = event?.reason;
+      let msg = "";
+      if (reason instanceof Error) {
+        msg = reason.message;
+      } else if (typeof reason === "object" && reason !== null) {
+        try {
+          msg = JSON.stringify(reason);
+        } catch {
+          msg = String(reason);
+        }
+      } else {
+        msg = String(reason);
+      }
+      const isQuotaOrApiKey = msg.toLowerCase().includes("quota") || 
+                              msg.toLowerCase().includes("api-key") || 
+                              msg.toLowerCase().includes("api key") || 
+                              msg.toLowerCase().includes("api_key") ||
+                              msg.toLowerCase().includes("offline") ||
+                              msg.toLowerCase().includes("unavailable") ||
+                              msg.toLowerCase().includes("network") ||
+                              msg.toLowerCase().includes("credential");
+      if (isQuotaOrApiKey) {
+        setQuotaError(msg);
+      }
+    };
+
+    window.addEventListener("firestore-quota-exceeded", handleQuotaExceeded);
+    window.addEventListener("error", handleGlobalError);
+    window.addEventListener("unhandledrejection", handlePromiseRejection);
+
+    return () => {
+      window.removeEventListener("firestore-quota-exceeded", handleQuotaExceeded);
+      window.removeEventListener("error", handleGlobalError);
+      window.removeEventListener("unhandledrejection", handlePromiseRejection);
+    };
+  }, []);
 
   // Dynamic Company Branding & Profile States
   const [companyName, setCompanyName] = useState("Modern Shop");
@@ -239,28 +159,12 @@ export default function App() {
   const [companyLogoUrl, setCompanyLogoUrl] = useState("");
 
   useEffect(() => {
-    // Attempt to load from localStorage cache first
-    const cachedName = localStorage.getItem("cached_company_name");
-    const cachedTagline = localStorage.getItem("cached_company_tagline");
-    const cachedLogo = localStorage.getItem("cached_company_logo");
-    if (cachedName) setCompanyName(cachedName);
-    if (cachedTagline) setCompanyTagline(cachedTagline);
-    if (cachedLogo) setCompanyLogoUrl(cachedLogo);
-
     const unsubBranding = onSnapshot(doc(db, "settings", "company"), (docSnap) => {
       if (docSnap.exists()) {
         const data = docSnap.data();
-        const newName = data.companyName || "Modern Shop";
-        const newTagline = data.companyTagline || "Automated POS";
-        const newLogo = data.companyLogoUrl || "";
-        
-        setCompanyName(newName);
-        setCompanyTagline(newTagline);
-        setCompanyLogoUrl(newLogo);
-
-        localStorage.setItem("cached_company_name", newName);
-        localStorage.setItem("cached_company_tagline", newTagline);
-        localStorage.setItem("cached_company_logo", newLogo);
+        setCompanyName(data.companyName || "Modern Shop");
+        setCompanyTagline(data.companyTagline || "Automated POS");
+        setCompanyLogoUrl(data.companyLogoUrl || "");
       }
     }, (error) => {
       handleFirestoreError(error, OperationType.GET, "settings/company");
@@ -268,67 +172,24 @@ export default function App() {
     return () => unsubBranding();
   }, []);
 
-  // Load custom roles with elegant cache failover
+  // Load custom roles
   useEffect(() => {
     if (!user) {
       setCustomRoles([]);
       return;
     }
-    const cachedRoles = localStorage.getItem("cached_custom_roles");
-    if (cachedRoles) {
-      try {
-        setCustomRoles(JSON.parse(cachedRoles));
-      } catch (e) {
-        console.error("Failed to parse cached roles", e);
-      }
-    }
-
     const unsubRoles = onSnapshot(collection(db, "roles"), (snap) => {
       const parsedRoles: RolePermission[] = [];
       snap.forEach((doc) => {
         parsedRoles.push({ id: doc.id, ...doc.data() } as RolePermission);
       });
       setCustomRoles(parsedRoles);
-      localStorage.setItem("cached_custom_roles", JSON.stringify(parsedRoles));
     }, (err) => {
-      console.error("Roles fetch error", err);
-      // Suppress crash by tracking quota
-      const errStr = err instanceof Error ? err.message : String(err);
-      if (
-        errStr.toLowerCase().includes("quota") ||
-        errStr.toLowerCase().includes("exceeded") ||
-        errStr.toLowerCase().includes("limit")
-      ) {
-        if (typeof window !== "undefined") {
-          (window as any).__firestore_quota_exceeded__ = true;
-          window.dispatchEvent(new CustomEvent("firestore-quota-exceeded"));
-        }
+      const isQuota = (err instanceof Error ? err.message : String(err)).toLowerCase().includes("quota");
+      if (!isQuota) {
+        console.error("Roles fetch error", err);
       }
-      
-      // Fallback custom default admin role structure if empty
-      const currentCached = localStorage.getItem("cached_custom_roles");
-      if (!currentCached) {
-        const defaultRoles: RolePermission[] = [
-          {
-            id: "admin",
-            name: "admin",
-            allowedMenus: [
-              "dashboard",
-              "sales",
-              "employees",
-              "attendance",
-              "salary",
-              "suppliers",
-              "purchases",
-              "reports",
-              "settings",
-              "users"
-            ],
-            createdAt: new Date().toISOString()
-          }
-        ];
-        setCustomRoles(defaultRoles);
-      }
+      handleFirestoreError(err, OperationType.LIST, "roles");
     });
     return () => unsubRoles();
   }, [user]);
@@ -348,109 +209,71 @@ export default function App() {
       if (u) {
         try {
           // Fetch or create profile. First, check if there's an invited user with this email
+          const usersRef = collection(db, "users");
+          const q = query(usersRef, where("email", "==", u.email?.toLowerCase() || ""));
+          const querySnap = await getDocs(q);
+          
           let profileData: UserProfile | null = null;
           let profileId: string | null = null;
 
-          try {
-            const usersRef = collection(db, "users");
-            const q = query(usersRef, where("email", "==", u.email?.toLowerCase() || ""));
-            const querySnap = await getDocs(q);
+          if (!querySnap.empty) {
+            const docSnap = querySnap.docs[0];
+            const oldDocId = docSnap.id;
+            profileData = docSnap.data() as UserProfile;
             
-            if (!querySnap.empty) {
-              const docSnap = querySnap.docs[0];
-              const oldDocId = docSnap.id;
-              profileData = docSnap.data() as UserProfile;
+            if (oldDocId !== u.uid) {
+              // Document ID is different from u.uid. Copy the data to u.uid!
+              profileData.uid = u.uid;
+              await setDoc(doc(db, "users", u.uid), profileData);
               
-              if (oldDocId !== u.uid) {
-                // Document ID is different from u.uid. Copy the data to u.uid!
-                profileData.uid = u.uid;
-                await setDoc(doc(db, "users", u.uid), profileData);
-                
-                // Delete the legacy document
-                try {
-                  await deleteDoc(doc(db, "users", oldDocId));
-                } catch (delErr) {
-                  console.warn("Could not delete legacy invited record", delErr);
-                }
-                profileId = u.uid;
-              } else {
-                profileId = oldDocId;
-                if (!profileData.uid) {
-                  profileData.uid = u.uid;
-                  await setDoc(doc(db, "users", profileId), { uid: u.uid }, { merge: true });
-                }
-              }
-            } else {
-              // Fallback to check directly at uid path
-              const profileRef = doc(db, "users", u.uid);
-              const profileSnap = await getDoc(profileRef);
-              if (profileSnap.exists()) {
-                profileData = profileSnap.data() as UserProfile;
-                profileId = u.uid;
-              }
-            }
-
-            if (!profileData) {
-              // If no profile found at all, check if first user in system
-              const allUsersSnap = await getDocs(collection(db, "users"));
-              const isFirstUser = allUsersSnap.empty;
-              const isModernAdmin = u.email?.toLowerCase() === "modern@admin.com";
-
-              const newProfile: UserProfile = {
-                uid: u.uid,
-                email: u.email || "",
-                displayName: isModernAdmin ? "Main Administrator" : (u.displayName || "New User"),
-                role: (isFirstUser || isModernAdmin) ? "admin" : "sales", // First user or modern@admin.com is admin
-                createdAt: new Date().toISOString(),
-                status: "active",
-                photoURL: u.photoURL || `https://api.dicebear.com/7.x/adventurer/svg?seed=${encodeURIComponent(isModernAdmin ? "Main Administrator" : "New User")}`
-              };
-              
-              profileId = u.uid;
-              await setDoc(doc(db, "users", profileId), newProfile);
-              profileData = newProfile;
-            } else if (u.email?.toLowerCase() === "modern@admin.com" && (profileData.role !== "admin" || profileData.status !== "active")) {
-              // Force main admin state to active and role to admin in Firestore
-              profileData.role = "admin";
-              profileData.status = "active";
-              await setDoc(doc(db, "users", profileId), { role: "admin", status: "active" }, { merge: true });
-            }
-          } catch (dbErr) {
-            console.error("Firestore DB profile fetch failed, applying cache or fallback:", dbErr);
-            // This catches quota exceeded or permission issues during the fetch phase and continues gracefully
-          }
-
-          // If fetch failed or returned null, try local storage cache or fallback
-          if (!profileData) {
-            const cached = localStorage.getItem(`cached_user_profile_${u.uid}`);
-            if (cached) {
+              // Delete the legacy document
               try {
-                profileData = JSON.parse(cached);
-                console.log("Successfully restored user profile from device storage cache.");
-              } catch (parseErr) {
-                console.error("Failed to parse cached user profile:", parseErr);
+                await deleteDoc(doc(db, "users", oldDocId));
+              } catch (delErr) {
+                console.warn("Could not delete legacy invited record", delErr);
               }
+              profileId = u.uid;
+            } else {
+              profileId = oldDocId;
+              if (!profileData.uid) {
+                profileData.uid = u.uid;
+                await setDoc(doc(db, "users", profileId), { uid: u.uid }, { merge: true });
+              }
+            }
+          } else {
+            // Fallback to check directly at uid path
+            const profileRef = doc(db, "users", u.uid);
+            const profileSnap = await getDoc(profileRef);
+            if (profileSnap.exists()) {
+              profileData = profileSnap.data() as UserProfile;
+              profileId = u.uid;
             }
           }
 
-          // If still no profile data, supply default offline Administrator profile so user is not locked out
           if (!profileData) {
+            // If no profile found at all, check if first user in system
+            const allUsersSnap = await getDocs(collection(db, "users"));
+            const isFirstUser = allUsersSnap.empty;
             const isModernAdmin = u.email?.toLowerCase() === "modern@admin.com";
-            profileData = {
+
+            const newProfile: UserProfile = {
               uid: u.uid,
-              email: u.email || "offline-admin@modernshop.com",
-              displayName: isModernAdmin ? "Main Administrator (Offline)" : (u.displayName || "Offline Partner"),
-              role: "admin", // Default to admin for full viewing panel accessibility
+              email: u.email || "",
+              displayName: isModernAdmin ? "Main Administrator" : (u.displayName || "New User"),
+              role: (isFirstUser || isModernAdmin) ? "admin" : "sales", // First user or modern@admin.com is admin
               createdAt: new Date().toISOString(),
               status: "active",
-              photoURL: u.photoURL || `https://api.dicebear.com/7.x/adventurer/svg?seed=OfflineAdmin`
+              photoURL: u.photoURL || `https://api.dicebear.com/7.x/adventurer/svg?seed=${encodeURIComponent(isModernAdmin ? "Main Administrator" : "New User")}`
             };
-            console.warn("Defaulting to resilient offline fallback administrator layout.");
-          }
-
-          // Save user profile state back to cache for longevity
-          if (profileData) {
-            localStorage.setItem(`cached_user_profile_${u.uid}`, JSON.stringify(profileData));
+            
+            profileId = u.uid;
+            await setDoc(doc(db, "users", profileId), newProfile);
+            profileData = newProfile;
+          } else if (u.email?.toLowerCase() === "modern@admin.com" && (profileData.role !== "admin" || profileData.status !== "active")) {
+            // Force main admin state to active and role to admin in Firestore
+            profileData.role = "admin";
+            profileData.status = "active";
+            await setDoc(doc(db, "users", profileId), { role: "admin", status: "active" }, { merge: true });
           }
 
           setProfile(profileData);
@@ -459,20 +282,24 @@ export default function App() {
           if (profileId) {
             const profileRef = doc(db, "users", profileId);
             unsubProfile = onSnapshot(profileRef, (snap) => {
-              if (snap.exists()) {
-                const refreshed = snap.data() as UserProfile;
-                setProfile(refreshed);
-                localStorage.setItem(`cached_user_profile_${u.uid}`, JSON.stringify(refreshed));
-              }
+              if (snap.exists()) setProfile(snap.data() as UserProfile);
             }, (error) => {
               // Only log if the user is still actively signed in
               if (auth.currentUser) {
-                console.error("Profile sync error", error);
+                const isQuota = (error instanceof Error ? error.message : String(error)).toLowerCase().includes("quota");
+                if (!isQuota) {
+                  console.error("Profile sync error", error);
+                }
+                handleFirestoreError(error, OperationType.GET, `users/${profileId}`);
               }
             });
           }
         } catch (err) {
-          console.error("Error loading user profile:", err);
+          const isQuota = (err instanceof Error ? err.message : String(err)).toLowerCase().includes("quota");
+          if (!isQuota) {
+            console.error("Error loading user profile:", err);
+          }
+          handleFirestoreError(err, OperationType.GET, "users/profile-bootstrap");
         } finally {
           setLoading(false);
         }
@@ -492,21 +319,23 @@ export default function App() {
 
   const handleLogout = () => signOut(auth);
 
-  if (loading && !quotaExceeded) {
+  if (quotaError) {
+    return (
+      <QuotaExceededView 
+        errorDetails={quotaError} 
+        onRetry={() => {
+          setQuotaError(null);
+          window.location.reload();
+        }} 
+      />
+    );
+  }
+
+  if (loading) {
     return (
       <div className="flex items-center justify-center h-screen bg-[#F5F5F4]">
         <div className="animate-spin rounded-full h-12 w-12 border-slate-900 border-b-2"></div>
       </div>
-    );
-  }
-
-  if (quotaExceeded) {
-    return (
-      <QuotaExceededOverlay 
-        onDismiss={() => setQuotaExceeded(false)} 
-        databaseId="ai-studio-254e2cd5-7d37-444e-878d-72afd87a600f"
-        projectId="studio-1767695098-65e9f"
-      />
     );
   }
 

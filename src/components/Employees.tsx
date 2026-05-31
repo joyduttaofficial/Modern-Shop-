@@ -1,12 +1,12 @@
 import React, { useState, useEffect } from "react";
 import { User } from "firebase/auth";
 import { collection, onSnapshot, addDoc, deleteDoc, doc, query, orderBy, where, getDocs } from "firebase/firestore";
-import { db, OperationType, handleFirestoreError, updateDoc } from "@/src/lib/firebase";
+import { db, OperationType, handleFirestoreError } from "@/src/lib/firebase";
 import { Employee, Transaction, UserRole, Bank } from "@/src/types";
 import { cn, formatCurrency } from "@/src/lib/utils";
 import { Users, Plus, Trash2, UserPlus, CreditCard, History, Wallet, UserCircle, Landmark, X, FileText, FilePlus, Image, Eye, Pencil, ExternalLink, Download, ShieldCheck, Printer, FileDown } from "lucide-react";
 import { format, startOfYear, endOfYear } from "date-fns";
-import { increment, setDoc } from "firebase/firestore";
+import { increment, updateDoc, setDoc } from "firebase/firestore";
 import { motion, AnimatePresence } from "motion/react";
 
 export default function Employees({ 

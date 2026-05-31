@@ -4,7 +4,7 @@ import { collection, onSnapshot, addDoc, deleteDoc, doc, updateDoc, query, order
 import { db, OperationType, handleFirestoreError } from "@/src/lib/firebase";
 import { Category, Bank, TransactionType, UserRole, UserProfile } from "@/src/types";
 import { cn } from "@/src/lib/utils";
-import { Plus, Trash2, Landmark, Tag, Briefcase, PlusCircle, LayoutGrid, Users, ShieldAlert } from "lucide-react";
+import { Plus, Trash2, Landmark, Tag, Briefcase, PlusCircle, LayoutGrid, Users, ShieldAlert, Upload } from "lucide-react";
 import { format } from "date-fns";
 
 export default function Settings({ user, role }: { user: User; role: UserRole }) {
@@ -362,14 +362,65 @@ export default function Settings({ user, role }: { user: User; role: UserRole })
               </div>
 
               <div>
-                <label className="text-xs font-bold text-gray-400 uppercase tracking-wider pl-1 font-medium">Custom Logo Image URL</label>
-                <input 
-                  value={companyLogoUrl}
-                  onChange={e => setCompanyLogoUrl(e.target.value)}
-                  placeholder="e.g. https://domain.com/logo.png"
-                  className="w-full px-4 py-3 bg-gray-50 rounded-xl border-none focus:ring-2 focus:ring-gray-200 mt-1 font-mono text-xs outline-none text-slate-600"
-                />
-                <p className="text-[10px] text-gray-400 pl-1 mt-1 leading-relaxed">Provide any publicly hosted secure image URL to override standard visual system dashboards, invoices and PDFs.</p>
+                <label className="text-xs font-bold text-gray-400 uppercase tracking-wider pl-1 font-medium">Company Logo Image</label>
+                
+                {companyLogoUrl ? (
+                  <div className="relative flex items-center gap-4 bg-gray-50 p-4 rounded-xl border border-dashed border-gray-200 mt-1 animate-in fade-in duration-200">
+                    <img 
+                      src={companyLogoUrl} 
+                      alt="Company Logo Preview" 
+                      className="w-16 h-16 rounded-xl object-contain border border-white shrink-0 bg-white shadow-sm" 
+                      referrerPolicy="no-referrer"
+                    />
+                    <div className="flex-1 space-y-1">
+                      <p className="text-xs font-semibold text-slate-705">Logo is loaded</p>
+                      <button
+                        type="button"
+                        onClick={() => setCompanyLogoUrl("")}
+                        className="px-3 py-1.5 bg-red-50 hover:bg-red-100 text-red-600 rounded-lg text-[11px] font-bold uppercase tracking-wider transition-all cursor-pointer flex items-center gap-1 border-none outline-none"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                        Remove Logo
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div 
+                    onDragOver={(e) => e.preventDefault()}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      const file = e.dataTransfer.files?.[0];
+                      if (file && file.type.startsWith("image/")) {
+                        const reader = new FileReader();
+                        reader.onloadend = () => setCompanyLogoUrl(reader.result as string);
+                        reader.readAsDataURL(file);
+                      }
+                    }}
+                    onClick={() => document.getElementById("logo-upload-input")?.click()}
+                    className="border-2 border-dashed border-gray-200 hover:border-slate-800 rounded-xl p-5 text-center cursor-pointer hover:bg-gray-50 transition-all flex flex-col items-center justify-center min-h-[110px] mt-1 group animate-in fade-in duration-200"
+                  >
+                    <Upload className="w-5 h-5 text-gray-400 mb-1 group-hover:text-slate-800 transition-colors" />
+                    <p className="text-xs font-bold text-slate-700">
+                      Drag & drop or <span className="text-indigo-600 hover:underline">click to upload photo</span>
+                    </p>
+                    <p className="text-[9px] text-gray-450 uppercase font-black tracking-widest mt-0.5">Supports PNG, JPG, JPEG, SVG</p>
+                    <input 
+                      type="file" 
+                      id="logo-upload-input" 
+                      accept="image/*" 
+                      className="hidden" 
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) {
+                          const reader = new FileReader();
+                          reader.onloadend = () => setCompanyLogoUrl(reader.result as string);
+                          reader.readAsDataURL(file);
+                        }
+                      }}
+                    />
+                  </div>
+                )}
+                <p className="text-[10px] text-gray-400 pl-1 mt-1 leading-relaxed">Upload any custom photo or corporate logo to customize standard visual system dashboards, invoices and PDFs.</p>
               </div>
 
               <div className="grid grid-cols-2 gap-4">

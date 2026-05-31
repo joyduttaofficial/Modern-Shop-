@@ -12,15 +12,16 @@ const supabaseUrl = ((import.meta as any).env.VITE_SUPABASE_URL || "").trim();
 const supabaseAnonKey = ((import.meta as any).env.VITE_SUPABASE_ANON_KEY || "").trim();
 
 let supabaseClient = null;
-if (supabaseUrl && supabaseAnonKey) {
+if (supabaseUrl && supabaseAnonKey && supabaseUrl !== "YOUR_SUPABASE_URL") {
   try {
-    if (supabaseUrl.startsWith("http://") || supabaseUrl.startsWith("https://")) {
+    const parsedUrl = new URL(supabaseUrl);
+    if (parsedUrl.protocol === "http:" || parsedUrl.protocol === "https:") {
       supabaseClient = createClient(supabaseUrl, supabaseAnonKey);
     } else {
-      console.warn("Bypassing Supabase init: URL does not start with http/https");
+      console.warn("Invalid supabaseUrl protocol. Working in standalone offline mode.");
     }
-  } catch (err) {
-    console.warn("Supabase client initialization failed:", err);
+  } catch (e) {
+    console.warn("Supabase initialization bypassed or invalid URL. Working in standalone offline mode.", e);
   }
 }
 
@@ -612,13 +613,15 @@ export async function getDocs(queryOrCol: any) {
 export function onSnapshot(queryOrCol: any, onNext: (snapshot: any) => void, onError?: (err: any) => void) {
   const tableName = queryOrCol.path;
   const constraints = queryOrCol.constraints || [];
+  const isDoc = queryOrCol.type === "doc";
+  const docId = queryOrCol.id;
 
   const triggerCallback = () => {
-    if (queryOrCol.type === "doc") {
+    if (isDoc) {
       const tableData = getLocalTable(tableName);
-      const docData = tableData.find(item => item.id === queryOrCol.id);
+      const docData = tableData.find(item => item.id === docId);
       onNext({
-        id: queryOrCol.id,
+        id: docId,
         exists: () => docData !== undefined,
         data: () => docData
       });

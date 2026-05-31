@@ -22,7 +22,15 @@ import {
   TrendingUp,
   ChevronRight,
   Filter,
-  ShoppingBag
+  ShoppingBag,
+  Clock,
+  Search,
+  CheckCircle2,
+  XCircle,
+  AlertCircle,
+  Plane,
+  ArrowLeft,
+  CalendarDays
 } from "lucide-react";
 import { motion } from "motion/react";
 
@@ -834,72 +842,630 @@ export default function Reports({ user, role }: { user: User; role: UserRole }) 
 }
 
 function AttendanceReport({ employees, attendance }: { employees: Employee[]; attendance: any[] }) {
+  const { language, t, formatDate, translateValue } = useLanguage();
   const [selectedMonth, setSelectedMonth] = useState(format(new Date(), "yyyy-MM"));
-  
-  const filteredAttendance = attendance.filter(a => a.date.startsWith(selectedMonth));
-  
-  return (
-    <div className="space-y-8 animate-in slide-in-from-bottom-5 duration-500">
-      <div className="bg-white p-8 rounded-[40px] shadow-sm border border-gray-100 flex flex-col md:flex-row items-center justify-between gap-6">
-        <div className="flex items-center gap-4">
-          <div className="w-16 h-16 bg-blue-50 rounded-3xl flex items-center justify-center">
-            <Users className="w-8 h-8 text-blue-600" />
-          </div>
-          <div>
-            <h3 className="text-2xl font-black text-gray-900">Attendance Analytics</h3>
-            <p className="text-gray-500 font-medium italic">Comprehensive view of staff performance and punctuality.</p>
+  const [viewMode, setViewMode] = useState<"daily" | "monthly">("daily");
+  const [selectedDateDetails, setSelectedDateDetails] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [lateThreshold, setLateThreshold] = useState("10:00");
+
+  useEffect(() => {
+    const unsub = onSnapshot(doc(db, "settings", "attendance"), (docSnap) => {
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        setLateThreshold(data.lateThreshold || "10:00");
+      }
+    });
+    return () => unsub();
+  }, []);
+
+  // Helper: Format 24h string time (e.g., "09:30") to readable 12H with AM/PM (e.g. "09:30 AM")
+  function formatTimeTo12Hour(timeStr: string): string {
+    if (!timeStr) return "-";
+    if (timeStr.includes("AM") || timeStr.includes("PM")) return timeStr;
+    try {
+      const [hrsStr, minsStr] = timeStr.split(":");
+      const hrs = Number(hrsStr);
+      const mins = Number(minsStr);
+      if (isNaN(hrs) || isNaN(mins)) return timeStr;
+      const ampm = hrs >= 12 ? "PM" : "AM";
+      const displayHrs = hrs % 12 || 12;
+      const displayMins = mins < 10 ? `0${mins}` : mins;
+      return `${displayHrs}:${displayMins} ${ampm}`;
+    } catch {
+      return timeStr;
+    }
+  }
+
+  // Helper: Calculate late minutes past threshold
+  function calculateLateMinutes(checkIn: string, threshold: string): number {
+    if (!checkIn || !threshold) return 0;
+    try {
+      let inStr = checkIn.trim();
+      if (inStr.toLowerCase().includes("am") || inStr.toLowerCase().includes("pm")) {
+        const parts = inStr.split(" ");
+        const [hPart, mPart] = parts[0].split(":");
+        let h = Number(hPart);
+        const m = Number(mPart);
+        if (inStr.toLowerCase().includes("pm") && h < 12) h += 12;
+        if (inStr.toLowerCase().includes("am") && h === 12) h = 0;
+        inStr = `${h.toString().padStart(2, "0")}:${m.toString().padStart(2, "0")}`;
+      }
+      
+      const thStr = threshold.trim();
+      const [inH, inM] = inStr.split(":").map(Number);
+      const [tH, tM] = thStr.split(":").map(Number);
+      if (isNaN(inH) || isNaN(inM) || isNaN(tH) || isNaN(tM)) return 0;
+      
+      const inTotal = inH * 60 + inM;
+      const tTotal = tH * 60 + tM;
+      return Math.max(0, inTotal - tTotal);
+    } catch {
+      return 0;
+    }
+  }
+
+  // Helper: Format delay duration past threshold
+  function formatLateDuration(minutes: number, lang: string): string {
+    if (minutes <= 0) return lang === "bn" ? "যথাসময়ে" : "On Time";
+    if (minutes < 60) {
+      return lang === "bn" ? `${minutes} মিনিট বিলম্ব` : `${minutes} mins late`;
+    }
+    const hrs = Math.floor(minutes / 60);
+    const mins = minutes % 60;
+    if (lang === "bn") {
+      return mins > 0 
+        ? `${hrs} ঘণ্টা ${mins} মিনিট বিলম্ব` 
+        : `${hrs} ঘণ্টা বিলম্ব`;
+    }
+    return mins > 0 
+      ? `${hrs} hr ${mins} mins late` 
+      : `${hrs} hr${hrs > 1 ? 's' : ''} late`;
+  }
+
+  // Group attendance records by YYYY-MM-DD date.
+  // We use records in the selected month
+  const uniqueDates = Array.from(new Set(attendance.map(a => {
+    try {
+      return format(new Date(a.date), "yyyy-MM-dd");
+    } catch {
+      return a.date.slice(0, 10);
+    }
+  })))
+  .filter(d => d.startsWith(selectedMonth))
+  .sort((a, b) => b.localeCompare(a));
+
+  // Export CSV for a single specific day
+  const exportDailyDetailedCSV = (dateStr: string) => {
+    const bom = "\uFEFF";
+    let csvContent = "";
+    let fileName = `attendance_detail_${dateStr}.csv`;
+    
+    if (language === "bn") {
+      csvContent = bom + "কর্মচারী,ভূমিকা,উপস্থিতি অবস্থা,প্রবেশ সময়,বিলম্বের সময়,মন্তব্য\n";
+      employees.forEach(emp => {
+        const record = attendance.find(a => a.employeeId === emp.id && a.date.startsWith(dateStr));
+        const statusStr = record ? record.status : "absent";
+        const checkInStr = record ? record.checkIn : "-";
+        const delayMins = record ? calculateLateMinutes(record.checkIn, lateThreshold) : 0;
+        const delayStr = record?.status === "late" || delayMins > 0 ? formatLateDuration(delayMins, "bn") : "যথাসময়ে";
+        
+        csvContent += `"${emp.name}","${emp.role}","${translateValue(statusStr)}","${checkInStr}","${delayStr}","${record?.notes || ""}"\n`;
+      });
+      fileName = `উপস্থিতি_বিস্তারিত_${dateStr}.csv`;
+    } else {
+      csvContent = "Employee,Role,Status,Check In,Late Duration,Notes\n";
+      employees.forEach(emp => {
+        const record = attendance.find(a => a.employeeId === emp.id && a.date.startsWith(dateStr));
+        const statusStr = record ? record.status : "absent";
+        const checkInStr = record ? record.checkIn : "-";
+        const delayMins = record ? calculateLateMinutes(record.checkIn, lateThreshold) : 0;
+        const delayStr = record?.status === "late" || delayMins > 0 ? formatLateDuration(delayMins, "en") : "On Time";
+        
+        csvContent += `"${emp.name}","${emp.role}","${statusStr}","${checkInStr}","${delayStr}","${record?.notes || ""}"\n`;
+      });
+    }
+
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement("a");
+    const url = URL.createObjectURL(blob);
+    link.setAttribute("href", url);
+    link.setAttribute("download", fileName);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  // Export PDF for a single specific day
+  const exportDailyDetailedPDF = (dateStr: string) => {
+    const doc = new jsPDF();
+    const pageWidth = doc.internal.pageSize.getWidth();
+    
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(18);
+    doc.setTextColor(15, 23, 42); // slate-900
+    doc.text(language === "bn" ? "দৈনিক উপস্থিতি বিবরণী" : "DAILY ATTENDANCE DETAIL SHEET", 14, 20);
+    
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(10);
+    doc.setTextColor(100, 116, 139); // slate-500
+    
+    let displayDateText = dateStr;
+    try {
+      displayDateText = format(new Date(dateStr), "EEEE, d MMMM yyyy");
+    } catch {}
+    
+    doc.text(`${language === "bn" ? "রিপোর্ট তারিখ" : "Date of Report"}: ${displayDateText}`, 14, 26);
+    doc.text(`${language === "bn" ? "ডাউনলোড সময়" : "Generated on"}: ${format(new Date(), "yyyy-MM-dd HH:mm:ss")}`, 14, 32);
+    
+    doc.setDrawColor(200);
+    doc.line(14, 35, pageWidth - 14, 35);
+
+    const matchRecs = attendance.filter(a => a.date.startsWith(dateStr));
+    const presentCount = employees.filter(emp => {
+      const rec = matchRecs.find(a => a.employeeId === emp.id);
+      return rec?.status === "present" || rec?.status === "late";
+    }).length;
+    const lateCount = employees.filter(emp => {
+      const rec = matchRecs.find(a => a.employeeId === emp.id);
+      return rec?.status === "late";
+    }).length;
+    const absentCount = employees.filter(emp => {
+      const rec = matchRecs.find(a => a.employeeId === emp.id);
+      return !rec || rec.status === "absent";
+    }).length;
+    const leaveCount = employees.filter(emp => {
+      const rec = matchRecs.find(a => a.employeeId === emp.id);
+      return rec?.status === "leave";
+    }).length;
+
+    doc.setFillColor(248, 250, 252); // slate-50 bg
+    doc.rect(14, 38, pageWidth - 28, 14, "F");
+    doc.setFontSize(9);
+    doc.setTextColor(51, 65, 85);
+    doc.text(
+      language === "bn"
+        ? `মোট কর্মচারী: ${employees.length}  |  উপস্থিত: ${presentCount}  |  বিলম্ব: ${lateCount}  |  অনুপস্থিত: ${absentCount}  |  ছুটি: ${leaveCount}`
+        : `Total Staff Count: ${employees.length}  |  Present: ${presentCount}  |  Late: ${lateCount}  |  Absent: ${absentCount}  |  On Leave: ${leaveCount}`,
+      18,
+      47
+    );
+
+    const tableRows = employees.map(emp => {
+      const record = matchRecs.find(a => a.employeeId === emp.id);
+      const statusVal = record ? record.status : "absent";
+      const checkInTime = record ? record.checkIn : "-";
+      const delayMins = record ? calculateLateMinutes(record.checkIn, lateThreshold) : 0;
+      const delayVal = record?.status === "late" || delayMins > 0 ? formatLateDuration(delayMins, language) : (record?.status === "present" ? (language === "bn" ? "যথাসময়ে" : "On Time") : "-");
+      const lunchVal = record?.lunchOut && record?.lunchIn ? `${record.lunchOut} - ${record.lunchIn}` : "-";
+      
+      return [
+        emp.name,
+        emp.role,
+        translateValue(statusVal).toUpperCase(),
+        checkInTime ? formatTimeTo12Hour(checkInTime) : "-",
+        delayVal,
+        lunchVal,
+        record?.notes || "-"
+      ];
+    });
+
+    autoTable(doc, {
+      startY: 56,
+      head: [
+        language === "bn"
+          ? ["কর্মচারী", "ভূমিকা", "অবস্থা", "প্রবেশ সময়", "বিলম্বের সময়", "লাঞ্চ বিরতি", "মন্তব্য"]
+          : ["Employee", "Role", "Status", "Check In", "Lateness", "Lunch break", "Notes"]
+      ],
+      body: tableRows,
+      theme: "striped",
+      headStyles: { fillColor: [30, 41, 59] }, // Slate-800
+      styles: { fontSize: 8 }
+    });
+
+    doc.save(`Attendance_Detail_Report_${dateStr}.pdf`);
+  };
+
+  // Status configuration mapping for styling
+  const STATUS_CONFIG: Record<string, { label: string; color: string; bg: string; dot: string }> = {
+    present: { label: language === "bn" ? "উপস্থিত" : "Present", color: "text-emerald-600 border-emerald-100", bg: "bg-emerald-50", dot: "bg-emerald-500" },
+    absent: { label: language === "bn" ? "অনুপস্থিত" : "Absent", color: "text-red-600 border-red-100", bg: "bg-red-50", dot: "bg-red-500" },
+    late: { label: language === "bn" ? "বিলম্ব" : "Late", color: "text-amber-600 border-amber-100", bg: "bg-amber-50", dot: "bg-amber-500" },
+    "half-day": { label: language === "bn" ? "হাফ ডে" : "Half Day", color: "text-yellow-600 border-yellow-100", bg: "bg-yellow-50", dot: "bg-yellow-500" },
+    leave: { label: language === "bn" ? "ছুটি" : "On Leave", color: "text-indigo-600 border-indigo-100", bg: "bg-indigo-50", dot: "bg-indigo-500" },
+    holiday: { label: language === "bn" ? "ছুটি দিন" : "Holiday", color: "text-purple-600 border-purple-100", bg: "bg-purple-50", dot: "bg-purple-500" }
+  };
+
+  if (selectedDateDetails) {
+    // RENDER: Daily Detailed View
+    const filteredEmployees = employees.filter(emp => {
+      const queryLower = searchQuery.toLowerCase();
+      return emp.name.toLowerCase().includes(queryLower) || emp.role.toLowerCase().includes(queryLower);
+    });
+
+    const matchRecs = attendance.filter(a => a.date.startsWith(selectedDateDetails));
+
+    const totalStaff = employees.length;
+    const presentCount = employees.filter(emp => {
+      const rec = matchRecs.find(a => a.employeeId === emp.id);
+      return rec?.status === "present" || rec?.status === "late";
+    }).length;
+    const lateCount = employees.filter(emp => {
+      const rec = matchRecs.find(a => a.employeeId === emp.id);
+      return rec?.status === "late";
+    }).length;
+    const absentCount = employees.filter(emp => {
+      const rec = matchRecs.find(a => a.employeeId === emp.id);
+      return !rec || rec.status === "absent";
+    }).length;
+    const leaveCount = employees.filter(emp => {
+      const rec = matchRecs.find(a => a.employeeId === emp.id);
+      return rec?.status === "leave";
+    }).length;
+
+    let prettyDate = selectedDateDetails;
+    try {
+      prettyDate = formatDate(new Date(selectedDateDetails));
+    } catch {}
+
+    return (
+      <div className="space-y-8 animate-in fade-in duration-500">
+        {/* Navigation & Actions */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <button 
+            onClick={() => setSelectedDateDetails(null)} 
+            className="flex items-center gap-2 self-start text-gray-600 hover:text-gray-900 font-black text-xs uppercase tracking-widest px-4 py-2 hover:bg-gray-150 rounded-2xl transition-all border border-transparent"
+          >
+            <ArrowLeft className="w-4 h-4" /> 
+            {language === "bn" ? "তালিকায় ফিরে যান" : "Back to Daily list"}
+          </button>
+          
+          <div className="flex items-center gap-3">
+            <button 
+              onClick={() => exportDailyDetailedCSV(selectedDateDetails)} 
+              className="px-5 py-2.5 bg-gray-100 hover:bg-gray-200 text-gray-800 rounded-2xl text-xs font-black uppercase tracking-wider transition-all shadow-sm flex items-center gap-2 cursor-pointer"
+            >
+              <Download className="w-4 h-4" /> CSV
+            </button>
+            <button 
+              onClick={() => exportDailyDetailedPDF(selectedDateDetails)} 
+              className="px-5 py-2.5 bg-gray-900 hover:bg-gray-800 text-white rounded-2xl text-xs font-black uppercase tracking-wider transition-all shadow-xl flex items-center gap-2 cursor-pointer"
+            >
+              <Printer className="w-4 h-4" /> {language === "bn" ? "পিডিএফ ও প্রিন্ট" : "Print PDF"}
+            </button>
           </div>
         </div>
+
+        {/* Date Title Card */}
+        <div className="relative overflow-hidden bg-gradient-to-br from-slate-900 to-slate-800 text-white rounded-[40px] p-8 md:p-10 shadow-2xl">
+          <div className="absolute right-0 bottom-0 translate-x-12 translate-y-12 opacity-5 shrink-0 select-none">
+            <CalendarDays className="w-96 h-96" />
+          </div>
+          <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-6">
+            <div className="space-y-3">
+              <span className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-blue-500/10 border border-blue-500/20 text-blue-350 text-[10px] font-black uppercase tracking-widest">
+                <span className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-pulse" />
+                {language === "bn" ? "দৈনিক উপস্থিতির হিসাব" : "DAILY RECORD SHEET"}
+              </span>
+              <h3 className="text-3xl md:text-5xl font-black tracking-tighter">{prettyDate}</h3>
+              <p className="text-slate-400 font-medium text-xs italic">
+                {language === "bn" 
+                  ? "উক্ত দিনের চেক-ইন সময় ও ল্যাম্বার্ড (বিলম্ব) রিপোর্ট।" 
+                  : "Check-in punctuality, presence and timing statistics specifically for this date."}
+              </p>
+            </div>
+            
+            {/* Minimal Stat Chips */}
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 bg-white/5 p-4 rounded-3xl border border-white/10 shrink-0 font-mono">
+              <div className="px-5 py-3 text-center border-r border-white/5">
+                <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">{language === "bn" ? "মোট কর্মী" : "Staff"}</p>
+                <p className="text-2xl font-black text-white mt-1">{totalStaff}</p>
+              </div>
+              <div className="px-5 py-3 text-center border-r border-white/5">
+                <p className="text-[10px] text-emerald-400 font-bold uppercase tracking-wider">{language === "bn" ? "উপস্থিত" : "Present"}</p>
+                <p className="text-2xl font-black text-emerald-300 mt-1">{presentCount}</p>
+              </div>
+              <div className="px-5 py-3 text-center border-r border-white/5">
+                <p className="text-[10px] text-amber-400 font-bold uppercase tracking-wider">{language === "bn" ? "বিলম্ব" : "Late"}</p>
+                <p className="text-2xl font-black text-amber-300 mt-1">{lateCount}</p>
+              </div>
+              <div className="px-5 py-3 text-center">
+                <p className="text-[10px] text-red-400 font-bold uppercase tracking-wider">{language === "bn" ? "অনুপস্থিত" : "Absent"}</p>
+                <p className="text-2xl font-black text-red-300 mt-1">{absentCount}</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Filters and List */}
+        <div className="bg-white rounded-[40px] shadow-sm border border-gray-100 overflow-hidden space-y-6 p-8">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div>
+              <h4 className="text-xl font-black text-gray-900">{language === "bn" ? "কর্মচারীদের তালিকা" : "Roster Details"}</h4>
+              <p className="text-gray-400 text-xs italic font-medium mt-0.5">{language === "bn" ? "ঐদিনের সকল কর্মচারীদের উপস্থিতির খতিয়ান বিবরণ।" : "Attendance ledger for all active team members for this workday."}</p>
+            </div>
+            
+            <div className="relative max-w-sm w-full">
+              <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-450" />
+              <input 
+                type="text" 
+                placeholder={language === "bn" ? "খুঁজুন (নাম বা পদবী)..." : "Search staff or role..."}
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full bg-gray-50 border-none rounded-2xl pl-11 pr-5 py-3 text-xs font-bold outline-none focus:ring-2 focus:ring-slate-100 transition-all font-sans"
+              />
+            </div>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse font-sans">
+              <thead>
+                <tr className="bg-gray-50/50">
+                  <th className="px-6 py-5 text-[10px] font-black text-gray-400 uppercase tracking-widest rounded-l-2xl border-b border-gray-50">{language === "bn" ? "কর্মচারী" : "Employee"}</th>
+                  <th className="px-6 py-5 text-[10px] font-black text-gray-400 uppercase tracking-widest border-b border-gray-50">{language === "bn" ? "উপস্থিতি" : "Attendance"}</th>
+                  <th className="px-6 py-5 text-[10px] font-black text-gray-400 uppercase tracking-widest border-b border-gray-50">{language === "bn" ? "প্রবেশ সময়" : "Check-In"}</th>
+                  <th className="px-6 py-5 text-[10px] font-black text-gray-400 uppercase tracking-widest border-b border-gray-50">{language === "bn" ? "বিলম্ব সময়" : "Lateness"}</th>
+                  <th className="px-6 py-5 text-[10px] font-black text-gray-400 uppercase tracking-widest border-b border-gray-50">{language === "bn" ? "লাঞ্চ বিরতি" : "Lunch Break"}</th>
+                  <th className="px-6 py-5 text-[10px] font-black text-gray-400 uppercase tracking-widest rounded-r-2xl border-b border-gray-50">{language === "bn" ? "মন্তব্য" : "Notes"}</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-50">
+                {filteredEmployees.map(emp => {
+                  const rec = matchRecs.find(a => a.employeeId === emp.id);
+                  const statusVal = rec ? rec.status : "absent";
+                  const conf = STATUS_CONFIG[statusVal] || STATUS_CONFIG["absent"];
+                  
+                  const delayMinutes = rec ? calculateLateMinutes(rec.checkIn, lateThreshold) : 0;
+                  const isLateMarked = statusVal === "late" || delayMinutes > 0;
+                  
+                  return (
+                    <tr key={emp.id} className="hover:bg-gray-50/30 transition-all group">
+                      <td className="px-6 py-5">
+                        <div className="flex items-center gap-3.5">
+                          <div className="w-10 h-10 bg-slate-100 rounded-xl flex items-center justify-center font-black text-slate-500 group-hover:bg-blue-600 group-hover:text-white transition-all capitalize shadow-sm">
+                            {emp.name ? emp.name.charAt(0) : "S"}
+                          </div>
+                          <div>
+                            <h5 className="font-black text-gray-900 group-hover:text-blue-900 transition-colors">{emp.name}</h5>
+                            <span className="text-[10px] font-black text-gray-400 uppercase tracking-wider">{emp.role}</span>
+                          </div>
+                        </div>
+                      </td>
+                      <td className="px-6 py-5">
+                        <span className={cn(
+                          "inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-widest border", 
+                          conf.bg, 
+                          conf.color
+                        )}>
+                          <span className={cn("w-1.5 h-1.5 rounded-full animate-bounce", conf.dot)} />
+                          {conf.label}
+                        </span>
+                      </td>
+                      <td className="px-6 py-5 font-mono text-xs font-bold text-gray-800">
+                        {rec?.checkIn ? (
+                          <span className="flex items-center gap-1.5">
+                            <Clock className="w-3.5 h-3.5 text-gray-400 shrink-0" />
+                            {formatTimeTo12Hour(rec.checkIn)}
+                          </span>
+                        ) : (
+                          <span className="text-gray-350 italic">-</span>
+                        )}
+                      </td>
+                      <td className="px-6 py-5 font-mono text-xs">
+                        {statusVal === "absent" || statusVal === "leave" ? (
+                          <span className="text-gray-350 italic">-</span>
+                        ) : isLateMarked ? (
+                          <span className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded-lg bg-red-50 text-red-600 border border-red-100 font-bold">
+                            {formatLateDuration(delayMinutes > 0 ? delayMinutes : 15, language)}
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded-lg bg-emerald-50 text-emerald-600 border border-emerald-100 font-bold">
+                            {language === "bn" ? "যথাসময়ে" : "On Time"}
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-6 py-5 font-mono text-xs text-gray-600">
+                        {rec?.lunchOut && rec?.lunchIn ? (
+                          <span className="font-semibold block">{rec.lunchOut} &rarr; {rec.lunchIn}</span>
+                        ) : (
+                          <span className="text-gray-350 italic">-</span>
+                        )}
+                      </td>
+                      <td className="px-6 py-5 text-xs text-gray-500 font-medium max-w-xs truncate" title={rec?.notes}>
+                        {rec?.notes ? rec.notes : <span className="text-gray-350 italic">-</span>}
+                      </td>
+                    </tr>
+                  );
+                })}
+
+                {filteredEmployees.length === 0 && (
+                  <tr>
+                    <td colSpan={6} className="px-6 py-12 text-center text-gray-450 italic font-medium">
+                      {language === "bn" ? "কোন কর্মচারী খুঁজে পাওয়া যায়নি।" : "No staff members matched your query for this date."}
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // RENDER: Daily ledger and monthly summaries list
+  return (
+    <div className="space-y-8 animate-in slide-in-from-bottom-5 duration-500">
+      {/* Selector and Month Filter */}
+      <div className="bg-white p-8 rounded-[40px] shadow-sm border border-gray-100 flex flex-col md:flex-row items-center justify-between gap-6">
+        <div className="flex flex-col sm:flex-row items-center gap-5">
+          <div className="flex bg-gray-50 p-1.5 rounded-2xl border border-gray-100">
+            <button 
+              onClick={() => setViewMode("daily")}
+              className={cn(
+                "px-5 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all",
+                viewMode === "daily" ? "bg-white text-gray-900 shadow-sm" : "text-gray-400 hover:text-gray-900"
+              )}
+            >
+              {language === "bn" ? "দৈনিক শিট" : "Daily Sheets"}
+            </button>
+            <button 
+              onClick={() => setViewMode("monthly")}
+              className={cn(
+                "px-5 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all",
+                viewMode === "monthly" ? "bg-white text-gray-900 shadow-sm" : "text-gray-400 hover:text-gray-900"
+              )}
+            >
+              {language === "bn" ? "মাসিক সারাংশ" : "Monthly Summaries"}
+            </button>
+          </div>
+          <div>
+            <h3 className="text-2xl font-black text-gray-900">
+              {viewMode === "daily" ? (language === "bn" ? "দৈনিক বিবরণী" : "Daily Attendance sheets") : (language === "bn" ? "মাসিক উপস্থিতি" : "Attendance Analytics")}
+            </h3>
+            <p className="text-gray-400 text-xs italic font-medium mt-0.5">
+              {viewMode === "daily" 
+                ? (language === "bn" ? "পৃথক দিন অনুযায়ী প্রতিটি কর্মচারীর তথ্য দেখতে ক্লিক করুন।" : "Select any specific day to view present, late, and absent details.")
+                : (language === "bn" ? "বেসিক উপস্থিতি পরিসংখ্যান ও পারফর্মেন্স রিপোর্ট।" : "Comprehensive view of staff performance and monthly punctuality metrics.")}
+            </p>
+          </div>
+        </div>
+        
         <input 
           type="month" 
           value={selectedMonth}
           onChange={(e) => setSelectedMonth(e.target.value)}
-          className="px-8 py-4 bg-gray-50 border-none rounded-2xl font-black text-lg focus:ring-2 focus:ring-blue-100"
+          className="px-8 py-4 bg-gray-50 border-none rounded-2xl font-black text-lg focus:ring-2 focus:ring-blue-100 outline-none"
         />
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        {employees.map(emp => {
-          const empRecords = filteredAttendance.filter(a => a.employeeId === emp.id);
-          const present = empRecords.filter(r => r.status === "present").length;
-          const late = empRecords.filter(r => r.status === "late").length;
-          const leave = empRecords.filter(r => r.status === "leave").length;
-          const absent = empRecords.filter(r => r.status === "absent").length;
+      {viewMode === "monthly" ? (
+        // Monthly Roster Renders
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+          {employees.map(emp => {
+            const filteredAttendance = attendance.filter(a => a.date.startsWith(selectedMonth));
+            const empRecords = filteredAttendance.filter(a => a.employeeId === emp.id);
+            const present = empRecords.filter(r => r.status === "present").length;
+            const late = empRecords.filter(r => r.status === "late").length;
+            const leave = empRecords.filter(r => r.status === "leave").length;
+            const absent = empRecords.filter(r => r.status === "absent").length;
 
-          return (
-            <div key={emp.id} className="bg-white p-8 rounded-[40px] shadow-sm border border-gray-100 hover:shadow-xl transition-all group">
-              <div className="flex items-center gap-4 mb-6">
-                <div className="w-14 h-14 bg-gray-100 rounded-2xl flex items-center justify-center font-black text-gray-400 group-hover:bg-blue-600 group-hover:text-white transition-all">
-                  {emp.name.charAt(0)}
+            return (
+              <div key={emp.id} className="bg-white p-8 rounded-[40px] shadow-sm border border-gray-100 hover:shadow-xl transition-all group">
+                <div className="flex items-center gap-4 mb-6">
+                  <div className="w-14 h-14 bg-gray-100 rounded-2xl flex items-center justify-center font-black text-gray-400 group-hover:bg-blue-600 group-hover:text-white transition-all">
+                    {emp.name.charAt(0)}
+                  </div>
+                  <div>
+                    <h4 className="font-black text-gray-900 truncate max-w-[150px]">{emp.name}</h4>
+                    <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest">{emp.role}</p>
+                  </div>
                 </div>
-                <div>
-                  <h4 className="font-black text-gray-900 truncate max-w-[150px]">{emp.name}</h4>
-                  <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest">{emp.role}</p>
+
+                <div className="space-y-3">
+                  <div className="flex justify-between items-center p-3 bg-blue-50 rounded-xl">
+                    <span className="text-xs font-bold text-blue-600">{language === "bn" ? "উপস্থিত" : "Present"}</span>
+                    <span className="font-black text-blue-900">{present}</span>
+                  </div>
+                  <div className="flex justify-between items-center p-3 bg-orange-50 rounded-xl">
+                    <span className="text-xs font-bold text-orange-600">{language === "bn" ? "বিলম্ব" : "Late"}</span>
+                    <span className="font-black text-orange-900">{late}</span>
+                  </div>
+                  <div className="flex justify-between items-center p-3 bg-indigo-50 rounded-xl">
+                    <span className="text-xs font-bold text-indigo-600">{language === "bn" ? "ছুটি" : "Leaves"}</span>
+                    <span className="font-black text-indigo-900">{leave}</span>
+                  </div>
+                  <div className="flex justify-between items-center p-3 bg-red-50 rounded-xl">
+                    <span className="text-xs font-bold text-red-600">{language === "bn" ? "অনুপস্থিত" : "Absent"}</span>
+                    <span className="font-black text-red-900">{absent}</span>
+                  </div>
                 </div>
               </div>
+            );
+          })}
+        </div>
+      ) : (
+        // NEW: Daily Ledger View
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {uniqueDates.map(dateStr => {
+            const records = attendance.filter(a => a.date.startsWith(dateStr));
+            const present = records.filter(a => a.status === "present").length;
+            const late = records.filter(a => a.status === "late").length;
+            const absent = records.filter(a => a.status === "absent").length;
+            const leave = records.filter(a => a.status === "leave").length;
 
-              <div className="space-y-3">
-                <div className="flex justify-between items-center p-3 bg-blue-50 rounded-xl">
-                  <span className="text-xs font-bold text-blue-600">Present</span>
-                  <span className="font-black text-blue-900">{present}</span>
+            let prettyDate = dateStr;
+            try {
+              prettyDate = formatDate(new Date(dateStr));
+            } catch {}
+
+            return (
+              <div 
+                key={dateStr} 
+                className="bg-white rounded-[40px] border border-gray-100 p-8 shadow-sm hover:shadow-xl transition-all flex flex-col justify-between group"
+              >
+                <div className="space-y-4">
+                  <div className="flex items-start justify-between">
+                    <div className="w-12 h-12 bg-blue-50 text-blue-600 rounded-2xl flex items-center justify-center shrink-0">
+                      <CalendarDays className="w-6 h-6" />
+                    </div>
+                    
+                    {/* Compact pill indicators */}
+                    <span className="text-[10px] font-mono font-black tracking-widest text-slate-350 uppercase">
+                      {dateStr}
+                    </span>
+                  </div>
+                  
+                  <div>
+                    <h4 className="text-xl font-black text-slate-900 tracking-tight group-hover:text-blue-900 transition-colors pointer-events-none">
+                      {prettyDate}
+                    </h4>
+                  </div>
+
+                  {/* Summary row */}
+                  <div className="grid grid-cols-4 gap-2 text-center py-3 bg-slate-50/50 rounded-2xl border border-slate-50">
+                    <div>
+                      <p className="text-[9px] text-gray-400 font-bold uppercase">{language === "bn" ? "উপস্থিত" : "Pres"}</p>
+                      <p className="text-xs font-black text-emerald-600 mt-0.5">{present}</p>
+                    </div>
+                    <div>
+                      <p className="text-[9px] text-gray-400 font-bold uppercase">{language === "bn" ? "বিলম্ব" : "Late"}</p>
+                      <p className="text-xs font-black text-amber-600 mt-0.5">{late}</p>
+                    </div>
+                    <div>
+                      <p className="text-[9px] text-gray-400 font-bold uppercase">{language === "bn" ? "ছুটি" : "Leave"}</p>
+                      <p className="text-xs font-black text-indigo-600 mt-0.5">{leave}</p>
+                    </div>
+                    <div>
+                      <p className="text-[9px] text-gray-400 font-bold uppercase">{language === "bn" ? "অনুপস্থিত" : "Abs"}</p>
+                      <p className="text-xs font-black text-red-600 mt-0.5">{absent}</p>
+                    </div>
+                  </div>
                 </div>
-                <div className="flex justify-between items-center p-3 bg-orange-50 rounded-xl">
-                  <span className="text-xs font-bold text-orange-600">Late</span>
-                  <span className="font-black text-orange-900">{late}</span>
-                </div>
-                <div className="flex justify-between items-center p-3 bg-indigo-50 rounded-xl">
-                  <span className="text-xs font-bold text-indigo-600">Leaves</span>
-                  <span className="font-black text-indigo-900">{leave}</span>
-                </div>
-                <div className="flex justify-between items-center p-3 bg-red-50 rounded-xl">
-                  <span className="text-xs font-bold text-red-600">Absent</span>
-                  <span className="font-black text-red-900">{absent}</span>
+
+                <div className="mt-6 pt-5 border-t border-gray-50 flex items-center justify-between">
+                  <span className="text-[10px] font-black uppercase text-slate-400 tracking-widest group-hover:text-blue-600 transition-colors">
+                    {language === "bn" ? "বিস্তারিত দেখুন" : "View Details"}
+                  </span>
+                  <button 
+                    onClick={() => setSelectedDateDetails(dateStr)}
+                    className="w-10 h-10 bg-slate-50 text-slate-500 hover:text-white hover:bg-slate-900 rounded-full flex items-center justify-center transition-all cursor-pointer border border-slate-100"
+                  >
+                    <ChevronRight className="w-4 h-4" />
+                  </button>
                 </div>
               </div>
+            );
+          })}
+
+          {uniqueDates.length === 0 && (
+            <div className="col-span-full bg-white p-16 rounded-[40px] border border-dashed border-gray-200 text-center text-gray-450 italic font-medium">
+              {language === "bn" ? "এ মাসে কোন উপস্থিতির রেকর্ড পাওয়া যায়নি।" : "No attendance logs found for this month range."}
             </div>
-          );
-        })}
-      </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

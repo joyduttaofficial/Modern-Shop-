@@ -8,8 +8,46 @@ export interface User {
 }
 
 // Initialize Supabase Client
-const supabaseUrl = ((import.meta as any).env.VITE_SUPABASE_URL || "").trim();
+const rawUrl = ((import.meta as any).env.VITE_SUPABASE_URL || "").trim();
 const supabaseAnonKey = ((import.meta as any).env.VITE_SUPABASE_ANON_KEY || "").trim();
+
+// Ref extraction helper from JWT key
+const extractRefFromJwt = (token: string): string | null => {
+  try {
+    const parts = token.split('.');
+    if (parts.length !== 3) return null;
+    const base64Url = parts[1];
+    let base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+    const pad = base64.length % 4;
+    if (pad > 0) {
+      base64 += '===='.slice(pad);
+    }
+    const binaryString = typeof window !== 'undefined' 
+      ? window.atob(base64) 
+      : Buffer.from(base64, 'base64').toString('binary');
+    const jsonPayload = decodeURIComponent(
+      binaryString
+        .split('')
+        .map(c => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
+        .join('')
+    );
+    return JSON.parse(jsonPayload).ref || null;
+  } catch (e) {
+    console.error("Ref extraction from JWT payload failed:", e);
+    return null;
+  }
+};
+
+let supabaseUrl = rawUrl;
+if (!supabaseUrl || supabaseUrl === "YOUR_SUPABASE_URL" || (!supabaseUrl.startsWith("http://") && !supabaseUrl.startsWith("https://"))) {
+  // If VITE_SUPABASE_URL is not a valid URL (e.g. is empty, is an API key format, or is an alias),
+  // extract the project ref from VITE_SUPABASE_ANON_KEY to build the correct standard URL.
+  const ref = extractRefFromJwt(supabaseAnonKey);
+  if (ref) {
+    supabaseUrl = `https://${ref}.supabase.co`;
+    console.log(`Dynamically resolved Supabase URL from JWT: ${supabaseUrl}`);
+  }
+}
 
 let supabaseClient = null;
 if (supabaseUrl && supabaseAnonKey && supabaseUrl !== "YOUR_SUPABASE_URL") {
@@ -48,6 +86,74 @@ function saveLocalTable(tableName: string, data: any[]): void {
   } catch (e) {
     console.error("Failed to save local table " + tableName, e);
   }
+}
+
+// Push all existing local storage table data to Supabase remote database upon successful connection
+export async function pushLocalDataToSupabase() {
+  if (!supabase) {
+    console.warn("Cannot sync to Supabase: Supabase is not initialized.");
+    return { success: false, message: "Supabase client not initialized." };
+  }
+  
+  const tablesToSync = [
+    "settings",
+    "categories",
+    "banks",
+    "roles",
+    "users",
+    "departments",
+    "transactions",
+    "employees",
+    "attendance",
+    "purchases",
+    "suppliers",
+    "supplierTransactions"
+  ];
+
+  console.log("Starting master local database synchronization to remote Supabase...");
+  let successCount = 0;
+  let failCount = 0;
+  const errors: string[] = [];
+
+  for (const table of tablesToSync) {
+    try {
+      const localData = getLocalTable(table);
+      if (localData && localData.length > 0) {
+        console.log(`Syncing table '${table}' with ${localData.length} records...`);
+        // Batch upsert into Supabase
+        const { error } = await supabase.from(table).upsert(localData);
+        if (error) {
+          console.warn(`Error syncing table ${table} to Supabase:`, error);
+          failCount++;
+          errors.push(`${table}: ${error.message}`);
+        } else {
+          console.log(`Successfully synced table '${table}' to Supabase!`);
+          successCount++;
+        }
+      }
+    } catch (err: any) {
+      console.warn(`Exception when syncing table ${table} to Supabase:`, err);
+      failCount++;
+      errors.push(`${table}: ${err?.message || err}`);
+    }
+  }
+  
+  console.log("Master local to remote Supabase sync complete.");
+  return {
+    success: failCount === 0,
+    successCount,
+    failCount,
+    errors
+  };
+}
+
+// Automatically trigger master synchronization in background when connected to Supabase
+if (supabaseClient) {
+  setTimeout(() => {
+    pushLocalDataToSupabase().catch(err => {
+      console.warn("Auto-push background sync failed:", err);
+    });
+  }, 1000);
 }
 
 // Memory listener register for reactive onSnapshot calls
@@ -653,8 +759,9 @@ export function onSnapshot(queryOrCol: any, onNext: (snapshot: any) => void, onE
       triggerCallback();
     });
 
+    const subscriptionId = Math.random().toString(36).slice(2, 11);
     const channel = supabase
-      .channel(`rt_${tableName}`)
+      .channel(`rt_${tableName}_${subscriptionId}`)
       .on("postgres_changes", { event: "*", schema: "public", table: tableName }, (payload) => {
         const latestData = getLocalTable(tableName);
         if (payload.eventType === "INSERT") {

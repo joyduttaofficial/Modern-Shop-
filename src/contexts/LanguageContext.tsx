@@ -261,6 +261,14 @@ const dictionary: Record<string, string> = {
   "Record Returns Ledger Book": "পণ্য ফেরতের বিবরণ খতিয়ানে সংরক্ষণ করুন",
 
   // Reports
+  "daily": "দৈনিক খতিয়ান",
+  "attendance": "উপস্থিতি খাতা",
+  "bank": "ব্যাংক স্টেটমেন্ট",
+  "payment": "বেতন ও সাধারণ পেমেন্ট",
+  "supplierPay": "সরবরাহকারী পেমেন্ট",
+  "return": "পণ্য ফেরত খতিয়ান",
+  "purchase": "ক্রয় প্রতিবেদন",
+  "salary": "বেতন খতিয়ান",
   "Analytical Ledger Reports": "বিশ্লেষণাত্মক ব্যবসায়িক খতিয়ান ও বিবরণী",
   "Daily Overview & Statement Preview": "দৈনিক সংক্ষিপ্ত বিবরণ ও প্রতিবেদন প্রিভিউ",
   "Download Daily PDF Summary": "আজকের পিডিএফ প্রতিবেদন নামান (PDF)",

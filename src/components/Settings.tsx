@@ -1,10 +1,10 @@
 import React, { useState, useEffect } from "react";
 import { User } from "firebase/auth";
 import { collection, onSnapshot, addDoc, deleteDoc, doc, updateDoc, query, orderBy, setDoc, getDocs } from "firebase/firestore";
-import { db, OperationType, handleFirestoreError } from "@/src/lib/firebase";
+import { db, OperationType, handleFirestoreError, supabase, pushLocalDataToSupabase } from "@/src/lib/firebase";
 import { Category, Bank, TransactionType, UserRole, UserProfile } from "@/src/types";
 import { cn } from "@/src/lib/utils";
-import { Plus, Trash2, Landmark, Tag, Briefcase, PlusCircle, LayoutGrid, Users, ShieldAlert, Upload } from "lucide-react";
+import { Plus, Trash2, Landmark, Tag, Briefcase, PlusCircle, LayoutGrid, Users, ShieldAlert, Upload, Database, RefreshCw } from "lucide-react";
 import { format } from "date-fns";
 
 export default function Settings({ user, role }: { user: User; role: UserRole }) {
@@ -16,6 +16,40 @@ export default function Settings({ user, role }: { user: User; role: UserRole })
   // Form State
   const [catName, setCatName] = useState("");
   const [isWiping, setIsWiping] = useState(false);
+
+  // Supabase Sync States
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [syncResult, setSyncResult] = useState<{ success: boolean; successCount?: number; failCount?: number; message?: string } | null>(null);
+
+  const handleManualSync = async () => {
+    setIsSyncing(true);
+    setSyncResult(null);
+    try {
+      const res = await pushLocalDataToSupabase();
+      if (res.success) {
+        setSyncResult({
+          success: true,
+          successCount: res.successCount,
+          failCount: res.failCount,
+          message: `Successfully synchronized ${res.successCount} local tables to your remote Supabase database!`
+        });
+      } else {
+        setSyncResult({
+          success: false,
+          successCount: res.successCount,
+          failCount: res.failCount,
+          message: `Sync partially completed but failed for some tables: ${res.errors?.join(", ")}`
+        });
+      }
+    } catch (err: any) {
+      setSyncResult({
+        success: false,
+        message: err?.message || String(err)
+      });
+    } finally {
+      setIsSyncing(false);
+    }
+  };
 
   const handleWipeDatabase = async () => {
     if (role !== "admin") {
@@ -939,6 +973,91 @@ export default function Settings({ user, role }: { user: User; role: UserRole })
                   ))}
                 </tbody>
               </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {role === "admin" && (
+        <div className="space-y-6 animate-in fade-in slide-in-from-bottom duration-300">
+          <h3 className="text-xl font-bold flex items-center gap-2 text-indigo-950 border-t border-gray-100 pt-8">
+            <Database className="w-5 h-5 text-indigo-600" />
+            Supabase Database Server
+          </h3>
+          <div className="bg-white rounded-3xl p-8 border border-gray-100 shadow-sm flex flex-col lg:flex-row items-stretch gap-8">
+            {/* Connection Status Section */}
+            <div className="flex-1 space-y-4">
+              <h4 className="text-xs font-black uppercase tracking-widest text-gray-400">Database Engine Status</h4>
+              <div className="flex flex-col gap-3">
+                <div className="flex items-center gap-3">
+                  {supabase ? (
+                    <span className="flex items-center gap-2 text-xs font-bold text-green-600 bg-green-50 px-3.5 py-1.5 rounded-full border border-green-100">
+                      <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
+                      Supabase Online Connected
+                    </span>
+                  ) : (
+                    <span className="flex items-center gap-2 text-xs font-bold text-amber-600 bg-amber-50 px-3.5 py-1.5 rounded-full border border-amber-100">
+                      <div className="w-2 h-2 rounded-full bg-amber-500" />
+                      Offline Local-First Mode
+                    </span>
+                  )}
+                </div>
+                <div className="text-xs text-gray-500 space-y-2 bg-gray-50/50 p-4 rounded-2xl border border-gray-100/50">
+                  <div className="flex items-center justify-between gap-4">
+                    <span className="font-semibold text-gray-400 text-[10px] uppercase tracking-wider">Platform Target:</span>
+                    <span className="font-mono text-[11px] text-gray-700">Supabase PostgreSQL</span>
+                  </div>
+                  <div className="flex items-center justify-between gap-4 pt-2 border-t border-gray-100/50">
+                    <span className="font-semibold text-gray-400 text-[10px] uppercase tracking-wider">Instance Endpoint:</span>
+                    <span className="font-mono text-[11px] text-indigo-700 select-all truncate max-w-[200px] md:max-w-xs lg:max-w-[240px]">
+                      {supabase ? (supabase as any).supabaseUrl : "Offline Local Replica"}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Sync Trigger Section */}
+            <div className="flex-1 flex flex-col justify-between gap-5 border-t lg:border-t-0 lg:border-l border-gray-100 lg:pt-0 lg:pl-8 pt-5">
+              <div className="space-y-1">
+                <h4 className="text-xs font-black uppercase tracking-widest text-gray-400">Master Data Synchronization</h4>
+                <p className="text-xs text-gray-500 leading-relaxed">
+                  Sync all offline-saved categories, banks, departments, employees, attendance logs, and transactions to matching Supabase schemas. Handled incrementally and safely.
+                </p>
+              </div>
+
+              <div className="space-y-2.5">
+                <button
+                  onClick={handleManualSync}
+                  disabled={isSyncing || !supabase}
+                  className={cn(
+                    "w-full flex items-center justify-center gap-2 px-6 py-3.5 rounded-2xl font-bold text-xs uppercase tracking-wider transition-all shadow-sm active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed",
+                    supabase 
+                      ? "bg-indigo-600 hover:bg-indigo-700 text-white cursor-pointer" 
+                      : "bg-gray-100 text-gray-400 border border-gray-200"
+                  )}
+                >
+                  <RefreshCw className={cn("w-3.5 h-3.5", isSyncing && "animate-spin")} />
+                  {isSyncing ? "Syncing Database Tables..." : "Sync Local Data to Supabase"}
+                </button>
+
+                {syncResult && (
+                  <div className={cn(
+                    "p-4 rounded-2xl text-xs flex flex-col gap-1 border animate-in fade-in duration-150",
+                    syncResult.success 
+                      ? "bg-emerald-50 text-emerald-800 border-emerald-100" 
+                      : "bg-rose-50 text-rose-800 border-rose-100"
+                  )}>
+                    <p className="font-bold">{syncResult.success ? "✓ Sync Succeeded" : "⚠️ Sync Failed"}</p>
+                    <p className="opacity-90 leading-relaxed text-[11px]">{syncResult.message}</p>
+                    {syncResult.successCount !== undefined && (
+                      <p className="text-[9px] uppercase font-bold tracking-widest mt-1 opacity-75">
+                        Tables Synchronized: {syncResult.successCount}
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         </div>

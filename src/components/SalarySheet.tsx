@@ -18,23 +18,15 @@ import {
   Users, 
   CreditCard,
   Search,
-  Filter
+  Filter,
+  FileDown,
+  Download
 } from "lucide-react";
 import { format, startOfMonth, endOfMonth, isWithinInterval, parseISO } from "date-fns";
+import jsPDF from "jspdf";
+import autoTable from "jspdf-autotable";
 
 export default function SalarySheet({ user, role }: { user: User; role: UserRole }) {
-  if (role !== "admin") {
-    return (
-      <div className="bg-white rounded-[32px] border border-gray-100 p-12 shadow-sm text-center max-w-lg mx-auto my-12 animate-in fade-in duration-350">
-        <AlertTriangle className="w-16 h-16 text-rose-500 mx-auto mb-5" />
-        <h2 className="text-2xl font-black text-slate-900 tracking-tight mb-2">Access Denied</h2>
-        <p className="text-slate-500 font-medium text-sm leading-relaxed">
-          Only administrators can view the monthly employee salary ledgers and payroll sheets.
-        </p>
-      </div>
-    );
-  }
-
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [banks, setBanks] = useState<Bank[]>([]);
@@ -189,6 +181,204 @@ export default function SalarySheet({ user, role }: { user: User; role: UserRole
     return list;
   };
 
+  const exportToPDF = () => {
+    const doc = new jsPDF("p", "mm", "a4");
+    
+    // Header Banner
+    doc.setFillColor(15, 23, 42); // slate-900 bg
+    doc.rect(0, 0, 210, 38, "F");
+    
+    // Title
+    doc.setTextColor(255, 255, 255);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(18);
+    doc.text("MONTHLY PAYROLL RECONCILIATION", 15, 16);
+    
+    // Subtext info
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9);
+    doc.setTextColor(156, 163, 175); // gray-400
+    doc.text(`Billing Period: ${monthLabelStr}`, 15, 23);
+    doc.text(`Generated On: ${format(new Date(), "dd MMM yyyy, hh:mm a")}`, 15, 28);
+    
+    // Accent Line
+    doc.setFillColor(14, 165, 233); // sky-500 line
+    doc.rect(0, 38, 210, 2, "F");
+    
+    // Summary Cards (Title)
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(10);
+    doc.setTextColor(75, 85, 99); // gray-600
+    doc.text("PAYROLL METRICS SUMMARY", 15, 49);
+    
+    const kpis = [
+      { label: "Active Staff", value: `${activeStaff.length} Employees` },
+      { label: "Base Payroll", value: role === "admin" ? `BDT ${totalBasePayroll.toLocaleString()}` : "***" },
+      { label: "Paid Salaries", value: role === "admin" ? `BDT ${totalPaidSalary.toLocaleString()}` : "***" },
+      { label: "Net Cash Outflow", value: role === "admin" ? `BDT ${netDisbursement.toLocaleString()}` : "***" }
+    ];
+    
+    let kpiX = 15;
+    kpis.forEach((kpi) => {
+      // Box
+      doc.setFillColor(249, 250, 251); // Gray-50
+      doc.setDrawColor(229, 231, 235); // Gray-200
+      doc.rect(kpiX, 53, 42, 20, "FD");
+      
+      // Top orange accent for box
+      doc.setFillColor(51, 65, 85);
+      doc.rect(kpiX, 53, 42, 1, "F");
+      
+      // Label
+      doc.setTextColor(107, 114, 128); // gray-500
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(7);
+      doc.text(kpi.label.toUpperCase(), kpiX + 3, 59);
+      
+      // Value
+      doc.setTextColor(15, 23, 42); // slate-900
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(9);
+      doc.text(kpi.value, kpiX + 3, 67);
+      
+      kpiX += 45;
+    });
+
+    // Employee List Table
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(10);
+    doc.setTextColor(75, 85, 99);
+    doc.text("STAFF BALANCES & STATS", 15, 82);
+    
+    const tableData = filteredEmployeeBalances.map((emp) => [
+      emp.name,
+      emp.role + (emp.department ? ` (${emp.department})` : ""),
+      role === "admin" ? `BDT ${emp.salary.toLocaleString()}` : "***",
+      `BDT ${emp.salaryPaid.toLocaleString()}`,
+      `BDT ${emp.advanceGiven.toLocaleString()}`,
+      emp.status.toUpperCase()
+    ]);
+    
+    autoTable(doc, {
+      startY: 85,
+      head: [["Employee Name", "Role / Department", "Basic Salary", "Paid to Date", "Advance Given", "Status"]],
+      body: tableData,
+      theme: "striped",
+      headStyles: {
+        fillColor: [15, 23, 42],
+        textColor: [255, 255, 255],
+        fontSize: 8.5,
+        fontStyle: "bold",
+        halign: "left"
+      },
+      bodyStyles: {
+        fontSize: 8,
+        halign: "left",
+        textColor: [55, 65, 81]
+      },
+      columnStyles: {
+        2: { halign: "right", fontStyle: "bold" },
+        3: { halign: "right", fontStyle: "bold" },
+        4: { halign: "right", fontStyle: "bold" },
+        5: { halign: "center", fontStyle: "bold" }
+      },
+      styles: {
+        font: "helvetica",
+        cellPadding: 3.5
+      }
+    });
+    
+    // Ledger List (next section)
+    const nextY = (doc as any).lastAutoTable.finalY + 12;
+    if (nextY > 200) {
+      doc.addPage();
+      drawLedgerSection(doc, 20);
+    } else {
+      drawLedgerSection(doc, nextY);
+    }
+    
+    function drawLedgerSection(pdfDoc: jsPDF, yCoord: number) {
+      pdfDoc.setFont("helvetica", "bold");
+      pdfDoc.setFontSize(10);
+      pdfDoc.setTextColor(75, 85, 99);
+      pdfDoc.text("RECENT PAYROLL LEDGER TRANSACTION JOURNAL", 15, yCoord);
+      
+      const ledgerData = monthTransactions
+        .sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+        .map((tx) => [
+          format(parseISO(tx.date), "dd MMM yyyy"),
+          tx.subCategory,
+          tx.category === "Staff Salary" ? "Salary Payment" : "Advance Disbursement",
+          tx.paymentMethod,
+          `BDT ${tx.amount.toLocaleString()}`,
+          tx.notes || "-"
+        ]);
+        
+      autoTable(pdfDoc, {
+        startY: yCoord + 4,
+        head: [["Date", "Employee Target", "Category", "Payment Method", "Amount Paid", "Reference Notes"]],
+        body: ledgerData,
+        theme: "striped",
+        headStyles: {
+          fillColor: [71, 85, 105], // Slate gray
+          textColor: [255, 255, 255],
+          fontSize: 8,
+          fontStyle: "bold",
+          halign: "left"
+        },
+        bodyStyles: {
+          fontSize: 7.5,
+          halign: "left",
+          textColor: [75, 85, 99]
+        },
+        columnStyles: {
+          4: { halign: "right", fontStyle: "bold" }
+        },
+        styles: {
+          font: "helvetica",
+          cellPadding: 3
+        }
+      });
+      
+      const lastY = (pdfDoc as any).lastAutoTable.finalY + 12;
+      if (lastY < 280) {
+        pdfDoc.setFontSize(7.5);
+        pdfDoc.setTextColor(156, 163, 175);
+        pdfDoc.setFont("helvetica", "italic");
+        pdfDoc.text("Generated via Smart Payroll Management Ledger Client. Standard audit trails preserved.", 15, lastY);
+      }
+    }
+    
+    doc.save(`Salary_Sheet_${selectedMonth}.pdf`);
+  };
+
+  const exportToCSV = () => {
+    // CSV headers
+    const headers = ["Employee Name", "Role", "Department", "Basic Salary (BDT)", "Paid Amount (BDT)", "Advance Paid (BDT)", "Reconciliation Status"];
+    
+    // Create rows
+    const rows = filteredEmployeeBalances.map((emp) => [
+      `"${emp.name.replace(/"/g, '""')}"`,
+      `"${(emp.role || "").replace(/"/g, '""')}"`,
+      `"${(emp.department || "").replace(/"/g, '""')}"`,
+      role === "admin" ? emp.salary : "***",
+      emp.salaryPaid,
+      emp.advanceGiven,
+      emp.status.toUpperCase()
+    ]);
+    
+    const csvContent = "data:text/csv;charset=utf-8," 
+      + [headers.join(","), ...rows.map(e => e.join(","))].join("\n");
+      
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement("a");
+    link.setAttribute("href", encodedUri);
+    link.setAttribute("download", `Salary_Sheet_${selectedMonth}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
   if (loading) {
     return <div className="py-20 text-center text-gray-400 font-medium">Drafting payroll analysis...</div>;
   }
@@ -201,20 +391,43 @@ export default function SalarySheet({ user, role }: { user: User; role: UserRole
           <h2 className="text-3xl font-black tracking-tight mb-2 text-gray-950">Salary Sheet</h2>
           <p className="text-gray-500 font-medium italic">Track employee payouts, monthly breakdowns, and due reconciliations.</p>
         </div>
-        <div className="flex flex-wrap items-center gap-4 bg-white p-2.5 rounded-[24px] shadow-sm border border-gray-100">
-          <div className="flex items-center gap-2 px-3 text-gray-400">
-            <Filter className="w-4 h-4 text-gray-400" />
-            <span className="text-xs font-bold uppercase tracking-wider text-gray-400">Month:</span>
+        <div className="flex flex-wrap items-center gap-3">
+          {/* Month Selector */}
+          <div className="flex items-center gap-4 bg-white p-2.5 rounded-[24px] shadow-sm border border-gray-100">
+            <div className="flex items-center gap-2 px-3 text-gray-400">
+              <Filter className="w-4 h-4 text-gray-400" />
+              <span className="text-xs font-bold uppercase tracking-wider text-gray-400">Month:</span>
+            </div>
+            <select
+              value={selectedMonth}
+              onChange={e => setSelectedMonth(e.target.value)}
+              className="pr-8 pl-1 py-1.5 bg-transparent border-none focus:ring-0 font-bold text-gray-900 outline-none cursor-pointer"
+            >
+              {generateMonthsDropdown().map(m => (
+                <option key={m.value} value={m.value}>{m.label}</option>
+              ))}
+            </select>
           </div>
-          <select
-            value={selectedMonth}
-            onChange={e => setSelectedMonth(e.target.value)}
-            className="pr-8 pl-1 py-1.5 bg-transparent border-none focus:ring-0 font-bold text-gray-900 outline-none cursor-pointer"
-          >
-            {generateMonthsDropdown().map(m => (
-              <option key={m.value} value={m.value}>{m.label}</option>
-            ))}
-          </select>
+
+          {/* Export Options */}
+          <div className="flex items-center gap-2 bg-white p-2 rounded-[24px] shadow-sm border border-gray-100">
+            <button
+              onClick={exportToPDF}
+              className="flex items-center gap-1.5 px-4 py-2 bg-slate-900 text-white hover:bg-slate-800 rounded-[16px] text-xs font-bold transition-all cursor-pointer shadow-sm"
+              title="Download detailed payroll PDF report"
+            >
+              <FileDown className="w-3.5 h-3.5" />
+              <span>PDF</span>
+            </button>
+            <button
+              onClick={exportToCSV}
+              className="flex items-center gap-1.5 px-4 py-2 bg-slate-50 hover:bg-slate-100 text-slate-800 rounded-[16px] text-xs font-bold transition-all cursor-pointer border border-slate-200"
+              title="Export reconciliations to spreadsheet (CSV)"
+            >
+              <Download className="w-3.5 h-3.5" />
+              <span>CSV</span>
+            </button>
+          </div>
         </div>
       </header>
 
@@ -227,7 +440,9 @@ export default function SalarySheet({ user, role }: { user: User; role: UserRole
           </div>
           <div>
             <p className="text-[10px] uppercase font-bold tracking-widest text-gray-400 leading-none mb-1">Base Payroll</p>
-            <h3 className="text-xl font-bold text-gray-900 font-mono tracking-tight">{formatCurrency(totalBasePayroll)}</h3>
+            <h3 className="text-xl font-bold text-gray-900 font-mono tracking-tight">
+              {role === "admin" ? formatCurrency(totalBasePayroll) : "***"}
+            </h3>
             <span className="text-[9px] text-gray-400 font-semibold">{activeStaff.length} active employees</span>
           </div>
         </div>
@@ -239,7 +454,9 @@ export default function SalarySheet({ user, role }: { user: User; role: UserRole
           </div>
           <div>
             <p className="text-[10px] uppercase font-bold tracking-widest text-gray-400 leading-none mb-1">Paid Salaries</p>
-            <h3 className="text-xl font-bold text-emerald-600 font-mono tracking-tight">{formatCurrency(totalPaidSalary)}</h3>
+            <h3 className="text-xl font-bold text-emerald-600 font-mono tracking-tight">
+              {role === "admin" ? formatCurrency(totalPaidSalary) : "***"}
+            </h3>
             <span className="text-[9px] text-[#2D7BBF] font-semibold">{monthTransactions.filter(t=>t.category==="Staff Salary").length} payments made</span>
           </div>
         </div>
@@ -251,7 +468,9 @@ export default function SalarySheet({ user, role }: { user: User; role: UserRole
           </div>
           <div>
             <p className="text-[10px] uppercase font-bold tracking-widest text-gray-400 leading-none mb-1">Disbursed Advances</p>
-            <h3 className="text-xl font-bold text-orange-600 font-mono tracking-tight">{formatCurrency(totalDisbursedAdvance)}</h3>
+            <h3 className="text-xl font-bold text-orange-600 font-mono tracking-tight">
+              {role === "admin" ? formatCurrency(totalDisbursedAdvance) : "***"}
+            </h3>
             <span className="text-[9px] text-gray-400 font-semibold">To address quick fund shortages</span>
           </div>
         </div>
@@ -263,7 +482,9 @@ export default function SalarySheet({ user, role }: { user: User; role: UserRole
           </div>
           <div>
             <p className="text-[10px] uppercase font-bold tracking-widest text-gray-400 leading-none mb-1">Net Cash Expense</p>
-            <h3 className="text-xl font-bold text-white font-mono tracking-tight">{formatCurrency(netDisbursement)}</h3>
+            <h3 className="text-xl font-bold text-white font-mono tracking-tight">
+              {role === "admin" ? formatCurrency(netDisbursement) : "***"}
+            </h3>
             <span className="text-[9px] text-gray-400 font-medium">Both Salary & Advances in {monthLabelStr}</span>
           </div>
         </div>
@@ -324,7 +545,9 @@ export default function SalarySheet({ user, role }: { user: User; role: UserRole
                         </div>
                       </td>
                       <td className="px-6 py-4">
-                        <span className="font-mono font-bold text-gray-900 text-sm">{formatCurrency(emp.salary)}</span>
+                        <span className="font-mono font-bold text-gray-900 text-sm">
+                          {role === "admin" ? formatCurrency(emp.salary) : "***"}
+                        </span>
                       </td>
                       <td className="px-6 py-4">
                         <span className="font-mono font-bold text-emerald-600 text-sm">{formatCurrency(emp.salaryPaid)}</span>

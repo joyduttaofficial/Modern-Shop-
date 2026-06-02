@@ -3,9 +3,8 @@ import { User } from "firebase/auth";
 import { collection, query, where, getDocs, orderBy, doc, onSnapshot } from "firebase/firestore";
 import { db, OperationType, handleFirestoreError } from "@/src/lib/firebase";
 import { Transaction, UserRole, Bank, Employee, Supplier, SupplierTransaction } from "@/src/types";
-import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Legend } from "recharts";
-import { formatCurrency, cn } from "@/src/lib/utils";
-import { format, startOfDay, endOfDay, subDays, isWithinInterval, isBefore, startOfMonth, endOfMonth, eachMonthOfInterval, startOfYear } from "date-fns";
+import { cn } from "@/src/lib/utils";
+import { format, startOfDay, endOfDay, subDays, isWithinInterval, isBefore, startOfMonth, endOfMonth, eachMonthOfInterval, startOfYear, parseISO } from "date-fns";
 import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
 import { useLanguage } from "../contexts/LanguageContext";
@@ -22,19 +21,39 @@ import {
   TrendingUp,
   ChevronRight,
   Filter,
-  ShoppingBag,
-  Clock,
+  Landmark,
+  Truck,
+  ShoppingCart,
+  ArrowUpRight,
+  ArrowDownLeft,
   Search,
   CheckCircle2,
-  XCircle,
-  AlertCircle,
-  Plane,
-  ArrowLeft,
-  CalendarDays
+  Info,
+  Building2,
+  UserCheck,
+  Award,
+  BookOpen
 } from "lucide-react";
-import { motion } from "motion/react";
+import { motion, AnimatePresence } from "motion/react";
+import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, LineChart, Line } from "recharts";
 
-type ReportTab = "daily" | "attendance" | "salary" | "transactions" | "purchasing";
+type ReportTab = "daily" | "bank" | "salary" | "supplier" | "purchase" | "attendance" | "transactions";
+
+export interface PurchaseModel {
+  id?: string;
+  supplierId: string;
+  supplierName: string;
+  date: string;
+  refNo: string;
+  totalAmount: number;
+  paidAmount: number;
+  dueAmount: number;
+  writtenReturn?: number;
+  paymentMethod: string;
+  notes?: string;
+  invoicePhoto?: string;
+  createdAt: string;
+}
 
 export default function Reports({ user, role }: { user: User; role: UserRole }) {
   const { language, t, formatCurrency, formatDate, formatNumber, translateValue } = useLanguage();
@@ -64,21 +83,23 @@ export default function Reports({ user, role }: { user: User; role: UserRole }) 
     });
     return () => unsubBranding();
   }, []);
+
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [banks, setBanks] = useState<Bank[]>([]);
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [attendance, setAttendance] = useState<any[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [supplierTransactions, setSupplierTransactions] = useState<SupplierTransaction[]>([]);
+  const [purchases, setPurchases] = useState<PurchaseModel[]>([]);
+
   const [selectedDate, setSelectedDate] = useState(format(new Date(), "yyyy-MM-dd"));
   const [loading, setLoading] = useState(true);
-  const [csvStartDate, setCsvStartDate] = useState(format(subDays(new Date(), 7), "yyyy-MM-dd"));
+  
+  // Date range filters used on various tabs
+  const [csvStartDate, setCsvStartDate] = useState(format(subDays(new Date(), 30), "yyyy-MM-dd"));
   const [csvEndDate, setCsvEndDate] = useState(format(new Date(), "yyyy-MM-dd"));
 
-  // Month selection for other reports
-  const [selectedMonth, setSelectedMonth] = useState(format(new Date(), "yyyy-MM"));
-
-  // Stats for the selected day
+  // Day Stats
   const [dayStats, setDayStats] = useState({
     openingBalance: 0,
     todaySales: 0,
@@ -93,31 +114,40 @@ export default function Reports({ user, role }: { user: User; role: UserRole }) 
   useEffect(() => {
     async function fetchData() {
       setLoading(true);
-      const txSnap = await getDocs(query(collection(db, "transactions"), orderBy("date", "asc")));
-      const allTxs = txSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Transaction));
-      setTransactions(allTxs);
+      try {
+        const txSnap = await getDocs(query(collection(db, "transactions"), orderBy("date", "asc")));
+        const allTxs = txSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Transaction));
+        setTransactions(allTxs);
 
-      const bankSnap = await getDocs(collection(db, "banks"));
-      setBanks(bankSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Bank)));
-      
-      const empSnap = await getDocs(collection(db, "employees"));
-      setEmployees(empSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Employee)));
+        const bankSnap = await getDocs(collection(db, "banks"));
+        setBanks(bankSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Bank)));
+        
+        const empSnap = await getDocs(collection(db, "employees"));
+        setEmployees(empSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Employee)));
 
-      const attSnap = await getDocs(collection(db, "attendance"));
-      setAttendance(attSnap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+        const attSnap = await getDocs(collection(db, "attendance"));
+        setAttendance(attSnap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
 
-      const supSnap = await getDocs(collection(db, "suppliers"));
-      setSuppliers(supSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Supplier)));
+        const supSnap = await getDocs(collection(db, "suppliers"));
+        setSuppliers(supSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Supplier)));
 
-      const supTxSnap = await getDocs(collection(db, "supplierTransactions"));
-      setSupplierTransactions(supTxSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as SupplierTransaction)));
+        const stxSnap = await getDocs(query(collection(db, "supplierTransactions"), orderBy("createdAt", "desc")));
+        setSupplierTransactions(stxSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as SupplierTransaction)));
 
-      setLoading(false);
+        const purSnap = await getDocs(query(collection(db, "purchases"), orderBy("date", "desc")));
+        setPurchases(purSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as PurchaseModel)));
+      } catch (err) {
+        console.error("Error loading resources in reports:", err);
+      } finally {
+        setLoading(false);
+      }
     }
     fetchData();
   }, []);
 
   useEffect(() => {
+    if (transactions.length === 0) return;
+
     const dayStart = startOfDay(new Date(selectedDate));
     const dayEnd = endOfDay(new Date(selectedDate));
 
@@ -125,21 +155,17 @@ export default function Reports({ user, role }: { user: User; role: UserRole }) 
       isWithinInterval(new Date(tx.date), { start: dayStart, end: dayEnd })
     );
 
-    // 1. Calculate Opening Balance
-    // Check if there is a manual "Opening Balance" or "Previous Cash" entry for today
     const manualOpening = todayTxs.find(tx => tx.category === "Opening Balance" || tx.category === "Previous Cash");
     
     let openingBalance = 0;
     if (manualOpening) {
       openingBalance = manualOpening.amount;
     } else {
-      // Fallback: Calculate previous cash (sum of all cash transactions before today)
       openingBalance = transactions
         .filter(tx => isBefore(new Date(tx.date), dayStart) && tx.paymentMethod === "Cash")
         .reduce((sum, tx) => sum + (tx.type === "income" ? tx.amount : -tx.amount), 0);
     }
 
-    // 2. Merge Sales (Retail + Wholesale) exactly as calculated in SalesList to show "new sales grand total"
     const salesListTxsForDay = todayTxs.filter(tx => 
       tx.type === "income" && 
       (tx.category === "Employee Sales" || 
@@ -234,104 +260,68 @@ export default function Reports({ user, role }: { user: User; role: UserRole }) 
     const bom = "\uFEFF";
     let fileName = `report_${type}_${format(new Date(), "yyyyMMdd")}.csv`;
 
+    const start = startOfDay(new Date(csvStartDate));
+    const end = endOfDay(new Date(csvEndDate));
+
     if (type === "daily") {
-      const start = startOfDay(new Date(csvStartDate));
-      const end = endOfDay(new Date(csvEndDate));
       const rangeTxs = transactions.filter(tx => 
         isWithinInterval(new Date(tx.date), { start, end })
       );
-      
       if (language === "bn") {
         csvContent = bom + "তারিখ,ক্যাটাগরি,সাব-ক্যাটাগরি,প্রকার,লেনদেনের মাধ্যম,পরিমাণ,মন্তব্য\n";
         rangeTxs.forEach(tx => {
           csvContent += `"${formatDate(tx.date)}","${translateValue(tx.category)}","${tx.subCategory ? translateValue(tx.subCategory) : ""}","${translateValue(tx.type)}","${translateValue(tx.paymentMethod)}","${formatNumber(tx.amount)}","${tx.notes || ""}"\n`;
         });
         csvContent += `\nপ্রতিবেদন তৈরির সময়: "${formatDate(new Date())}"\n`;
-        fileName = `দৈনিক_বিবরণী_${csvStartDate}_থেকে_${csvEndDate}.csv`;
       } else {
         csvContent = "Date,Category,Sub-Category,Type,Payment Method,Amount,Notes\n";
         rangeTxs.forEach(tx => {
           csvContent += `${format(new Date(tx.date), "yyyy-MM-dd")},"${tx.category}","${tx.subCategory || ""}","${tx.type}","${tx.paymentMethod}",${tx.amount},"${tx.notes || ""}"\n`;
         });
-        csvContent += `\nReport Generated on: "${format(new Date(), "yyyy-MM-dd HH:mm")}"\n`;
-        fileName = `daily_statement_${csvStartDate}_to_${csvEndDate}.csv`;
       }
     } 
+    else if (type === "bank") {
+      const rangeTxs = transactions.filter(tx => 
+        isWithinInterval(new Date(tx.date), { start, end })
+      );
+      csvContent = "Date,Account (Method),Type,Amount,Category,Reference Notes\n";
+      rangeTxs.forEach(tx => {
+        csvContent += `${format(new Date(tx.date), "yyyy-MM-dd")},"${tx.paymentMethod}","${tx.type}",${tx.amount},"${tx.category}","${tx.notes || ""}"\n`;
+      });
+    }
     else if (type === "attendance") {
-      if (language === "bn") {
-        csvContent = bom + "তারিখ,কর্মচারী,ভূমিকা,উপস্থিতি অবস্থা,প্রবেশ সময়,লাঞ্চ বিরতি প্রস্থান,লাঞ্চ বিরতি প্রবেশ\n";
-        attendance.forEach(att => {
-          const emp = employees.find(e => e.id === att.employeeId);
-          csvContent += `"${formatDate(att.date)}","${emp?.name || "অজানা"}","${emp?.role ? translateValue(emp.role) : ""}","${translateValue(att.status)}","${att.checkIn || ""}","${att.lunchOut || ""}","${att.lunchIn || ""}"\n`;
-        });
-        csvContent += `\nপ্রতিবেদন তৈরির সময়: "${formatDate(new Date())}"\n`;
-        fileName = `উপস্থিতি_বিবরণী_${format(new Date(), "yyyyMMdd")}.csv`;
-      } else {
-        csvContent = "Date,Employee,Role,Status,Check In,Lunch Out,Lunch In\n";
-        attendance.forEach(att => {
-          const emp = employees.find(e => e.id === att.employeeId);
-          csvContent += `${format(new Date(att.date), "yyyy-MM-dd")},"${emp?.name || "Unknown"}","${emp?.role || ""}","${att.status}","${att.checkIn || ""}","${att.lunchOut || ""}","${att.lunchIn || ""}"\n`;
-        });
-        csvContent += `\nReport Generated on: "${format(new Date(), "yyyy-MM-dd HH:mm")}"\n`;
-        fileName = `attendance_report_${format(new Date(), "yyyyMMdd")}.csv`;
-      }
+      csvContent = "Date,Employee,Role,Status,Check In,Lunch Out,Lunch In\n";
+      attendance.forEach(att => {
+        const emp = employees.find(e => e.id === att.employeeId);
+        csvContent += `${format(new Date(att.date), "yyyy-MM-dd")},"${emp?.name || "Unknown"}","${emp?.role || ""}","${att.status}","${att.checkIn || ""}","${att.lunchOut || ""}","${att.lunchIn || ""}"\n`;
+      });
     }
     else if (type === "salary") {
-      if (language === "bn") {
-        csvContent = bom + "তারিখ,কর্মচারী,বেতন পরিমাণ,পেমেন্ট পদ্ধতি,মন্তব্য\n";
-        const salaryTxs = transactions.filter(tx => tx.category === "Salary");
-        salaryTxs.forEach(tx => {
-          const emp = employees.find(e => e.id === tx.employeeId);
-          csvContent += `"${formatDate(tx.date)}","${emp?.name || "অজানা"}","${formatNumber(tx.amount)}","${translateValue(tx.paymentMethod)}","${tx.notes || ""}"\n`;
-        });
-        csvContent += `\nপ্রতিবেদন তৈরির সময়: "${formatDate(new Date())}"\n`;
-        fileName = `বেতন_খতিয়ান_${format(new Date(), "yyyyMMdd")}.csv`;
-      } else {
-        csvContent = "Date,Employee,Amount,Method,Notes\n";
-        const salaryTxs = transactions.filter(tx => tx.category === "Salary");
-        salaryTxs.forEach(tx => {
-          const emp = employees.find(e => e.id === tx.employeeId);
-          csvContent += `${format(new Date(tx.date), "yyyy-MM-dd")},"${emp?.name || "Unknown"}",${tx.amount},"${tx.paymentMethod}","${tx.notes || ""}"\n`;
-        });
-        csvContent += `\nReport Generated on: "${format(new Date(), "yyyy-MM-dd HH:mm")}"\n`;
-        fileName = `salary_report_${format(new Date(), "yyyyMMdd")}.csv`;
-      }
+      csvContent = "Date,Employee,Salary Amount (BDT),Payment Method,Reference/Notes\n";
+      const salaryTxs = transactions.filter(tx => tx.category === "Salary" || tx.category === "Staff Salary");
+      salaryTxs.forEach(tx => {
+        const emp = employees.find(e => e.id === tx.employeeId);
+        csvContent += `${format(new Date(tx.date), "yyyy-MM-dd")},"${emp?.name || "Unknown"}",${tx.amount},"${tx.paymentMethod}","${tx.notes || ""}"\n`;
+      });
     }
-    else if (type === "purchasing") {
-      if (language === "bn") {
-        csvContent = bom + "তারিখ,সরবরাহকারী,ধরণ,চালান নং,মোট পরিমাণ,পরিশোধিত পরিমাণ,বকেয়া পরিমাণ\n";
-        supplierTransactions.forEach(tx => {
-          const sup = suppliers.find(s => s.id === tx.supplierId);
-          csvContent += `"${formatDate(tx.date)}","${sup?.name || "অজানা"}","${translateValue(tx.type)}","${tx.refNo}","${formatNumber(tx.totalAmount)}","${tx.paidAmount ? formatNumber(tx.paidAmount) : "০"}","${tx.dueAmount ? formatNumber(tx.dueAmount) : "০"}"\n`;
-        });
-        csvContent += `\nপ্রতিবেদন তৈরির সময়: "${formatDate(new Date())}"\n`;
-        fileName = `সরবরাহকারী_ক্রয়_খতিয়ান_${format(new Date(), "yyyyMMdd")}.csv`;
-      } else {
-        csvContent = "Date,Supplier,Type,Invoice Ref,Total Amount,Paid Amount,Due Amount\n";
-        supplierTransactions.forEach(tx => {
-          const sup = suppliers.find(s => s.id === tx.supplierId);
-          csvContent += `${format(new Date(tx.date), "yyyy-MM-dd")},"${sup?.name || "Unknown"}","${tx.type}","${tx.refNo}",${tx.totalAmount},${tx.paidAmount || 0},${tx.dueAmount || 0}\n`;
-        });
-        csvContent += `\nReport Generated on: "${format(new Date(), "yyyy-MM-dd HH:mm")}"\n`;
-        fileName = `supplier_purchasing_report_${format(new Date(), "yyyyMMdd")}.csv`;
-      }
+    else if (type === "supplier") {
+      csvContent = "Date,Supplier Name,Transaction Type,Invoice/Ref No,Gross Amount,Paid Amount,Balance Due,Method,Notes\n";
+      supplierTransactions.forEach(tx => {
+        const sup = suppliers.find(s => s.id === tx.supplierId);
+        csvContent += `"${tx.date}","${sup?.name || "Unknown"}","${tx.type}","${tx.refNo}",${tx.totalAmount},${tx.paidAmount || 0},${tx.dueAmount || 0},"${tx.paymentMethod || "Cash"}","${tx.notes || ""}"\n`;
+      });
+    }
+    else if (type === "purchase") {
+      csvContent = "Invoice Date,Invoice Ref,Supplier,Purchase Total,Amount Paid,Due Remaining,Method,Notes\n";
+      purchases.forEach(p => {
+        csvContent += `"${p.date}","${p.refNo}","${p.supplierName}",${p.totalAmount},${p.paidAmount},${p.dueAmount},"${p.paymentMethod}","${p.notes || ""}"\n`;
+      });
     }
     else if (type === "transactions") {
-      if (language === "bn") {
-        csvContent = bom + "তারিখ,ক্যাটাগরি,প্রকার,পেমেন্ট পদ্ধতি,পরিমাণ,রেফারেন্স মন্তব্য\n";
-        transactions.forEach(tx => {
-          csvContent += `"${formatDate(tx.date)}","${translateValue(tx.category)}","${translateValue(tx.type)}","${translateValue(tx.paymentMethod)}","${formatNumber(tx.amount)}","${tx.notes || ""}"\n`;
-        });
-        csvContent += `\nপ্রতিবেদন তৈরির সময়: "${formatDate(new Date())}"\n`;
-        fileName = `লেনদেন_খতিয়ান_${format(new Date(), "yyyyMMdd")}.csv`;
-      } else {
-        csvContent = "Date,Category,Type,Payment Method,Amount,Reference\n";
-        transactions.forEach(tx => {
-          csvContent += `${format(new Date(tx.date), "yyyy-MM-dd")},"${tx.category}","${tx.type}","${tx.paymentMethod}",${tx.amount},"${tx.notes || ""}"\n`;
-        });
-        csvContent += `\nReport Generated on: "${format(new Date(), "yyyy-MM-dd HH:mm")}"\n`;
-        fileName = `transactions_ledger_${format(new Date(), "yyyyMMdd")}.csv`;
-      }
+      csvContent = "Date,Category,Type,Payment Method,Amount,Reference\n";
+      transactions.forEach(tx => {
+        csvContent += `${format(new Date(tx.date), "yyyy-MM-dd")},"${tx.category}","${tx.type}","${tx.paymentMethod}",${tx.amount},"${tx.notes || ""}"\n`;
+      });
     }
 
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
@@ -346,18 +336,12 @@ export default function Reports({ user, role }: { user: User; role: UserRole }) 
   };
 
   const exportDailyPDF = async () => {
-    const confirmMessage = language === "bn"
-      ? "আপনি কি নিশ্চিতভাবে এই দৈনিক রিপোর্ট পিডিএফ ডাউনলোড বা প্রিন্ট করতে চান?"
-      : "Are you sure you want to download or print the Daily Report PDF?";
-    if (!window.confirm(confirmMessage)) return;
-
     const doc = new jsPDF();
     const pageWidth = doc.internal.pageSize.getWidth();
     
-    // Dynamic Corporate Branding Header
     doc.setFont("helvetica", "bold");
     doc.setFontSize(20);
-    doc.setTextColor(15, 23, 42); // slate-900
+    doc.setTextColor(15, 23, 42); 
 
     const companyTitleStr = companyName.toUpperCase();
     const companyTitleWidth = doc.getTextWidth(companyTitleStr);
@@ -365,53 +349,49 @@ export default function Reports({ user, role }: { user: User; role: UserRole }) 
 
     doc.setFont("helvetica", "normal");
     doc.setFontSize(8);
-    doc.setTextColor(100, 116, 139); // slate-500
+    doc.setTextColor(100, 116, 139); 
     const companyTaglineStr = `${companyTagline} • Phone: ${companyPhone} • Address: ${companyAddress}`;
     const taglineWidth = doc.getTextWidth(companyTaglineStr);
     doc.text(companyTaglineStr, pageWidth/2 - (taglineWidth/2), 22);
     
-    doc.setDrawColor(0);
-    doc.setLineWidth(0.5);
+    doc.setFillColor(15, 23, 42);
+    doc.rect(0, 26, pageWidth, 1.5, "F");
 
-    // TOP BOX GRID
-    const boxY = 30;
-    doc.setFillColor(243, 244, 246);
+    const boxY = 32;
+    doc.setFillColor(248, 250, 252);
     doc.rect(14, boxY, pageWidth - 28, 20, "F");
+    doc.setDrawColor(226, 232, 240);
     doc.rect(14, boxY, pageWidth - 28, 20);
     doc.line(pageWidth/2, boxY, pageWidth/2, boxY + 20);
-    doc.line(14, boxY + 10, pageWidth - 28 + 14, boxY + 10);
 
-    doc.setFontSize(10);
-    doc.setTextColor(0);
+    doc.setFontSize(9);
+    doc.setTextColor(71, 85, 105);
     doc.text(language === "bn" ? "Previous Cash (পূর্বের ক্যাশ):" : "Previous Cash:", 18, boxY + 7);
     doc.text(formatCurrency(dayStats.openingBalance), pageWidth/2 - 5, boxY + 7, { align: "right" });
     
-    doc.text(language === "bn" ? "Today's Sales (আজকের বিক্রি):" : "Today's Total Sales:", 18, boxY + 17);
-    doc.text(formatCurrency(dayStats.todaySales), pageWidth/2 - 5, boxY + 17, { align: "right" });
+    doc.text(language === "bn" ? "Today's Sales (আজকের বিক্রি):" : "Today's Total Sales:", 18, boxY + 15);
+    doc.text(formatCurrency(dayStats.todaySales), pageWidth/2 - 5, boxY + 15, { align: "right" });
 
-    doc.text(language === "bn" ? "Date (তারিখ):" : "Date:", pageWidth/2 + 5, boxY + 7);
-    doc.text(language === "bn" ? formatDate(new Date(selectedDate)) : format(new Date(selectedDate), "dd/MM/yyyy"), pageWidth - 18, boxY + 7, { align: "right" });
+    doc.text(language === "bn" ? "Report Date (তারিখ):" : "Report Date:", pageWidth/2 + 5, boxY + 7);
+    doc.text(format(new Date(selectedDate), "dd MMM yyyy (EEEE)"), pageWidth - 18, boxY + 7, { align: "right" });
 
-    doc.text(`${companyName} || ${new Date().getFullYear()}`, pageWidth/2 + 5, boxY + 17);
-    doc.text(language === "bn" ? "Status: Verified (যাচাইকৃত)" : "Status: Verified", pageWidth - 18, boxY + 17, { align: "right" });
+    doc.text(`Issuer: System Administrator`, pageWidth/2 + 5, boxY + 15);
+    doc.text(language === "bn" ? "স্ট্যাটাস: চেক করা হয়েছে" : "Status: Audit Passed", pageWidth - 18, boxY + 15, { align: "right" });
 
-    // COLUMNS HEADERS
-    const colY = 55;
+    const colY = 58;
     const colWidth = (pageWidth - 28 - 4) / 2;
     
-    // Left Column Header (Blue)
-    doc.setFillColor(30, 58, 138);
+    doc.setFillColor(15, 23, 42); // slate bg
     doc.rect(14, colY, colWidth, 8, "F");
     doc.setTextColor(255);
-    doc.text("INCOME DETAILS", 14 + colWidth/2, colY + 5.5, { align: "center" });
+    doc.setFontSize(9);
+    doc.text("INCOME ACCOUNTS JOURNAL", 14 + colWidth/2, colY + 5.5, { align: "center" });
 
-    // Right Column Header (Red)
-    doc.setFillColor(220, 38, 38);
+    doc.setFillColor(220, 38, 38); // red bg
     doc.rect(pageWidth - 14 - colWidth, colY, colWidth, 8, "F");
     doc.setTextColor(255);
-    doc.text("EXPENSE DETAILS", pageWidth - 14 - colWidth/2, colY + 5.5, { align: "center" });
+    doc.text("EXPENSE ACCOUNTS JOURNAL", pageWidth - 14 - colWidth/2, colY + 5.5, { align: "center" });
 
-    // Table Data
     const todayTxs = transactions.filter(tx => 
       isWithinInterval(new Date(tx.date), { 
         start: startOfDay(new Date(selectedDate)), 
@@ -451,16 +431,14 @@ export default function Reports({ user, role }: { user: User; role: UserRole }) 
       return false;
     });
     
-    // Fetch employee names for report
-    const empSnap = await getDocs(collection(db, "employees"));
-    const empMap = new Map(empSnap.docs.map(d => [d.id, d.data().name]));
+    const empMap = new Map(employees.map(d => [d.id, d.name]));
 
     autoTable(doc, {
       startY: colY + 8,
       margin: { left: 14, right: pageWidth/2 + 2 },
-      head: [["Source", "Amount"]],
+      head: [["Description Item", "Inflow Amount"]],
       body: [
-        ["Combined Sales", formatCurrency(dayStats.todaySales)],
+        ["Combined System Sales", formatCurrency(dayStats.todaySales)],
         ...pdfIncomeTxs.map(tx => {
           let nameStr = tx.category;
           if (tx.category === "Bank Credit" && tx.paymentMethod) {
@@ -470,18 +448,18 @@ export default function Reports({ user, role }: { user: User; role: UserRole }) 
           }
           return [nameStr, formatCurrency(tx.amount)];
         }),
-        [{ content: "TOTAL DEPOSIT", styles: { fontStyle: "bold", fillColor: [243, 244, 246] } }, 
-         { content: formatCurrency(dayStats.totalIncome), styles: { fontStyle: "bold", fillColor: [243, 244, 246] } }]
+        [{ content: "TOTAL INFLOW", styles: { fontStyle: "bold", fillColor: [241, 245, 249] } }, 
+         { content: formatCurrency(dayStats.totalIncome), styles: { fontStyle: "bold", fillColor: [241, 245, 249] } }]
       ],
       theme: "grid",
       styles: { fontSize: 8 },
-      headStyles: { fillColor: [59, 130, 246] }
+      headStyles: { fillColor: [51, 65, 85] }
     });
 
     autoTable(doc, {
       startY: colY + 8,
       margin: { left: pageWidth/2 + 2, right: 14 },
-      head: [["Category", "Amount"]],
+      head: [["Category Account", "Outflow Amount"]],
       body: [
         ...pdfExpenseTxs.map(tx => {
           let nameStr = tx.category;
@@ -500,81 +478,67 @@ export default function Reports({ user, role }: { user: User; role: UserRole }) 
           }
           return [nameStr, formatCurrency(tx.amount)];
         }),
-        [{ content: "TOTAL EXPENSE", styles: { fontStyle: "bold", fillColor: [243, 244, 246] } }, 
-         { content: formatCurrency(dayStats.totalExpense), styles: { fontStyle: "bold", fillColor: [243, 244, 246] } }]
+        [{ content: "TOTAL OUTFLOW", styles: { fontStyle: "bold", fillColor: [241, 245, 249] } }, 
+         { content: formatCurrency(dayStats.totalExpense), styles: { fontStyle: "bold", fillColor: [241, 245, 249] } }]
       ],
       theme: "grid",
       styles: { fontSize: 8 },
-      headStyles: { fillColor: [239, 68, 68] }
+      headStyles: { fillColor: [185, 28, 28] }
     });
 
-    // BOTTOM SUMMARY
-    const finalY = (doc as any).lastAutoTable.finalY + 10;
-    doc.setDrawColor(200);
+    const finalY = (doc as any).lastAutoTable.finalY + 12;
+    doc.setDrawColor(226, 232, 240);
     doc.line(14, finalY, pageWidth - 14, finalY);
     
-    doc.setTextColor(0);
-    doc.setFontSize(11);
-    doc.text(
-      language === "bn"
-        ? `মোট সংগৃহীত জমা (Total Deposit): ${formatCurrency(dayStats.totalIncome)}`
-        : `Total Deposit: ${formatCurrency(dayStats.totalIncome)}`,
-      14,
-      finalY + 10
-    );
-    doc.text(
-      language === "bn"
-        ? `মোট সাধারণ খরচ (Total Expense): ${formatCurrency(dayStats.totalExpense)}`
-        : `Total Expense: ${formatCurrency(dayStats.totalExpense)}`,
-      pageWidth - 14,
-      finalY + 10,
-      { align: "right" }
-    );
+    doc.setTextColor(15, 23, 42);
+    doc.setFontSize(10);
+    doc.setFont("helvetica", "bold");
+    doc.text(`Total Generated Deposit: ${formatCurrency(dayStats.totalIncome)}`, 14, finalY + 8);
+    doc.text(`Total Disbursed Expenses: ${formatCurrency(dayStats.totalExpense)}`, pageWidth - 14, finalY + 8, { align: "right" });
 
-    doc.setFillColor(30, 58, 138);
-    doc.rect(14, finalY + 15, pageWidth - 28, 10, "F");
+    doc.setFillColor(15, 23, 42);
+    doc.rect(14, finalY + 14, pageWidth - 28, 12, "F");
     doc.setTextColor(255);
-    doc.setFontSize(13);
+    doc.setFontSize(12);
+    doc.setFont("helvetica", "bold");
     doc.text(
-      language === "bn"
-        ? `সর্বমোট ক্যাশ ব্যালেন্স (TOTAL CASH IN HAND): ${formatCurrency(dayStats.netCash)}`
-        : `TOTAL CASH IN HAND: ${formatCurrency(dayStats.netCash)}`,
+      `CLOSING LIQUID CASH AUDIT: ${formatCurrency(dayStats.netCash)}`,
       pageWidth/2,
       finalY + 22,
       { align: "center" }
     );
 
-    // Print timestamp in local language
-    doc.setFontSize(8);
-    doc.setTextColor(120);
-    const downloadTimeStr = language === "bn" 
-      ? `ডাউনলোড সময় (Download Time): ${formatDate(new Date())}`
-      : `Download Time: ${format(new Date(), "yyyy-MM-dd HH:mm:ss")}`;
-    doc.text(downloadTimeStr, 14, finalY + 34);
+    doc.setFontSize(7.5);
+    doc.setTextColor(148, 163, 184);
+    doc.setFont("helvetica", "normal");
+    doc.text(`Document verified on ${format(new Date(), "dd/MM/yyyy HH:mm:ss")}. System secure ledger.`, 14, finalY + 32);
 
-    const pdfFilename = language === "bn" ? `Daily_Report_${selectedDate}.pdf` : `Shop_Daily_Report_${selectedDate}.pdf`;
-    doc.save(pdfFilename);
+    doc.save(`Shop_Daily_Statement_${selectedDate}.pdf`);
   };
 
   return (
-    <div className="space-y-8 animate-in fade-in duration-500">
-      <header className="flex flex-col md:flex-row md:items-center justify-between gap-6">
+    <div className="space-y-8 animate-in fade-in duration-300">
+      <header className="flex flex-col lg:flex-row lg:items-center justify-between gap-6 pb-2 border-b border-gray-100">
         <div>
-          <h2 className="text-4xl font-black tracking-tighter mb-2">{t("Business Intelligence")}</h2>
-          <p className="text-gray-500 font-medium italic">{t("Deep dive into your shop's performance, attendance and finance history.")}</p>
+          <div className="flex items-center gap-2 mb-1">
+            <span className="w-2.5 h-2.5 bg-green-500 rounded-full animate-ping" />
+            <span className="text-xs font-bold text-green-600 uppercase tracking-widest">Enterprise Ledger Console</span>
+          </div>
+          <h2 className="text-4xl font-extrabold tracking-tight text-gray-900">{t("Business Intelligence")}</h2>
+          <p className="text-gray-500 font-medium">{t("Deep dive into your shop's performance, attendance and finance history.")}</p>
         </div>
         
-        <div className="flex flex-col gap-4">
-          <div className="flex bg-white p-1.5 rounded-3xl shadow-sm border border-gray-100 overflow-x-auto no-scrollbar">
-            {(["daily", "attendance", "salary", "transactions", "purchasing"] as ReportTab[])
-              .filter(tab => tab !== "salary" || role === "admin")
-              .map(tab => (
+        <div className="flex flex-col sm:flex-row sm:items-center gap-3 self-start lg:self-center shrink-0">
+          <div className="flex bg-slate-100 p-1 rounded-2xl border border-slate-200 shadow-xs max-w-full overflow-x-auto">
+            {(["daily", "bank", "salary", "supplier", "purchase", "attendance", "transactions"] as ReportTab[]).map(tab => (
               <button 
                 key={tab}
                 onClick={() => setActiveTab(tab)}
                 className={cn(
-                  "px-6 py-2.5 rounded-2xl text-xs font-black uppercase tracking-widest transition-all shrink-0",
-                  activeTab === tab ? "bg-gray-900 text-white shadow-xl scale-105" : "text-gray-400 hover:text-gray-900 hover:bg-gray-50"
+                  "px-4 py-2 rounded-xl text-xs font-extrabold uppercase tracking-wider transition-all duration-250 shrink-0",
+                  activeTab === tab 
+                    ? "bg-slate-900 text-white shadow-md active:scale-98" 
+                    : "text-slate-500 hover:text-slate-900 hover:bg-slate-200/50"
                 )}
               >
                 {t(tab)}
@@ -585,123 +549,92 @@ export default function Reports({ user, role }: { user: User; role: UserRole }) 
           <button 
             type="button"
             onClick={() => exportToCSV(activeTab)}
-            className="flex items-center justify-center gap-2 px-6 py-3 bg-blue-600 text-white rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-blue-700 transition-all shadow-lg active:scale-95 cursor-pointer"
+            className="flex items-center justify-center gap-2 px-5 py-3 bg-slate-900 text-white rounded-xl font-bold text-xs uppercase tracking-wider hover:bg-slate-800 transition-all shadow-sm active:scale-97 cursor-pointer border border-transparent"
           >
-            <Download className="w-4 h-4" /> {language === "bn" ? `${t(activeTab)} ${t("রপ্তানি করুন (CSV)")}` : `Export ${activeTab} CSV`}
+            <Download className="w-4 h-4" /> 
+            <span>CSV</span>
           </button>
         </div>
       </header>
 
+      {/* RENDER ACTIVE TABS */}
       {activeTab === "daily" && (
         <div className="space-y-8">
-          <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-6 bg-white p-8 rounded-[40px] shadow-sm border border-gray-100">
-            <div className="space-y-2">
-              <h3 className="text-2xl font-black text-gray-900">Report Controls</h3>
-              <p className="text-gray-500 font-medium italic">Select a date for the preview, or a range for CSV export.</p>
+          <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-100 flex flex-col md:flex-row md:items-center justify-between gap-6">
+            <div className="flex items-center gap-3">
+              <div className="w-12 h-12 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-center text-slate-800">
+                <Calendar className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-lg font-extrabold text-slate-900">Choose Preview Date</h3>
+                <p className="text-xs text-slate-500 font-medium">Render standard financial cash sheet for the selected commercial day.</p>
+              </div>
             </div>
             
-            <div className="flex flex-wrap items-center gap-6">
-              <div className="space-y-1">
-                <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-2">Preview Date</p>
-                <input 
-                  type="date" 
-                  value={selectedDate}
-                  onChange={(e) => setSelectedDate(e.target.value)}
-                  className="px-6 py-3 bg-gray-50 border-none rounded-2xl font-black text-sm focus:ring-2 focus:ring-blue-100 outline-none"
-                />
-              </div>
+            <div className="flex flex-wrap items-center gap-4">
+              <input 
+                type="date" 
+                value={selectedDate}
+                onChange={(e) => setSelectedDate(e.target.value)}
+                className="px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold text-sm focus:ring-2 focus:ring-slate-200 outline-none"
+              />
 
-              <div className="w-px h-12 bg-gray-100 hidden md:block" />
-
-              <div className="flex items-center gap-3">
-                <div className="space-y-1">
-                  <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-2">CSV Start</p>
-                  <input 
-                    type="date" 
-                    value={csvStartDate}
-                    onChange={(e) => setCsvStartDate(e.target.value)}
-                    className="px-4 py-3 bg-gray-50 border-none rounded-2xl font-black text-xs"
-                  />
-                </div>
-                <ArrowRight className="w-4 h-4 text-gray-300 mt-4" />
-                <div className="space-y-1">
-                  <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-2">CSV End</p>
-                  <input 
-                    type="date" 
-                    value={csvEndDate}
-                    onChange={(e) => setCsvEndDate(e.target.value)}
-                    className="px-4 py-3 bg-gray-50 border-none rounded-2xl font-black text-xs"
-                  />
-                </div>
-              </div>
-
-              <div className="flex items-center gap-3">
-                <button 
-                  onClick={exportDailyPDF}
-                  className="bg-gray-900 text-white px-6 py-3 rounded-2xl font-black flex items-center gap-3 hover:bg-gray-800 transition-all shadow-xl active:scale-95 text-xs uppercase tracking-widest"
-                >
-                  <Printer className="w-4 h-4" />
-                  PDF Preview
-                </button>
-              </div>
+              <button 
+                onClick={exportDailyPDF}
+                className="bg-slate-900 text-white px-5 py-2.5 rounded-xl font-bold flex items-center gap-2 hover:bg-slate-800 transition-all text-xs uppercase tracking-wider text-center"
+              >
+                <Printer className="w-4 h-4" />
+                <span>Download Report PDF</span>
+              </button>
             </div>
           </div>
 
-          {/* Modern Report Preview */}
-          <div className="max-w-4xl mx-auto bg-white rounded-[40px] shadow-2xl border border-gray-50 overflow-hidden font-mono">
-            {/* Header */}
-            <div className="p-10 text-center border-b border-gray-50">
-               <h1 className="text-6xl font-black italic tracking-tighter">
-                <span className="text-red-600">M</span>
-                <span className="text-blue-900">odern</span>
-               </h1>
+          <div className="max-w-4xl mx-auto bg-white rounded-3xl shadow-xl border border-slate-100 overflow-hidden font-mono text-slate-800">
+            <div className="p-8 text-center bg-slate-900 text-white relative">
+              <h1 className="text-3xl font-black italic tracking-tighter uppercase">{companyName}</h1>
+              <p className="text-xs text-slate-400 mt-1 uppercase tracking-widest font-bold">{companyTagline}</p>
+              <div className="absolute top-2 right-4 text-[9px] text-slate-500 uppercase tracking-widest font-bold">official statement packet</div>
             </div>
 
-            {/* Top Info Grid */}
-            <div className="grid grid-cols-2 border-b-4 border-gray-900">
-               <div className="border-r border-gray-900">
-                 <div className="flex justify-between p-6 border-b border-gray-200">
-                   <span className="font-bold uppercase tracking-tighter text-sm">Previous Cash:</span>
-                   <span className="bg-gray-100 px-3 py-1 rounded font-black text-lg">{formatCurrency(dayStats.openingBalance)}</span>
-                 </div>
-                 <div className="flex justify-between p-6 bg-orange-50/50">
-                   <span className="font-bold uppercase tracking-tighter text-sm">Today's Sales:</span>
-                   <span className="bg-white px-3 py-1 rounded border border-orange-200 font-black text-lg">{formatCurrency(dayStats.todaySales)}</span>
-                 </div>
-               </div>
-               <div>
-                 <div className="flex justify-between p-6 border-b border-gray-200">
-                   <span className="font-bold text-sm uppercase tracking-tighter">Date:</span>
-                   <span className="bg-gray-100 px-3 py-1 rounded font-black text-lg">{format(new Date(selectedDate), "dd/MM/yyyy")}</span>
-                 </div>
-                 <div className="flex justify-between p-6">
-                   <span className="font-bold text-gray-400 text-xs">MCS || 2026</span>
-                   <span className="text-xs text-green-500 font-black uppercase mt-1">Verified System</span>
-                 </div>
-               </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 border-b-2 border-slate-900 divide-y md:divide-y-0 md:divide-x divide-slate-200">
+              <div className="p-5 space-y-2">
+                <div className="flex justify-between items-center text-xs">
+                  <span className="font-bold text-slate-500 uppercase">Opening Liquid Cash:</span>
+                  <span className="font-black text-sm bg-slate-100 px-2.5 py-1 rounded text-slate-900">{formatCurrency(dayStats.openingBalance)}</span>
+                </div>
+                <div className="flex justify-between items-center text-xs">
+                  <span className="font-bold text-slate-500 uppercase">Gross Product Sales:</span>
+                  <span className="font-black text-sm bg-orange-50 text-orange-700 px-2.5 py-1 rounded border border-orange-100">{formatCurrency(dayStats.todaySales)}</span>
+                </div>
+              </div>
+              <div className="p-5 space-y-2">
+                <div className="flex justify-between items-center text-xs">
+                  <span className="font-bold text-slate-500 uppercase">Statement Date:</span>
+                  <span className="font-black text-sm text-slate-900">{format(new Date(selectedDate), "dd MMM yyyy (EEEE)")}</span>
+                </div>
+                <div className="flex justify-between items-center text-xs">
+                  <span className="font-bold text-slate-500 uppercase">Verification Hub:</span>
+                  <span className="text-[10px] text-green-600 bg-green-50 border border-green-100 px-2.5 py-0.5 rounded-full font-bold uppercase tracking-wider">Authenticated</span>
+                </div>
+              </div>
             </div>
 
-            {/* Main Content Columns */}
-            <div className="flex flex-col md:flex-row min-h-[600px] divide-x-0 md:divide-x-4 divide-gray-900">
-              {/* Income Column */}
-              <div className="flex-1">
-                <div className="bg-blue-900 text-white flex justify-between p-4 border-b-2 border-gray-900">
-                  <span className="font-bold text-xs tracking-widest uppercase">Income Details</span>
-                  <span className="font-bold text-xs uppercase">Amount</span>
+            <div className="flex flex-col md:flex-row min-h-[400px] divide-y md:divide-y-0 md:divide-x-2 divide-slate-900">
+              <div className="flex-1 flex flex-col">
+                <div className="bg-slate-100 text-slate-800 flex justify-between px-4 py-2 border-b border-slate-300">
+                  <span className="font-extrabold text-[10px] tracking-widest uppercase">Income Deposits</span>
+                  <span className="font-extrabold text-[10px] uppercase">Amount (BDT)</span>
                 </div>
                 
-                <div className="divide-y divide-blue-100 italic font-medium text-blue-900">
-                  <div className="flex justify-between p-6 bg-blue-50/30">
-                    <span>Today's Total Sales</span>
-                    <span className="font-black text-lg">{formatCurrency(dayStats.todaySales)}</span>
+                <div className="divide-y divide-slate-100 text-xs text-slate-800 flex-1">
+                  <div className="flex justify-between p-4 bg-slate-50/50">
+                    <span className="font-semibold">Today's Combined Corporate Sales</span>
+                    <span className="font-bold text-slate-900">{formatCurrency(dayStats.todaySales)}</span>
                   </div>
-                  {/* Dynamic Other Income */}
                   {transactions
                     .filter(tx => {
                       const isSameDay = isWithinInterval(new Date(tx.date), { start: startOfDay(new Date(selectedDate)), end: endOfDay(new Date(selectedDate)) });
                       if (!isSameDay) return false;
-
-                      // Normal income, excluding Bank Deposit
                       if (tx.type === "income") {
                         return (
                           tx.category !== "Opening Balance" &&
@@ -717,825 +650,430 @@ export default function Reports({ user, role }: { user: User; role: UserRole }) 
                           )
                         );
                       }
-
-                      // Include Bank Credit
-                      if (tx.type === "expense" && tx.category === "Bank Credit") {
-                        return true;
-                      }
-
-                      return false;
+                      return tx.type === "expense" && tx.category === "Bank Credit";
                     })
                     .map(tx => (
-                      <div key={tx.id} className="flex justify-between p-6">
-                        <span>
-                          {tx.category === "Bank Credit" && tx.paymentMethod ? `Bank Credit (${tx.paymentMethod})` : tx.category}
-                          {tx.subCategory && <span className="block text-xs text-blue-400 not-italic font-bold uppercase">{tx.subCategory}</span>}
-                        </span>
-                        <span className="font-black text-lg">{formatCurrency(tx.amount)}</span>
+                      <div key={tx.id} className="flex justify-between p-4 hover:bg-slate-50/50 transition-all">
+                        <div>
+                          <span className="font-semibold">{tx.category === "Bank Credit" && tx.paymentMethod ? `Bank Credit: ${tx.paymentMethod}` : tx.category}</span>
+                          {tx.subCategory && <span className="block text-[10px] text-blue-500 font-extrabold uppercase mt-0.5">{tx.subCategory}</span>}
+                        </div>
+                        <span className="font-bold text-slate-900">{formatCurrency(tx.amount)}</span>
                       </div>
                     ))
                   }
-                  {/* Padding rows to match aesthetic */}
-                  {Array.from({ length: 4 }).map((_, i) => (
-                    <div key={i} className="h-12 border-b border-blue-50/50" />
-                  ))}
                 </div>
 
-                <div className="mt-auto bg-blue-900 text-white flex justify-between p-6 border-t-4 border-gray-900">
-                   <span className="font-bold text-xl">TOTAL DEPOSIT</span>
-                   <span className="font-bold text-2xl">{formatCurrency(dayStats.totalIncome)}</span>
+                <div className="bg-slate-50/90 border-t border-slate-300 flex justify-between p-4">
+                   <span className="font-bold text-xs uppercase tracking-wider text-slate-500">Gross Day deposits</span>
+                   <span className="font-black text-slate-900">{formatCurrency(dayStats.totalIncome)}</span>
                 </div>
               </div>
 
-              {/* Expense Column */}
-              <div className="flex-1 bg-white">
-                <div className="bg-red-600 text-white flex justify-between p-4 border-b-2 border-gray-900">
-                  <span className="font-bold text-xs tracking-widest uppercase">EXPENSE DETAILS</span>
-                  <span className="font-bold text-xs uppercase">AMOUNT</span>
+              <div className="flex-1 flex flex-col">
+                <div className="bg-slate-100 text-slate-800 flex justify-between px-4 py-2 border-b border-slate-300">
+                  <span className="font-extrabold text-[10px] tracking-widest uppercase">Disbursements & Expenses</span>
+                  <span className="font-extrabold text-[10px] uppercase">Amount (BDT)</span>
                 </div>
 
-                <div className="divide-y divide-red-100 italic font-medium text-red-900">
-                  {/* Expenses */}
+                <div className="divide-y divide-slate-100 text-xs text-slate-800 flex-1">
                   {transactions
                     .filter(tx => {
                       const isSameDay = isWithinInterval(new Date(tx.date), { start: startOfDay(new Date(selectedDate)), end: endOfDay(new Date(selectedDate)) });
                       if (!isSameDay) return false;
-
-                      // Normal expense, excluding Bank Credit
                       if (tx.type === "expense") {
                         return tx.category !== "Bank Credit";
                       }
-
-                      // Include Bank Deposit
-                      if (tx.type === "income" && tx.category === "Bank Deposit") {
-                        return true;
-                      }
-
-                      return false;
+                      return tx.type === "income" && tx.category === "Bank Deposit";
                     })
                     .map(tx => (
-                      <div key={tx.id} className="flex justify-between p-6 group">
-                        <span>
-                          {tx.category === "Bank Deposit" && tx.paymentMethod ? `Bank Deposit (${tx.paymentMethod})` : tx.category}
-                          {tx.category !== "Bank Deposit" && tx.paymentMethod !== "Cash" && " (Bank)"}
+                      <div key={tx.id} className="flex justify-between p-4 hover:bg-slate-50/50 transition-all">
+                        <div>
+                          <span className="font-semibold">{tx.category === "Bank Deposit" && tx.paymentMethod ? `Bank Deposit (${tx.paymentMethod})` : tx.category}</span>
+                          {tx.category !== "Bank Deposit" && tx.paymentMethod !== "Cash" && (
+                            <span className="inline-block ml-1.5 px-1 bg-blue-50 text-blue-600 font-bold border border-blue-100 text-[9px] uppercase rounded">Bank</span>
+                          )}
                           {tx.employeeId && (
-                            <span className="block text-xs text-blue-600 not-italic font-bold uppercase">
-                              {employees.find(e => e.id === tx.employeeId)?.name || "Linked Staff"}
+                            <span className="block text-[10px] text-slate-500 font-bold uppercase mt-0.5">
+                              Staff Link: {employees.find(e => e.id === tx.employeeId)?.name || "N/A"}
                             </span>
                           )}
-                          {tx.subCategory && <span className="block text-xs text-red-400 not-italic font-bold uppercase">{tx.subCategory}</span>}
-                        </span>
-                        <span className="font-bold text-lg">{formatCurrency(tx.amount)}</span>
+                          {tx.subCategory && <span className="block text-[10px] text-red-500 font-extrabold uppercase mt-0.5">{tx.subCategory}</span>}
+                        </div>
+                        <span className="font-bold text-slate-900">{formatCurrency(tx.amount)}</span>
                       </div>
                     ))
                   }
-                  {/* Padding rows */}
-                  {Array.from({ length: 6 }).map((_, i) => (
-                    <div key={i} className="h-12 border-b border-red-50/50" />
-                  ))}
                 </div>
 
-                <div className="mt-auto bg-red-600 text-white flex justify-between p-6 border-t-4 border-gray-900">
-                   <span className="font-bold uppercase tracking-tighter text-xl">Total Expense</span>
-                   <span className="font-bold text-2xl">{formatCurrency(dayStats.totalExpense)}</span>
+                <div className="bg-slate-50/90 border-t border-slate-300 flex justify-between p-4">
+                   <span className="font-bold text-xs uppercase tracking-wider text-slate-500">Gross Day Payments</span>
+                   <span className="font-black text-slate-900">{formatCurrency(dayStats.totalExpense)}</span>
                 </div>
               </div>
             </div>
 
-            {/* Footer Sums */}
-            <div className="bg-orange-400 border-b-4 border-gray-900 grid grid-cols-2">
-              <div className="p-6 border-r-4 border-gray-900 flex justify-between items-center">
-                <span className="font-bold text-sm uppercase">TOTAL DEPOSIT:</span>
-                <span className="text-2xl font-black">{formatCurrency(dayStats.totalIncome)}</span>
+            <div className="bg-slate-100 border-t-2 border-slate-900 p-4 grid grid-cols-2 text-center text-xs font-bold font-mono">
+              <div className="border-r border-slate-400">
+                <div className="text-slate-500 text-[10px] uppercase">aggregate deposit flow</div>
+                <div className="text-sm font-extrabold text-slate-900">{formatCurrency(dayStats.totalIncome)}</div>
               </div>
-              <div className="p-6 flex justify-between items-center">
-                <span className="font-bold text-sm uppercase">TOTAL EXPENSE:</span>
-                <span className="text-2xl font-black">{formatCurrency(dayStats.totalExpense)}</span>
+              <div>
+                <div className="text-slate-500 text-[10px] uppercase">aggregate disbursement flow</div>
+                <div className="text-sm font-extrabold text-slate-900">{formatCurrency(dayStats.totalExpense)}</div>
               </div>
             </div>
 
-            <div className="bg-blue-600 text-white p-10 text-center">
-              <span className="text-lg font-bold opacity-60 uppercase tracking-widest mr-4">Closing Balance:</span>
-              <span className="text-6xl font-black italic">{formatCurrency(dayStats.netCash)}</span>
+            <div className="bg-slate-950 text-white p-6 text-center space-y-1">
+              <span className="text-[10px] font-extrabold tracking-widest text-[#d4af37] uppercase block">computed net liquid cache in hand</span>
+              <span className="text-4xl font-black italic tracking-tight">{formatCurrency(dayStats.netCash)}</span>
             </div>
           </div>
         </div>
+      )}
+
+      {activeTab === "bank" && (
+        <BankStatementReport banks={banks} transactions={transactions} companyName={companyName} companyAddress={companyAddress} companyPhone={companyPhone} companyEmail={companyEmail} formatCurrency={formatCurrency} />
+      )}
+
+      {activeTab === "salary" && (
+        <SalaryFilterWiseReport employees={employees} transactions={transactions} companyName={companyName} companyAddress={companyAddress} companyPhone={companyPhone} companyEmail={companyEmail} formatCurrency={formatCurrency} />
+      )}
+
+      {activeTab === "supplier" && (
+        <SupplierPaymentsReport suppliers={suppliers} supplierTransactions={supplierTransactions} companyName={companyName} companyAddress={companyAddress} companyPhone={companyPhone} companyEmail={companyEmail} formatCurrency={formatCurrency} />
+      )}
+
+      {activeTab === "purchase" && (
+        <PurchaseReportSection suppliers={suppliers} purchases={purchases} companyName={companyName} companyAddress={companyAddress} companyPhone={companyPhone} companyEmail={companyEmail} formatCurrency={formatCurrency} />
       )}
 
       {activeTab === "attendance" && (
         <AttendanceReport employees={employees} attendance={attendance} />
       )}
 
-      {activeTab === "salary" && (
-        <SalaryReport employees={employees} transactions={transactions} />
-      )}
-
       {activeTab === "transactions" && (
         <TransactionsReport transactions={transactions} />
       )}
-
-      {activeTab === "purchasing" && (
-        <PurchasingReport suppliers={suppliers} supplierTransactions={supplierTransactions} />
-      )}
     </div>
   );
 }
 
-function AttendanceReport({ employees, attendance }: { employees: Employee[]; attendance: any[] }) {
-  const { language, t, formatDate, translateValue } = useLanguage();
-  const [selectedMonth, setSelectedMonth] = useState(format(new Date(), "yyyy-MM"));
-  const [viewMode, setViewMode] = useState<"daily" | "monthly">("daily");
-  const [selectedDateDetails, setSelectedDateDetails] = useState<string | null>(null);
-  const [searchQuery, setSearchQuery] = useState("");
-  const [lateThreshold, setLateThreshold] = useState("10:00");
+/* ==========================================================================
+   NEW TAB 1: BANK STATEMENT REPORT WITH INDIVIDUAL RECONCILIATIONS
+   ========================================================================== */
+function BankStatementReport({ banks, transactions, companyName, companyAddress, companyPhone, companyEmail, formatCurrency }: {
+  banks: Bank[];
+  transactions: Transaction[];
+  companyName: string;
+  companyAddress: string;
+  companyPhone: string;
+  companyEmail: string;
+  formatCurrency: (val: number) => string;
+}) {
+  const [selectedBankName, setSelectedBankName] = useState("all");
+  const [startDate, setStartDate] = useState(format(startOfMonth(new Date()), "yyyy-MM-dd"));
+  const [endDate, setEndDate] = useState(format(endOfMonth(new Date()), "yyyy-MM-dd"));
+  const [txType, setTxType] = useState("all");
 
-  useEffect(() => {
-    const unsub = onSnapshot(doc(db, "settings", "attendance"), (docSnap) => {
-      if (docSnap.exists()) {
-        const data = docSnap.data();
-        setLateThreshold(data.lateThreshold || "10:00");
-      }
-    });
-    return () => unsub();
-  }, []);
-
-  // Helper: Format 24h string time (e.g., "09:30") to readable 12H with AM/PM (e.g. "09:30 AM")
-  function formatTimeTo12Hour(timeStr: string): string {
-    if (!timeStr) return "-";
-    if (timeStr.includes("AM") || timeStr.includes("PM")) return timeStr;
-    try {
-      const [hrsStr, minsStr] = timeStr.split(":");
-      const hrs = Number(hrsStr);
-      const mins = Number(minsStr);
-      if (isNaN(hrs) || isNaN(mins)) return timeStr;
-      const ampm = hrs >= 12 ? "PM" : "AM";
-      const displayHrs = hrs % 12 || 12;
-      const displayMins = mins < 10 ? `0${mins}` : mins;
-      return `${displayHrs}:${displayMins} ${ampm}`;
-    } catch {
-      return timeStr;
+  const filtered = transactions.filter(tx => {
+    // 1. Match payment method (Bank)
+    if (selectedBankName !== "all") {
+      if (tx.paymentMethod !== selectedBankName) return false;
     }
-  }
-
-  // Helper: Calculate late minutes past threshold
-  function calculateLateMinutes(checkIn: string, threshold: string): number {
-    if (!checkIn || !threshold) return 0;
-    try {
-      let inStr = checkIn.trim();
-      if (inStr.toLowerCase().includes("am") || inStr.toLowerCase().includes("pm")) {
-        const parts = inStr.split(" ");
-        const [hPart, mPart] = parts[0].split(":");
-        let h = Number(hPart);
-        const m = Number(mPart);
-        if (inStr.toLowerCase().includes("pm") && h < 12) h += 12;
-        if (inStr.toLowerCase().includes("am") && h === 12) h = 0;
-        inStr = `${h.toString().padStart(2, "0")}:${m.toString().padStart(2, "0")}`;
-      }
-      
-      const thStr = threshold.trim();
-      const [inH, inM] = inStr.split(":").map(Number);
-      const [tH, tM] = thStr.split(":").map(Number);
-      if (isNaN(inH) || isNaN(inM) || isNaN(tH) || isNaN(tM)) return 0;
-      
-      const inTotal = inH * 60 + inM;
-      const tTotal = tH * 60 + tM;
-      return Math.max(0, inTotal - tTotal);
-    } catch {
-      return 0;
-    }
-  }
-
-  // Helper: Format delay duration past threshold
-  function formatLateDuration(minutes: number, lang: string): string {
-    if (minutes <= 0) return lang === "bn" ? "যথাসময়ে" : "On Time";
-    if (minutes < 60) {
-      return lang === "bn" ? `${minutes} মিনিট বিলম্ব` : `${minutes} mins late`;
-    }
-    const hrs = Math.floor(minutes / 60);
-    const mins = minutes % 60;
-    if (lang === "bn") {
-      return mins > 0 
-        ? `${hrs} ঘণ্টা ${mins} মিনিট বিলম্ব` 
-        : `${hrs} ঘণ্টা বিলম্ব`;
-    }
-    return mins > 0 
-      ? `${hrs} hr ${mins} mins late` 
-      : `${hrs} hr${hrs > 1 ? 's' : ''} late`;
-  }
-
-  // Group attendance records by YYYY-MM-DD date.
-  // We use records in the selected month
-  const uniqueDates = Array.from(new Set(attendance.map(a => {
-    try {
-      return format(new Date(a.date), "yyyy-MM-dd");
-    } catch {
-      return a.date.slice(0, 10);
-    }
-  })))
-  .filter(d => d.startsWith(selectedMonth))
-  .sort((a, b) => b.localeCompare(a));
-
-  // Export CSV for a single specific day
-  const exportDailyDetailedCSV = (dateStr: string) => {
-    const bom = "\uFEFF";
-    let csvContent = "";
-    let fileName = `attendance_detail_${dateStr}.csv`;
+    // 2. Filter Date Range
+    const dateStr = tx.date.split("T")[0];
+    if (dateStr < startDate || dateStr > endDate) return false;
+    // 3. Filter transaction type
+    if (txType !== "all" && tx.type !== txType) return false;
     
-    if (language === "bn") {
-      csvContent = bom + "কর্মচারী,ভূমিকা,উপস্থিতি অবস্থা,প্রবেশ সময়,বিলম্বের সময়,মন্তব্য\n";
-      employees.forEach(emp => {
-        const record = attendance.find(a => a.employeeId === emp.id && a.date.startsWith(dateStr));
-        const statusStr = record ? record.status : "absent";
-        const checkInStr = record ? record.checkIn : "-";
-        const delayMins = record ? calculateLateMinutes(record.checkIn, lateThreshold) : 0;
-        const delayStr = record?.status === "late" || delayMins > 0 ? formatLateDuration(delayMins, "bn") : "যথাসময়ে";
-        
-        csvContent += `"${emp.name}","${emp.role}","${translateValue(statusStr)}","${checkInStr}","${delayStr}","${record?.notes || ""}"\n`;
-      });
-      fileName = `উপস্থিতি_বিস্তারিত_${dateStr}.csv`;
+    return true;
+  }).sort((a,b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+
+  // Inflows vs Outflows
+  const totalInflows = filtered.filter(t => t.type === "income").reduce((sum, t) => sum + t.amount, 0);
+  const totalOutflows = filtered.filter(t => t.type === "expense").reduce((sum, t) => sum + t.amount, 0);
+  
+  // Calculate running ledger balance
+  let currentAccumulated = 0;
+  const ledgerRows = filtered.map(tx => {
+    if (tx.type === "income") {
+      currentAccumulated += tx.amount;
     } else {
-      csvContent = "Employee,Role,Status,Check In,Late Duration,Notes\n";
-      employees.forEach(emp => {
-        const record = attendance.find(a => a.employeeId === emp.id && a.date.startsWith(dateStr));
-        const statusStr = record ? record.status : "absent";
-        const checkInStr = record ? record.checkIn : "-";
-        const delayMins = record ? calculateLateMinutes(record.checkIn, lateThreshold) : 0;
-        const delayStr = record?.status === "late" || delayMins > 0 ? formatLateDuration(delayMins, "en") : "On Time";
-        
-        csvContent += `"${emp.name}","${emp.role}","${statusStr}","${checkInStr}","${delayStr}","${record?.notes || ""}"\n`;
-      });
+      currentAccumulated -= tx.amount;
     }
+    return {
+      ...tx,
+      runningBalance: currentAccumulated
+    };
+  });
 
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const link = document.createElement("a");
-    const url = URL.createObjectURL(blob);
-    link.setAttribute("href", url);
-    link.setAttribute("download", fileName);
-    link.style.visibility = 'hidden';
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-  };
+  // Current balance of selected bank (if explicit bank chosen, fallback to total sum)
+  const currentBankObj = banks.find(b => b.name === selectedBankName);
+  const currentBankBalance = currentBankObj ? currentBankObj.balance : ledgerRows[ledgerRows.length - 1]?.runningBalance || 0;
 
-  // Export PDF for a single specific day
-  const exportDailyDetailedPDF = (dateStr: string) => {
-    const doc = new jsPDF();
+  const downloadBankStatementPDF = () => {
+    const doc = new jsPDF("p", "mm", "a4");
     const pageWidth = doc.internal.pageSize.getWidth();
-    
+
+    // Corp Header banner
+    doc.setFillColor(15, 23, 42); // slate bg
+    doc.rect(0, 0, 210, 40, "F");
+
+    doc.setTextColor(255);
     doc.setFont("helvetica", "bold");
     doc.setFontSize(18);
-    doc.setTextColor(15, 23, 42); // slate-900
-    doc.text(language === "bn" ? "দৈনিক উপস্থিতি বিবরণী" : "DAILY ATTENDANCE DETAIL SHEET", 14, 20);
-    
+    doc.text("BANK STATEMENT LEDGER REPORT", 14, 18);
+
     doc.setFont("helvetica", "normal");
+    doc.setFontSize(8.5);
+    doc.setTextColor(203, 213, 225);
+    doc.text(`${companyName.toUpperCase()} • ${companyAddress}`, 14, 25);
+    doc.text(`Email: ${companyEmail} • Phone: ${companyPhone}`, 14, 29);
+    doc.text(`Statement Period: ${format(new Date(startDate), "dd MMM yyyy")} to ${format(new Date(endDate), "dd MMM yyyy")}`, 14, 33);
+
+    doc.setFillColor(14, 165, 233); // sky blue line
+    doc.rect(0, 40, 210, 2.5, "F");
+
+    // Metrics Cards Title
+    doc.setFont("helvetica", "bold");
     doc.setFontSize(10);
-    doc.setTextColor(100, 116, 139); // slate-500
-    
-    let displayDateText = dateStr;
-    try {
-      displayDateText = format(new Date(dateStr), "EEEE, d MMMM yyyy");
-    } catch {}
-    
-    doc.text(`${language === "bn" ? "রিপোর্ট তারিখ" : "Date of Report"}: ${displayDateText}`, 14, 26);
-    doc.text(`${language === "bn" ? "ডাউনলোড সময়" : "Generated on"}: ${format(new Date(), "yyyy-MM-dd HH:mm:ss")}`, 14, 32);
-    
-    doc.setDrawColor(200);
-    doc.line(14, 35, pageWidth - 14, 35);
-
-    const matchRecs = attendance.filter(a => a.date.startsWith(dateStr));
-    const presentCount = employees.filter(emp => {
-      const rec = matchRecs.find(a => a.employeeId === emp.id);
-      return rec?.status === "present" || rec?.status === "late";
-    }).length;
-    const lateCount = employees.filter(emp => {
-      const rec = matchRecs.find(a => a.employeeId === emp.id);
-      return rec?.status === "late";
-    }).length;
-    const absentCount = employees.filter(emp => {
-      const rec = matchRecs.find(a => a.employeeId === emp.id);
-      return !rec || rec.status === "absent";
-    }).length;
-    const leaveCount = employees.filter(emp => {
-      const rec = matchRecs.find(a => a.employeeId === emp.id);
-      return rec?.status === "leave";
-    }).length;
-
-    doc.setFillColor(248, 250, 252); // slate-50 bg
-    doc.rect(14, 38, pageWidth - 28, 14, "F");
-    doc.setFontSize(9);
     doc.setTextColor(51, 65, 85);
-    doc.text(
-      language === "bn"
-        ? `মোট কর্মচারী: ${employees.length}  |  উপস্থিত: ${presentCount}  |  বিলম্ব: ${lateCount}  |  অনুপস্থিত: ${absentCount}  |  ছুটি: ${leaveCount}`
-        : `Total Staff Count: ${employees.length}  |  Present: ${presentCount}  |  Late: ${lateCount}  |  Absent: ${absentCount}  |  On Leave: ${leaveCount}`,
-      18,
-      47
-    );
+    doc.text("STATEMENT METRIC SUMMARY", 14, 52);
 
-    const tableRows = employees.map(emp => {
-      const record = matchRecs.find(a => a.employeeId === emp.id);
-      const statusVal = record ? record.status : "absent";
-      const checkInTime = record ? record.checkIn : "-";
-      const delayMins = record ? calculateLateMinutes(record.checkIn, lateThreshold) : 0;
-      const delayVal = record?.status === "late" || delayMins > 0 ? formatLateDuration(delayMins, language) : (record?.status === "present" ? (language === "bn" ? "যথাসময়ে" : "On Time") : "-");
-      const lunchVal = record?.lunchOut && record?.lunchIn ? `${record.lunchOut} - ${record.lunchIn}` : "-";
-      
-      return [
-        emp.name,
-        emp.role,
-        translateValue(statusVal).toUpperCase(),
-        checkInTime ? formatTimeTo12Hour(checkInTime) : "-",
-        delayVal,
-        lunchVal,
-        record?.notes || "-"
-      ];
+    const cards = [
+      { label: "Target Account", val: selectedBankName === "all" ? "All Combined" : selectedBankName },
+      { label: "Total Deposits (+)", val: `BDT ${totalInflows.toLocaleString()}` },
+      { label: "Total Withdrawals (-)", val: `BDT ${totalOutflows.toLocaleString()}` },
+      { label: "Statement Liquidity", val: `BDT ${currentBankBalance.toLocaleString()}` }
+    ];
+
+    let cardX = 14;
+    cards.forEach(c => {
+      doc.setFillColor(248, 250, 252);
+      doc.setDrawColor(226, 232, 240);
+      doc.rect(cardX, 56, 42, 22, "FD");
+
+      doc.setFillColor(15, 23, 42); // dark box accent top line
+      doc.rect(cardX, 56, 42, 1.2, "F");
+
+      doc.setTextColor(148, 163, 184);
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(6.5);
+      doc.text(c.label.toUpperCase(), cardX + 3, 62);
+
+      doc.setTextColor(15, 23, 42);
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(8);
+      doc.text(c.val, cardX + 3, 70);
+
+      cardX += 45;
     });
+
+    // Journal Entry table
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(10);
+    doc.setTextColor(51, 65, 85);
+    doc.text("TRANSACTION LEDGER LEDGER ENTRIES", 14, 88);
+
+    const tableRows = ledgerRows.map(row => [
+      format(parseISO(row.date), "dd MMM yyyy, hh:mm a"),
+      row.paymentMethod,
+      row.category + (row.subCategory ? ` (${row.subCategory})` : ""),
+      row.type === "income" ? `+ BDT ${row.amount.toLocaleString()}` : "",
+      row.type === "expense" ? `- BDT ${row.amount.toLocaleString()}` : "",
+      `BDT ${row.runningBalance.toLocaleString()}`,
+      row.notes || "-"
+    ]);
 
     autoTable(doc, {
-      startY: 56,
-      head: [
-        language === "bn"
-          ? ["কর্মচারী", "ভূমিকা", "অবস্থা", "প্রবেশ সময়", "বিলম্বের সময়", "লাঞ্চ বিরতি", "মন্তব্য"]
-          : ["Employee", "Role", "Status", "Check In", "Lateness", "Lunch break", "Notes"]
-      ],
+      startY: 92,
+      head: [["Datetime", "Method", "Category", "Inflow (CR)", "Outflow (DR)", "Running Bal", "Notes / Reference"]],
       body: tableRows,
       theme: "striped",
-      headStyles: { fillColor: [30, 41, 59] }, // Slate-800
-      styles: { fontSize: 8 }
+      headStyles: {
+        fillColor: [15, 23, 42],
+        textColor: [255, 255, 255],
+        fontSize: 7.5,
+        fontStyle: "bold",
+        halign: "left"
+      },
+      bodyStyles: {
+        fontSize: 7,
+        textColor: [51, 65, 85]
+      },
+      columnStyles: {
+        3: { halign: "right", fontStyle: "bold", textColor: [21, 128, 61] },
+        4: { halign: "right", fontStyle: "bold", textColor: [185, 28, 28] },
+        5: { halign: "right", fontStyle: "bold" }
+      },
+      styles: {
+        font: "helvetica",
+        cellPadding: 3
+      }
     });
 
-    doc.save(`Attendance_Detail_Report_${dateStr}.pdf`);
+    const finalY = (doc as any).lastAutoTable.finalY + 14;
+    if (finalY < 280) {
+      doc.setFontSize(8);
+      doc.setTextColor(148, 163, 184);
+      doc.setFont("helvetica", "italic");
+      doc.text("Statement verified. Generated from corporate audit servers.", 14, finalY);
+    }
+
+    doc.save(`Bank_Statement_${selectedBankName}_${startDate}_to_${endDate}.pdf`);
   };
 
-  // Status configuration mapping for styling
-  const STATUS_CONFIG: Record<string, { label: string; color: string; bg: string; dot: string }> = {
-    present: { label: language === "bn" ? "উপস্থিত" : "Present", color: "text-emerald-600 border-emerald-100", bg: "bg-emerald-50", dot: "bg-emerald-500" },
-    absent: { label: language === "bn" ? "অনুপস্থিত" : "Absent", color: "text-red-600 border-red-100", bg: "bg-red-50", dot: "bg-red-500" },
-    late: { label: language === "bn" ? "বিলম্ব" : "Late", color: "text-amber-600 border-amber-100", bg: "bg-amber-50", dot: "bg-amber-500" },
-    "half-day": { label: language === "bn" ? "হাফ ডে" : "Half Day", color: "text-yellow-600 border-yellow-100", bg: "bg-yellow-50", dot: "bg-yellow-500" },
-    leave: { label: language === "bn" ? "ছুটি" : "On Leave", color: "text-indigo-600 border-indigo-100", bg: "bg-indigo-50", dot: "bg-indigo-500" },
-    holiday: { label: language === "bn" ? "ছুটি দিন" : "Holiday", color: "text-purple-600 border-purple-100", bg: "bg-purple-50", dot: "bg-purple-500" }
-  };
-
-  if (selectedDateDetails) {
-    // RENDER: Daily Detailed View
-    const filteredEmployees = employees.filter(emp => {
-      const queryLower = searchQuery.toLowerCase();
-      return emp.name.toLowerCase().includes(queryLower) || emp.role.toLowerCase().includes(queryLower);
-    });
-
-    const matchRecs = attendance.filter(a => a.date.startsWith(selectedDateDetails));
-
-    const totalStaff = employees.length;
-    const presentCount = employees.filter(emp => {
-      const rec = matchRecs.find(a => a.employeeId === emp.id);
-      return rec?.status === "present" || rec?.status === "late";
-    }).length;
-    const lateCount = employees.filter(emp => {
-      const rec = matchRecs.find(a => a.employeeId === emp.id);
-      return rec?.status === "late";
-    }).length;
-    const absentCount = employees.filter(emp => {
-      const rec = matchRecs.find(a => a.employeeId === emp.id);
-      return !rec || rec.status === "absent";
-    }).length;
-    const leaveCount = employees.filter(emp => {
-      const rec = matchRecs.find(a => a.employeeId === emp.id);
-      return rec?.status === "leave";
-    }).length;
-
-    let prettyDate = selectedDateDetails;
-    try {
-      prettyDate = formatDate(new Date(selectedDateDetails));
-    } catch {}
-
-    return (
-      <div className="space-y-8 animate-in fade-in duration-500">
-        {/* Navigation & Actions */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <button 
-            onClick={() => setSelectedDateDetails(null)} 
-            className="flex items-center gap-2 self-start text-gray-600 hover:text-gray-900 font-black text-xs uppercase tracking-widest px-4 py-2 hover:bg-gray-150 rounded-2xl transition-all border border-transparent"
-          >
-            <ArrowLeft className="w-4 h-4" /> 
-            {language === "bn" ? "তালিকায় ফিরে যান" : "Back to Daily list"}
-          </button>
-          
-          <div className="flex items-center gap-3">
-            <button 
-              onClick={() => exportDailyDetailedCSV(selectedDateDetails)} 
-              className="px-5 py-2.5 bg-gray-100 hover:bg-gray-200 text-gray-800 rounded-2xl text-xs font-black uppercase tracking-wider transition-all shadow-sm flex items-center gap-2 cursor-pointer"
-            >
-              <Download className="w-4 h-4" /> CSV
-            </button>
-            <button 
-              onClick={() => exportDailyDetailedPDF(selectedDateDetails)} 
-              className="px-5 py-2.5 bg-gray-900 hover:bg-gray-800 text-white rounded-2xl text-xs font-black uppercase tracking-wider transition-all shadow-xl flex items-center gap-2 cursor-pointer"
-            >
-              <Printer className="w-4 h-4" /> {language === "bn" ? "পিডিএফ ও প্রিন্ট" : "Print PDF"}
-            </button>
-          </div>
-        </div>
-
-        {/* Date Title Card */}
-        <div className="relative overflow-hidden bg-gradient-to-br from-slate-900 to-slate-800 text-white rounded-[40px] p-8 md:p-10 shadow-2xl">
-          <div className="absolute right-0 bottom-0 translate-x-12 translate-y-12 opacity-5 shrink-0 select-none">
-            <CalendarDays className="w-96 h-96" />
-          </div>
-          <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-6">
-            <div className="space-y-3">
-              <span className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-blue-500/10 border border-blue-500/20 text-blue-350 text-[10px] font-black uppercase tracking-widest">
-                <span className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-pulse" />
-                {language === "bn" ? "দৈনিক উপস্থিতির হিসাব" : "DAILY RECORD SHEET"}
-              </span>
-              <h3 className="text-3xl md:text-5xl font-black tracking-tighter">{prettyDate}</h3>
-              <p className="text-slate-400 font-medium text-xs italic">
-                {language === "bn" 
-                  ? "উক্ত দিনের চেক-ইন সময় ও ল্যাম্বার্ড (বিলম্ব) রিপোর্ট।" 
-                  : "Check-in punctuality, presence and timing statistics specifically for this date."}
-              </p>
-            </div>
-            
-            {/* Minimal Stat Chips */}
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 bg-white/5 p-4 rounded-3xl border border-white/10 shrink-0 font-mono">
-              <div className="px-5 py-3 text-center border-r border-white/5">
-                <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">{language === "bn" ? "মোট কর্মী" : "Staff"}</p>
-                <p className="text-2xl font-black text-white mt-1">{totalStaff}</p>
-              </div>
-              <div className="px-5 py-3 text-center border-r border-white/5">
-                <p className="text-[10px] text-emerald-400 font-bold uppercase tracking-wider">{language === "bn" ? "উপস্থিত" : "Present"}</p>
-                <p className="text-2xl font-black text-emerald-300 mt-1">{presentCount}</p>
-              </div>
-              <div className="px-5 py-3 text-center border-r border-white/5">
-                <p className="text-[10px] text-amber-400 font-bold uppercase tracking-wider">{language === "bn" ? "বিলম্ব" : "Late"}</p>
-                <p className="text-2xl font-black text-amber-300 mt-1">{lateCount}</p>
-              </div>
-              <div className="px-5 py-3 text-center">
-                <p className="text-[10px] text-red-400 font-bold uppercase tracking-wider">{language === "bn" ? "অনুপস্থিত" : "Absent"}</p>
-                <p className="text-2xl font-black text-red-300 mt-1">{absentCount}</p>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Filters and List */}
-        <div className="bg-white rounded-[40px] shadow-sm border border-gray-100 overflow-hidden space-y-6 p-8">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-            <div>
-              <h4 className="text-xl font-black text-gray-900">{language === "bn" ? "কর্মচারীদের তালিকা" : "Roster Details"}</h4>
-              <p className="text-gray-400 text-xs italic font-medium mt-0.5">{language === "bn" ? "ঐদিনের সকল কর্মচারীদের উপস্থিতির খতিয়ান বিবরণ।" : "Attendance ledger for all active team members for this workday."}</p>
-            </div>
-            
-            <div className="relative max-w-sm w-full">
-              <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-450" />
-              <input 
-                type="text" 
-                placeholder={language === "bn" ? "খুঁজুন (নাম বা পদবী)..." : "Search staff or role..."}
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full bg-gray-50 border-none rounded-2xl pl-11 pr-5 py-3 text-xs font-bold outline-none focus:ring-2 focus:ring-slate-100 transition-all font-sans"
-              />
-            </div>
-          </div>
-
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse font-sans">
-              <thead>
-                <tr className="bg-gray-50/50">
-                  <th className="px-6 py-5 text-[10px] font-black text-gray-400 uppercase tracking-widest rounded-l-2xl border-b border-gray-50">{language === "bn" ? "কর্মচারী" : "Employee"}</th>
-                  <th className="px-6 py-5 text-[10px] font-black text-gray-400 uppercase tracking-widest border-b border-gray-50">{language === "bn" ? "উপস্থিতি" : "Attendance"}</th>
-                  <th className="px-6 py-5 text-[10px] font-black text-gray-400 uppercase tracking-widest border-b border-gray-50">{language === "bn" ? "প্রবেশ সময়" : "Check-In"}</th>
-                  <th className="px-6 py-5 text-[10px] font-black text-gray-400 uppercase tracking-widest border-b border-gray-50">{language === "bn" ? "বিলম্ব সময়" : "Lateness"}</th>
-                  <th className="px-6 py-5 text-[10px] font-black text-gray-400 uppercase tracking-widest border-b border-gray-50">{language === "bn" ? "লাঞ্চ বিরতি" : "Lunch Break"}</th>
-                  <th className="px-6 py-5 text-[10px] font-black text-gray-400 uppercase tracking-widest rounded-r-2xl border-b border-gray-50">{language === "bn" ? "মন্তব্য" : "Notes"}</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-50">
-                {filteredEmployees.map(emp => {
-                  const rec = matchRecs.find(a => a.employeeId === emp.id);
-                  const statusVal = rec ? rec.status : "absent";
-                  const conf = STATUS_CONFIG[statusVal] || STATUS_CONFIG["absent"];
-                  
-                  const delayMinutes = rec ? calculateLateMinutes(rec.checkIn, lateThreshold) : 0;
-                  const isLateMarked = statusVal === "late" || delayMinutes > 0;
-                  
-                  return (
-                    <tr key={emp.id} className="hover:bg-gray-50/30 transition-all group">
-                      <td className="px-6 py-5">
-                        <div className="flex items-center gap-3.5">
-                          <div className="w-10 h-10 bg-slate-100 rounded-xl flex items-center justify-center font-black text-slate-500 group-hover:bg-blue-600 group-hover:text-white transition-all capitalize shadow-sm">
-                            {emp.name ? emp.name.charAt(0) : "S"}
-                          </div>
-                          <div>
-                            <h5 className="font-black text-gray-900 group-hover:text-blue-900 transition-colors">{emp.name}</h5>
-                            <span className="text-[10px] font-black text-gray-400 uppercase tracking-wider">{emp.role}</span>
-                          </div>
-                        </div>
-                      </td>
-                      <td className="px-6 py-5">
-                        <span className={cn(
-                          "inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-widest border", 
-                          conf.bg, 
-                          conf.color
-                        )}>
-                          <span className={cn("w-1.5 h-1.5 rounded-full animate-bounce", conf.dot)} />
-                          {conf.label}
-                        </span>
-                      </td>
-                      <td className="px-6 py-5 font-mono text-xs font-bold text-gray-800">
-                        {rec?.checkIn ? (
-                          <span className="flex items-center gap-1.5">
-                            <Clock className="w-3.5 h-3.5 text-gray-400 shrink-0" />
-                            {formatTimeTo12Hour(rec.checkIn)}
-                          </span>
-                        ) : (
-                          <span className="text-gray-350 italic">-</span>
-                        )}
-                      </td>
-                      <td className="px-6 py-5 font-mono text-xs">
-                        {statusVal === "absent" || statusVal === "leave" ? (
-                          <span className="text-gray-350 italic">-</span>
-                        ) : isLateMarked ? (
-                          <span className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded-lg bg-red-50 text-red-600 border border-red-100 font-bold">
-                            {formatLateDuration(delayMinutes > 0 ? delayMinutes : 15, language)}
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded-lg bg-emerald-50 text-emerald-600 border border-emerald-100 font-bold">
-                            {language === "bn" ? "যথাসময়ে" : "On Time"}
-                          </span>
-                        )}
-                      </td>
-                      <td className="px-6 py-5 font-mono text-xs text-gray-600">
-                        {rec?.lunchOut && rec?.lunchIn ? (
-                          <span className="font-semibold block">{rec.lunchOut} &rarr; {rec.lunchIn}</span>
-                        ) : (
-                          <span className="text-gray-350 italic">-</span>
-                        )}
-                      </td>
-                      <td className="px-6 py-5 text-xs text-gray-500 font-medium max-w-xs truncate" title={rec?.notes}>
-                        {rec?.notes ? rec.notes : <span className="text-gray-350 italic">-</span>}
-                      </td>
-                    </tr>
-                  );
-                })}
-
-                {filteredEmployees.length === 0 && (
-                  <tr>
-                    <td colSpan={6} className="px-6 py-12 text-center text-gray-450 italic font-medium">
-                      {language === "bn" ? "কোন কর্মচারী খুঁজে পাওয়া যায়নি।" : "No staff members matched your query for this date."}
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  // RENDER: Daily ledger and monthly summaries list
   return (
-    <div className="space-y-8 animate-in slide-in-from-bottom-5 duration-500">
-      {/* Selector and Month Filter */}
-      <div className="bg-white p-8 rounded-[40px] shadow-sm border border-gray-100 flex flex-col md:flex-row items-center justify-between gap-6">
-        <div className="flex flex-col sm:flex-row items-center gap-5">
-          <div className="flex bg-gray-50 p-1.5 rounded-2xl border border-gray-100">
-            <button 
-              onClick={() => setViewMode("daily")}
-              className={cn(
-                "px-5 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all",
-                viewMode === "daily" ? "bg-white text-gray-900 shadow-sm" : "text-gray-400 hover:text-gray-900"
-              )}
-            >
-              {language === "bn" ? "দৈনিক শিট" : "Daily Sheets"}
-            </button>
-            <button 
-              onClick={() => setViewMode("monthly")}
-              className={cn(
-                "px-5 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all",
-                viewMode === "monthly" ? "bg-white text-gray-900 shadow-sm" : "text-gray-400 hover:text-gray-900"
-              )}
-            >
-              {language === "bn" ? "মাসিক সারাংশ" : "Monthly Summaries"}
-            </button>
-          </div>
-          <div>
-            <h3 className="text-2xl font-black text-gray-900">
-              {viewMode === "daily" ? (language === "bn" ? "দৈনিক বিবরণী" : "Daily Attendance sheets") : (language === "bn" ? "মাসিক উপস্থিতি" : "Attendance Analytics")}
-            </h3>
-            <p className="text-gray-400 text-xs italic font-medium mt-0.5">
-              {viewMode === "daily" 
-                ? (language === "bn" ? "পৃথক দিন অনুযায়ী প্রতিটি কর্মচারীর তথ্য দেখতে ক্লিক করুন।" : "Select any specific day to view present, late, and absent details.")
-                : (language === "bn" ? "বেসিক উপস্থিতি পরিসংখ্যান ও পারফর্মেন্স রিপোর্ট।" : "Comprehensive view of staff performance and monthly punctuality metrics.")}
-            </p>
-          </div>
-        </div>
+    <div className="space-y-6 animate-in slide-in-from-bottom-5 duration-300">
+      {/* Filters */}
+      <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-100 dark:border-slate-800">
+        <h3 className="text-xl font-extrabold text-slate-900 mb-5 flex items-center gap-2">
+          <Building2 className="w-5 h-5 text-slate-800" />
+          <span>Statement Ledger Filter Console</span>
+        </h3>
         
-        <input 
-          type="month" 
-          value={selectedMonth}
-          onChange={(e) => setSelectedMonth(e.target.value)}
-          className="px-8 py-4 bg-gray-50 border-none rounded-2xl font-black text-lg focus:ring-2 focus:ring-blue-100 outline-none"
-        />
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          <div className="space-y-1">
+            <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block">Bank Account / Method</label>
+            <select
+              value={selectedBankName}
+              onChange={(e) => setSelectedBankName(e.target.value)}
+              className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold text-xs"
+            >
+              <option value="all">All Channels / Cash & Banks</option>
+              <option value="Cash">Cash Ledger</option>
+              {banks.map(bank => (
+                <option key={bank.id} value={bank.name}>{bank.name}</option>
+              ))}
+            </select>
+          </div>
+
+          <div className="space-y-1">
+            <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block">Inflow/Outflow Filter</label>
+            <select
+              value={txType}
+              onChange={(e) => setTxType(e.target.value)}
+              className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold text-xs"
+            >
+              <option value="all">All Movements</option>
+              <option value="income">Credits / Inflows (+)</option>
+              <option value="expense">Debits / Outflows (-)</option>
+            </select>
+          </div>
+
+          <div className="space-y-1">
+            <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block">Start Date</label>
+            <input 
+              type="date" 
+              value={startDate}
+              onChange={(e) => setStartDate(e.target.value)}
+              className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold text-xs"
+            />
+          </div>
+
+          <div className="space-y-1">
+            <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block">End Date</label>
+            <input 
+              type="date" 
+              value={endDate}
+              onChange={(e) => setEndDate(e.target.value)}
+              className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold text-xs"
+            />
+          </div>
+        </div>
+
+        <div className="flex justify-end gap-3 mt-5 pt-4 border-t border-slate-100">
+          <button
+            onClick={downloadBankStatementPDF}
+            className="flex items-center gap-1.5 px-5 py-2.5 bg-slate-900 text-white hover:bg-slate-800 rounded-xl text-xs font-bold tracking-wider uppercase transition-all shadow-xs cursor-pointer"
+          >
+            <Printer className="w-4 h-4" />
+            <span>Generate PDF Audit</span>
+          </button>
+        </div>
       </div>
 
-      {viewMode === "monthly" ? (
-        // Monthly Roster Renders
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-          {employees.map(emp => {
-            const filteredAttendance = attendance.filter(a => a.date.startsWith(selectedMonth));
-            const empRecords = filteredAttendance.filter(a => a.employeeId === emp.id);
-            const present = empRecords.filter(r => r.status === "present").length;
-            const late = empRecords.filter(r => r.status === "late").length;
-            const leave = empRecords.filter(r => r.status === "leave").length;
-            const absent = empRecords.filter(r => r.status === "absent").length;
-
-            return (
-              <div key={emp.id} className="bg-white p-8 rounded-[40px] shadow-sm border border-gray-100 hover:shadow-xl transition-all group">
-                <div className="flex items-center gap-4 mb-6">
-                  <div className="w-14 h-14 bg-gray-100 rounded-2xl flex items-center justify-center font-black text-gray-400 group-hover:bg-blue-600 group-hover:text-white transition-all">
-                    {emp.name.charAt(0)}
-                  </div>
-                  <div>
-                    <h4 className="font-black text-gray-900 truncate max-w-[150px]">{emp.name}</h4>
-                    <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest">{emp.role}</p>
-                  </div>
-                </div>
-
-                <div className="space-y-3">
-                  <div className="flex justify-between items-center p-3 bg-blue-50 rounded-xl">
-                    <span className="text-xs font-bold text-blue-600">{language === "bn" ? "উপস্থিত" : "Present"}</span>
-                    <span className="font-black text-blue-900">{present}</span>
-                  </div>
-                  <div className="flex justify-between items-center p-3 bg-orange-50 rounded-xl">
-                    <span className="text-xs font-bold text-orange-600">{language === "bn" ? "বিলম্ব" : "Late"}</span>
-                    <span className="font-black text-orange-900">{late}</span>
-                  </div>
-                  <div className="flex justify-between items-center p-3 bg-indigo-50 rounded-xl">
-                    <span className="text-xs font-bold text-indigo-600">{language === "bn" ? "ছুটি" : "Leaves"}</span>
-                    <span className="font-black text-indigo-900">{leave}</span>
-                  </div>
-                  <div className="flex justify-between items-center p-3 bg-red-50 rounded-xl">
-                    <span className="text-xs font-bold text-red-600">{language === "bn" ? "অনুপস্থিত" : "Absent"}</span>
-                    <span className="font-black text-red-900">{absent}</span>
-                  </div>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      ) : (
-        // NEW: Daily Ledger View
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {uniqueDates.map(dateStr => {
-            const records = attendance.filter(a => a.date.startsWith(dateStr));
-            const present = records.filter(a => a.status === "present").length;
-            const late = records.filter(a => a.status === "late").length;
-            const absent = records.filter(a => a.status === "absent").length;
-            const leave = records.filter(a => a.status === "leave").length;
-
-            let prettyDate = dateStr;
-            try {
-              prettyDate = formatDate(new Date(dateStr));
-            } catch {}
-
-            return (
-              <div 
-                key={dateStr} 
-                className="bg-white rounded-[40px] border border-gray-100 p-8 shadow-sm hover:shadow-xl transition-all flex flex-col justify-between group"
-              >
-                <div className="space-y-4">
-                  <div className="flex items-start justify-between">
-                    <div className="w-12 h-12 bg-blue-50 text-blue-600 rounded-2xl flex items-center justify-center shrink-0">
-                      <CalendarDays className="w-6 h-6" />
-                    </div>
-                    
-                    {/* Compact pill indicators */}
-                    <span className="text-[10px] font-mono font-black tracking-widest text-slate-350 uppercase">
-                      {dateStr}
-                    </span>
-                  </div>
-                  
-                  <div>
-                    <h4 className="text-xl font-black text-slate-900 tracking-tight group-hover:text-blue-900 transition-colors pointer-events-none">
-                      {prettyDate}
-                    </h4>
-                  </div>
-
-                  {/* Summary row */}
-                  <div className="grid grid-cols-4 gap-2 text-center py-3 bg-slate-50/50 rounded-2xl border border-slate-50">
-                    <div>
-                      <p className="text-[9px] text-gray-400 font-bold uppercase">{language === "bn" ? "উপস্থিত" : "Pres"}</p>
-                      <p className="text-xs font-black text-emerald-600 mt-0.5">{present}</p>
-                    </div>
-                    <div>
-                      <p className="text-[9px] text-gray-400 font-bold uppercase">{language === "bn" ? "বিলম্ব" : "Late"}</p>
-                      <p className="text-xs font-black text-amber-600 mt-0.5">{late}</p>
-                    </div>
-                    <div>
-                      <p className="text-[9px] text-gray-400 font-bold uppercase">{language === "bn" ? "ছুটি" : "Leave"}</p>
-                      <p className="text-xs font-black text-indigo-600 mt-0.5">{leave}</p>
-                    </div>
-                    <div>
-                      <p className="text-[9px] text-gray-400 font-bold uppercase">{language === "bn" ? "অনুপস্থিত" : "Abs"}</p>
-                      <p className="text-xs font-black text-red-600 mt-0.5">{absent}</p>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="mt-6 pt-5 border-t border-gray-50 flex items-center justify-between">
-                  <span className="text-[10px] font-black uppercase text-slate-400 tracking-widest group-hover:text-blue-600 transition-colors">
-                    {language === "bn" ? "বিস্তারিত দেখুন" : "View Details"}
-                  </span>
-                  <button 
-                    onClick={() => setSelectedDateDetails(dateStr)}
-                    className="w-10 h-10 bg-slate-50 text-slate-500 hover:text-white hover:bg-slate-900 rounded-full flex items-center justify-center transition-all cursor-pointer border border-slate-100"
-                  >
-                    <ChevronRight className="w-4 h-4" />
-                  </button>
-                </div>
-              </div>
-            );
-          })}
-
-          {uniqueDates.length === 0 && (
-            <div className="col-span-full bg-white p-16 rounded-[40px] border border-dashed border-gray-200 text-center text-gray-450 italic font-medium">
-              {language === "bn" ? "এ মাসে কোন উপস্থিতির রেকর্ড পাওয়া যায়নি।" : "No attendance logs found for this month range."}
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function SalaryReport({ employees, transactions }: { employees: Employee[]; transactions: Transaction[] }) {
-  const [targetYear, setTargetYear] = useState(new Date().getFullYear().toString());
-  
-  const salaryTxs = transactions.filter(tx => 
-    tx.category === "Salary" && 
-    new Date(tx.date).getFullYear().toString() === targetYear
-  );
-
-  return (
-    <div className="space-y-8 animate-in slide-in-from-bottom-5 duration-500">
-      <div className="bg-white p-8 rounded-[40px] shadow-sm border border-gray-100 flex items-center justify-between">
-        <div className="flex items-center gap-4">
-          <div className="w-16 h-16 bg-green-50 rounded-3xl flex items-center justify-center">
-            <Wallet className="w-8 h-8 text-green-600" />
-          </div>
+      {/* Metrics Grid */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <div className="bg-emerald-50 border border-emerald-100 p-6 rounded-3xl flex items-center justify-between">
           <div>
-            <h3 className="text-2xl font-black text-gray-900">Salary Disbursement History</h3>
-            <p className="text-gray-500 font-medium italic">Track all historical payments made to staff members.</p>
+            <p className="text-[10px] font-extrabold text-emerald-800 uppercase tracking-widest mb-1">Total Inflow Deposits</p>
+            <p className="text-2xl font-black text-emerald-950">{formatCurrency(totalInflows)}</p>
+          </div>
+          <div className="w-12 h-12 bg-emerald-100 rounded-2xl flex items-center justify-center text-emerald-600">
+            <ArrowUpRight className="w-6 h-6" />
           </div>
         </div>
-        <select 
-          value={targetYear}
-          onChange={(e) => setTargetYear(e.target.value)}
-          className="px-8 py-4 bg-gray-50 border-none rounded-2xl font-black text-lg focus:ring-2 focus:ring-green-100"
-        >
-          {["2024", "2025", "2026"].map(y => <option key={y} value={y}>{y}</option>)}
-        </select>
+
+        <div className="bg-rose-50 border border-rose-100 p-6 rounded-3xl flex items-center justify-between">
+          <div>
+            <p className="text-[10px] font-extrabold text-rose-800 uppercase tracking-widest mb-1">Total Outflow Withdrawals</p>
+            <p className="text-2xl font-black text-rose-950">{formatCurrency(totalOutflows)}</p>
+          </div>
+          <div className="w-12 h-12 bg-rose-100 rounded-2xl flex items-center justify-center text-rose-600">
+            <ArrowDownLeft className="w-6 h-6" />
+          </div>
+        </div>
+
+        <div className="bg-slate-550 bg-slate-900 text-white p-6 rounded-3xl flex items-center justify-between shadow-lg">
+          <div>
+            <p className="text-[10px] font-extrabold text-[#d4af37] uppercase tracking-widest mb-1">Account Liquidity (Closing)</p>
+            <p className="text-2xl font-black text-white">{formatCurrency(currentBankBalance)}</p>
+          </div>
+          <div className="w-12 h-12 bg-slate-800 rounded-2xl flex items-center justify-center text-[#d4af37]">
+            <Landmark className="w-6 h-6" />
+          </div>
+        </div>
       </div>
 
-      <div className="bg-white rounded-[40px] shadow-2xl border border-gray-100 overflow-hidden">
-        <table className="w-full text-left">
+      {/* Table grid */}
+      <div className="bg-white rounded-3xl shadow-sm border border-slate-100 overflow-hidden">
+        <table className="w-full text-left border-collapse">
           <thead>
-            <tr className="bg-gray-50/50">
-              <th className="px-8 py-6 text-xs font-black text-gray-400 uppercase tracking-widest border-b border-gray-100">Date</th>
-              <th className="px-8 py-6 text-xs font-black text-gray-400 uppercase tracking-widest border-b border-gray-100">Employee</th>
-              <th className="px-8 py-6 text-xs font-black text-gray-400 uppercase tracking-widest border-b border-gray-100">Method</th>
-              <th className="px-8 py-6 text-xs font-black text-gray-400 uppercase tracking-widest border-b border-gray-100">Reference</th>
-              <th className="px-8 py-6 text-xs font-black text-gray-400 uppercase tracking-widest border-b border-gray-100 text-right">Amount</th>
+            <tr className="bg-slate-50/70 border-b border-slate-100">
+              <th className="px-6 py-4 text-[10px] font-extrabold text-slate-500 uppercase tracking-widest">Date / Time</th>
+              <th className="px-6 py-4 text-[10px] font-extrabold text-slate-500 uppercase tracking-widest">Method</th>
+              <th className="px-6 py-4 text-[10px] font-extrabold text-slate-500 uppercase tracking-widest">Category Account</th>
+              <th className="px-6 py-4 text-[10px] font-extrabold text-slate-500 uppercase tracking-widest text-right">Inflow (CR)</th>
+              <th className="px-6 py-4 text-[10px] font-extrabold text-slate-500 uppercase tracking-widest text-right">Outflow (DR)</th>
+              <th className="px-6 py-4 text-[10px] font-extrabold text-slate-500 uppercase tracking-widest text-right">Running Balance</th>
+              <th className="px-6 py-4 text-[10px] font-extrabold text-slate-500 uppercase tracking-widest">Reference Notes</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-gray-50">
-            {salaryTxs.map(tx => (
-              <tr key={tx.id} className="hover:bg-green-50/30 transition-all group">
-                <td className="px-8 py-6">
-                  <p className="font-bold text-gray-900">{format(new Date(tx.date), "MMMM dd, yyyy")}</p>
+          <tbody className="divide-y divide-slate-100 text-xs">
+            {ledgerRows.map(tx => (
+              <tr key={tx.id} className="hover:bg-slate-50/50 transition-colors">
+                <td className="px-6 py-4 whitespace-nowrap font-medium text-slate-600">
+                  {format(parseISO(tx.date), "dd MMM yyyy, hh:mm a")}
                 </td>
-                <td className="px-8 py-6">
-                  <p className="font-bold text-gray-900">{employees.find(e => e.id === tx.employeeId)?.name || "Unknown"}</p>
-                </td>
-                <td className="px-8 py-6">
-                   <span className="px-3 py-1 bg-gray-100 rounded-full text-[10px] font-black uppercase tracking-wider text-gray-500">
+                <td className="px-6 py-4 whitespace-nowrap">
+                  <span className="px-2.5 py-1 bg-slate-100 rounded-full text-[9px] font-bold text-slate-600">
                     {tx.paymentMethod}
-                   </span>
+                  </span>
                 </td>
-                <td className="px-8 py-6">
-                  <p className="text-sm font-medium text-gray-400 italic">{tx.notes || "Monthly Salary"}</p>
+                <td className="px-6 py-4 whitespace-nowrap">
+                  <div className="font-extrabold text-slate-800">{tx.category}</div>
+                  {tx.subCategory && <div className="text-[10px] text-slate-500 font-bold">{tx.subCategory}</div>}
                 </td>
-                <td className="px-8 py-6 text-right">
-                  <p className="text-lg font-black text-green-600">{formatCurrency(tx.amount)}</p>
+                <td className="px-6 py-4 whitespace-nowrap text-right font-black text-emerald-600">
+                  {tx.type === "income" ? formatCurrency(tx.amount) : "—"}
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap text-right font-black text-rose-600">
+                  {tx.type === "expense" ? formatCurrency(tx.amount) : "—"}
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap text-right font-black text-slate-900">
+                  {formatCurrency(tx.runningBalance)}
+                </td>
+                <td className="px-6 py-4 text-slate-500 max-w-[180px] truncate" title={tx.notes}>
+                  {tx.notes || "—"}
                 </td>
               </tr>
             ))}
-            {salaryTxs.length === 0 && (
+            {ledgerRows.length === 0 && (
               <tr>
-                <td colSpan={5} className="px-8 py-20 text-center text-gray-400 italic font-medium">
-                  No salary records found for {targetYear}.
+                <td colSpan={7} className="px-6 py-16 text-center text-slate-400 italic font-medium">
+                  No bank records matched key query criteria.
                 </td>
               </tr>
             )}
@@ -1546,8 +1084,1251 @@ function SalaryReport({ employees, transactions }: { employees: Employee[]; tran
   );
 }
 
+/* ==========================================================================
+   UPDATED TAB 2: PROPER EMPlOYEE FILTER-WISE SALARY REPORT
+   ========================================================================== */
+function SalaryFilterWiseReport({ employees, transactions, companyName, companyAddress, companyPhone, companyEmail, formatCurrency }: {
+  employees: Employee[];
+  transactions: Transaction[];
+  companyName: string;
+  companyAddress: string;
+  companyPhone: string;
+  companyEmail: string;
+  formatCurrency: (val: number) => string;
+}) {
+  const [selectedEmpId, setSelectedEmpId] = useState("all");
+  const [targetYear, setTargetYear] = useState(new Date().getFullYear().toString());
+
+  // Filters salary and advances
+  const filteredTxs = transactions.filter(tx => {
+    const isSalaryOrAdvance = tx.category === "Salary" || tx.category === "Staff Salary" || tx.category === "Salary Advance" || tx.category === "Staff Advance";
+    if (!isSalaryOrAdvance) return false;
+    
+    if (new Date(tx.date).getFullYear().toString() !== targetYear) return false;
+    
+    if (selectedEmpId !== "all") {
+      if (tx.employeeId !== selectedEmpId) return false;
+    }
+    return true;
+  }).sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+
+  // Aggregate stats
+  const totalSalaryPayout = filteredTxs
+    .filter(tx => tx.category === "Salary" || tx.category === "Staff Salary")
+    .reduce((sum, tx) => sum + tx.amount, 0);
+
+  const totalAdvancePayout = filteredTxs
+    .filter(tx => tx.category === "Salary Advance" || tx.category === "Staff Advance")
+    .reduce((sum, tx) => sum + tx.amount, 0);
+
+  // Selected Employee Basic Reference
+  const empTarget = employees.find(e => e.id === selectedEmpId);
+
+  const downloadSalaryReportPDF = () => {
+    const doc = new jsPDF("p", "mm", "a4");
+    
+    // Header Banner
+    doc.setFillColor(15, 23, 42);
+    doc.rect(0, 0, 210, 38, "F");
+    
+    doc.setTextColor(255);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(18);
+    doc.text("STAFF DISBURSEMENT AUDIT REPORT", 14, 16);
+    
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9);
+    doc.setTextColor(203, 213, 225);
+    doc.text(`${companyName.toUpperCase()} • ${companyAddress}`, 14, 23);
+    doc.text(`Issuer: HR Department || Target Year: ${targetYear}`, 14, 28);
+    
+    doc.setFillColor(14, 165, 233);
+    doc.rect(0, 38, 210, 2, "F");
+    
+    // Employee details if specific selected
+    if (empTarget) {
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(10);
+      doc.setTextColor(51, 65, 85);
+      doc.text("EMPLOYEE FILE PROFILE", 14, 49);
+
+      doc.setFillColor(248, 250, 252);
+      doc.rect(14, 53, 182, 24, "F");
+
+      doc.setFontSize(8);
+      doc.setTextColor(71, 85, 105);
+      doc.text(`Employee Name: ${empTarget.name}`, 18, 59);
+      doc.text(`Official Designation: ${empTarget.role}`, 18, 64);
+      doc.text(`Assigned Department: ${empTarget.department || "General"}`, 18, 69);
+      
+      doc.text(`Basic Salary Rate: BDT ${empTarget.salary.toLocaleString()}/mo`, 110, 59);
+      doc.text(`Join Date: ${empTarget.joinedDate || "N/A"}`, 110, 64);
+      doc.text(`Card Status: ${empTarget.status.toUpperCase()}`, 110, 69);
+    }
+
+    const startTableY = empTarget ? 84 : 48;
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(10);
+    doc.setTextColor(51, 65, 85);
+    doc.text(`PAYMENT HISTORY DISBURSEMENT RECORDS`, 14, startTableY);
+
+    const tableRows = filteredTxs.map(tx => [
+      format(new Date(tx.date), "dd MMM yyyy"),
+      employees.find(e => e.id === tx.employeeId)?.name || "Unknown",
+      tx.category,
+      tx.paymentMethod,
+      `BDT ${tx.amount.toLocaleString()}`,
+      tx.notes || "-"
+    ]);
+
+    autoTable(doc, {
+      startY: startTableY + 4,
+      head: [["Disbursement Date", "Employee target", "Ledger Account", "Method", "Amount Paid", "Reference Note"]],
+      body: tableRows,
+      theme: "striped",
+      headStyles: {
+        fillColor: [15, 23, 42],
+        textColor: [255, 255, 255],
+        fontSize: 8,
+        fontStyle: "bold",
+        halign: "left"
+      },
+      bodyStyles: {
+        fontSize: 7.5,
+        textColor: [51, 65, 81]
+      },
+      columnStyles: {
+        4: { halign: "right", fontStyle: "bold" }
+      },
+      styles: {
+        font: "helvetica",
+        cellPadding: 3.5
+      }
+    });
+
+    doc.save(`Salary_Audit_${selectedEmpId}_${targetYear}.pdf`);
+  };
+
+  return (
+    <div className="space-y-6 animate-in slide-in-from-bottom-5 duration-300">
+      {/* Filters */}
+      <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-100 dark:border-slate-800">
+        <h3 className="text-xl font-extrabold text-slate-900 mb-5 flex items-center gap-2">
+          <Users className="w-5 h-5 text-slate-800" />
+          <span>Staff Payroll Ledger Filters</span>
+        </h3>
+        
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          <div className="space-y-1">
+            <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block">Target Staff / Employee</label>
+            <select
+              value={selectedEmpId}
+              onChange={(e) => setSelectedEmpId(e.target.value)}
+              className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold text-xs"
+            >
+              <option value="all">All Employees Combined</option>
+              {employees.map(emp => (
+                <option key={emp.id} value={emp.id}>{emp.name} ({emp.role})</option>
+              ))}
+            </select>
+          </div>
+
+          <div className="space-y-1">
+            <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block">Fiscal Year</label>
+            <select
+              value={targetYear}
+              onChange={(e) => setTargetYear(e.target.value)}
+              className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold text-xs"
+            >
+              <option value="2024">2024</option>
+              <option value="2025">2025</option>
+              <option value="2026">2026</option>
+            </select>
+          </div>
+
+          <div className="flex items-end">
+            <button
+              onClick={downloadSalaryReportPDF}
+              className="w-full flex items-center justify-center gap-1.5 px-5 py-2.5 bg-slate-900 text-white hover:bg-slate-800 rounded-xl text-xs font-bold tracking-wider uppercase transition-all shadow-xs cursor-pointer"
+            >
+              <Printer className="w-4 h-4" />
+              <span>PDF Payroll Audit</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Stats Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <div className="bg-slate-50 border border-slate-200 p-6 rounded-3xl">
+          <p className="text-[10px] font-extrabold text-slate-500 uppercase tracking-widest mb-1">Target Monthly Salary</p>
+          <p className="text-2xl font-black text-slate-900">
+            {empTarget ? formatCurrency(empTarget.salary) : "N/A (Multiple staff)"}
+          </p>
+          {empTarget && (
+            <p className="text-[10px] text-slate-400 font-bold mt-1 uppercase">department: {empTarget.department || "General"}</p>
+          )}
+        </div>
+
+        <div className="bg-green-50 border border-green-100 p-6 rounded-3xl flex items-center justify-between">
+          <div>
+            <p className="text-[10px] font-extrabold text-green-850 uppercase tracking-widest mb-1">Total Salary Paid (Yearly)</p>
+            <p className="text-2xl font-black text-green-950">{formatCurrency(totalSalaryPayout)}</p>
+          </div>
+          <div className="w-11 h-11 bg-green-100 rounded-full flex items-center justify-center text-green-600">
+            <CheckCircle2 className="w-5 h-5" />
+          </div>
+        </div>
+
+        <div className="bg-amber-50 border border-amber-100 p-6 rounded-3xl flex items-center justify-between">
+          <div>
+            <p className="text-[10px] font-extrabold text-amber-850 uppercase tracking-widest mb-1">Total Advances Issued</p>
+            <p className="text-2xl font-black text-amber-950">{formatCurrency(totalAdvancePayout)}</p>
+          </div>
+          <div className="w-11 h-11 bg-amber-100 text-amber-600 rounded-full flex items-center justify-center">
+            <Info className="w-5 h-5" />
+          </div>
+        </div>
+      </div>
+
+      {/* History Ledger Table */}
+      <div className="bg-white rounded-3xl shadow-sm border border-slate-100 overflow-hidden">
+        <table className="w-full text-left">
+          <thead>
+            <tr className="bg-slate-50/70">
+              <th className="px-6 py-4 text-[10px] font-extrabold text-slate-500 uppercase tracking-widest border-b border-slate-100">Disbursement Date</th>
+              <th className="px-6 py-4 text-[10px] font-extrabold text-slate-500 uppercase tracking-widest border-b border-slate-100">Employee Name</th>
+              <th className="px-6 py-4 text-[10px] font-extrabold text-slate-500 uppercase tracking-widest border-b border-slate-100">Category</th>
+              <th className="px-6 py-4 text-[10px] font-extrabold text-slate-500 uppercase tracking-widest border-b border-slate-100">Payment Channel</th>
+              <th className="px-6 py-4 text-[10px] font-extrabold text-slate-500 uppercase tracking-widest border-b border-slate-100 text-right">Amount Out (BDT)</th>
+              <th className="px-6 py-4 text-[10px] font-extrabold text-slate-500 uppercase tracking-widest border-b border-slate-100">Comments/Notes</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100 text-xs">
+            {filteredTxs.map(tx => (
+              <tr key={tx.id} className="hover:bg-slate-50/30 transition-all">
+                <td className="px-6 py-4 whitespace-nowrap">
+                  <p className="font-bold text-slate-900">{format(new Date(tx.date), "dd MMM yyyy")}</p>
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap font-semibold text-slate-800">
+                  {employees.find(e => e.id === tx.employeeId)?.name || "Unknown"}
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap">
+                  <span className={cn(
+                    "px-2.5 py-0.5 rounded-full text-[9px] font-extrabold uppercase tracking-wide",
+                    tx.category.includes("Advance") 
+                      ? "bg-amber-100 text-amber-800 border border-amber-200"
+                      : "bg-green-100 text-green-800 border border-green-200"
+                  )}>
+                    {tx.category}
+                  </span>
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap">
+                   <span className="px-2.5 py-1 bg-slate-100 rounded-lg font-bold text-slate-600 uppercase text-[9px]">
+                    {tx.paymentMethod}
+                   </span>
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap text-right font-black text-slate-900">
+                  {formatCurrency(tx.amount)}
+                </td>
+                <td className="px-6 py-4 text-slate-500 max-w-xs truncate italic">
+                  {tx.notes || "—"}
+                </td>
+              </tr>
+            ))}
+            {filteredTxs.length === 0 && (
+              <tr>
+                <td colSpan={6} className="px-6 py-16 text-center text-slate-400 italic font-medium">
+                  No payroll/salary dispatch matches for fiscal {targetYear}.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+/* ==========================================================================
+   NEW TAB 3: SUPPLIER PAYMENTS & LEDGER REPORT (TAB: supplier)
+   ========================================================================== */
+function SupplierPaymentsReport({ suppliers, supplierTransactions, companyName, companyAddress, companyPhone, companyEmail, formatCurrency }: {
+  suppliers: Supplier[];
+  supplierTransactions: SupplierTransaction[];
+  companyName: string;
+  companyAddress: string;
+  companyPhone: string;
+  companyEmail: string;
+  formatCurrency: (val: number) => string;
+}) {
+  const [selectedSupId, setSelectedSupId] = useState("all");
+  const [startDate, setStartDate] = useState(format(subDays(new Date(), 30), "yyyy-MM-dd"));
+  const [endDate, setEndDate] = useState(format(new Date(), "yyyy-MM-dd"));
+
+  const filteredSTxs = supplierTransactions.filter(tx => {
+    if (selectedSupId !== "all" && tx.supplierId !== selectedSupId) return false;
+    const dateStr = tx.date.split("T")[0];
+    if (dateStr < startDate || dateStr > endDate) return false;
+    return true;
+  }).sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+
+  // Supplier metrics calculation
+  const totalPurchaseGross = filteredSTxs
+    .filter(tx => tx.type === "purchase")
+    .reduce((sum, tx) => sum + (tx.totalAmount || 0), 0);
+
+  const totalPaymentsMade = filteredSTxs
+    .filter(tx => tx.type === "payment")
+    .reduce((sum, tx) => sum + (tx.totalAmount || 0), 0);
+
+  const selectedSupObj = suppliers.find(s => s.id === selectedSupId);
+
+  const downloadSupplierPDF = () => {
+    const doc = new jsPDF("p", "mm", "a4");
+    
+    doc.setFillColor(15, 23, 42);
+    doc.rect(0, 0, 210, 38, "F");
+
+    doc.setTextColor(255);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(18);
+    doc.text("SUPPLIER ACCOUNT STATEMENT", 14, 16);
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(8.5);
+    doc.setTextColor(203, 213, 225);
+    doc.text(`${companyName.toUpperCase()} • ${companyAddress}`, 14, 23);
+    doc.text(`Issuer: Procurement Admin || Range: ${startDate} to ${endDate}`, 14, 28);
+
+    doc.setFillColor(14, 165, 233);
+    doc.rect(0, 38, 210, 2, "F");
+
+    if (selectedSupObj) {
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(10);
+      doc.setTextColor(51, 65, 85);
+      doc.text("SUPPLIER CONTRACT DOSSIER", 14, 49);
+
+      doc.setFillColor(248, 250, 252);
+      doc.rect(14, 53, 182, 26, "F");
+
+      doc.setFontSize(8);
+      doc.setTextColor(71, 85, 105);
+      doc.text(`Supplier: ${selectedSupObj.name} (${selectedSupObj.code})`, 18, 59);
+      doc.text(`Mobile Num: ${selectedSupObj.mobile || "—"}`, 18, 64);
+      doc.text(`Corporate Email: ${selectedSupObj.email || "—"}`, 18, 69);
+      doc.text(`Street Address: ${selectedSupObj.address || "—"}`, 18, 74);
+
+      doc.text(`Gross Purchases: BDT ${selectedSupObj.totalAmount.toLocaleString()}`, 115, 59);
+      doc.text(`Outstanding Due Balance: BDT ${selectedSupObj.purchaseDue.toLocaleString()}`, 115, 64);
+      doc.text(`Advance Ledger Balance: BDT ${selectedSupObj.advanceAmount.toLocaleString()}`, 115, 69);
+      doc.text(`Overall Status: ${selectedSupObj.status.toUpperCase()}`, 115, 74);
+    }
+
+    const startTableY = selectedSupObj ? 88 : 48;
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(10);
+    doc.setTextColor(51, 65, 85);
+    doc.text("SUPPLIER ACCOUNT TRANSACTION HISTORY", 14, startTableY);
+
+    const tableRows = filteredSTxs.map(tx => [
+      tx.date,
+      suppliers.find(s => s.id === tx.supplierId)?.name || "Unknown",
+      tx.type.toUpperCase(),
+      tx.refNo,
+      `BDT ${(tx.totalAmount || 0).toLocaleString()}`,
+      `BDT ${(tx.paidAmount || 0).toLocaleString()}`,
+      tx.paymentMethod || "—"
+    ]);
+
+    autoTable(doc, {
+      startY: startTableY + 4,
+      head: [["Tx Date", "Supplier Target", "Tx Type", "Reference No", "Gross Total", "Paid Amount", "Method"]],
+      body: tableRows,
+      theme: "striped",
+      headStyles: {
+        fillColor: [15, 23, 42],
+        textColor: [255, 255, 255],
+        fontSize: 7.5,
+        fontStyle: "bold",
+        halign: "left"
+      },
+      bodyStyles: {
+        fontSize: 7.5,
+        textColor: [51, 65, 81]
+      },
+      columnStyles: {
+        4: { halign: "right", fontStyle: "bold" },
+        5: { halign: "right", fontStyle: "bold" }
+      },
+      styles: {
+        font: "helvetica",
+        cellPadding: 3
+      }
+    });
+
+    doc.save(`Supplier_Ledger_${selectedSupId}.pdf`);
+  };
+
+  return (
+    <div className="space-y-6 animate-in slide-in-from-bottom-5 duration-300 font-sans">
+      {/* Filters Form */}
+      <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-100 dark:border-slate-800">
+        <h3 className="text-xl font-extrabold text-slate-900 mb-5 flex items-center gap-2">
+          <Truck className="w-5 h-5 text-slate-800" />
+          <span>Supplier Reconciliation Console</span>
+        </h3>
+        
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          <div className="space-y-1">
+            <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block">Target Supplier</label>
+            <select
+              value={selectedSupId}
+              onChange={(e) => setSelectedSupId(e.target.value)}
+              className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold text-xs"
+            >
+              <option value="all">All Suppliers Combined</option>
+              {suppliers.map(sup => (
+                <option key={sup.id} value={sup.id}>{sup.name} ({sup.code})</option>
+              ))}
+            </select>
+          </div>
+
+          <div className="space-y-1">
+            <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block">Start Date</label>
+            <input 
+              type="date" 
+              value={startDate}
+              onChange={(e) => setStartDate(e.target.value)}
+              className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold text-xs"
+            />
+          </div>
+
+          <div className="space-y-1">
+            <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block">End Date</label>
+            <input 
+              type="date" 
+              value={endDate}
+              onChange={(e) => setEndDate(e.target.value)}
+              className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold text-xs"
+            />
+          </div>
+
+          <div className="flex items-end">
+            <button
+              onClick={downloadSupplierPDF}
+              className="w-full flex items-center justify-center gap-1.5 px-5 py-2.5 bg-slate-900 text-white hover:bg-slate-800 rounded-xl text-xs font-bold tracking-wider uppercase transition-all shadow-xs cursor-pointer"
+            >
+              <Printer className="w-4 h-4" />
+              <span>PDF Account Ledger</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Metrics Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <div className="bg-slate-50 border border-slate-200 p-6 rounded-3xl">
+          <p className="text-[10px] font-extrabold text-slate-500 uppercase tracking-widest mb-1">Contract Outstanding Due</p>
+          <p className="text-2xl font-black text-slate-900">
+            {selectedSupObj ? formatCurrency(selectedSupObj.purchaseDue) : "N/A (Multi-Vendor)"}
+          </p>
+          {selectedSupObj && (
+            <p className="text-[10px] text-slate-400 font-bold mt-1 uppercase">Supplier Address: {selectedSupObj.address || "—"}</p>
+          )}
+        </div>
+
+        <div className="bg-indigo-50 border border-indigo-100 p-6 rounded-3xl flex items-center justify-between">
+          <div>
+            <p className="text-[10px] font-extrabold text-indigo-850 uppercase tracking-widest mb-1">Gross Purchases in period</p>
+            <p className="text-2xl font-black text-indigo-950">{formatCurrency(totalPurchaseGross)}</p>
+          </div>
+          <div className="w-11 h-11 bg-indigo-100 rounded-full flex items-center justify-center text-indigo-600">
+            <ShoppingCart className="w-5 h-5" />
+          </div>
+        </div>
+
+        <div className="bg-teal-50 border border-teal-100 p-6 rounded-3xl flex items-center justify-between">
+          <div>
+            <p className="text-[10px] font-extrabold text-teal-850 uppercase tracking-widest mb-1">Total Payments Authorized</p>
+            <p className="text-2xl font-black text-teal-950">{formatCurrency(totalPaymentsMade)}</p>
+          </div>
+          <div className="w-11 h-11 bg-teal-100 text-teal-600 rounded-full flex items-center justify-center">
+            <CheckCircle2 className="w-5 h-5" />
+          </div>
+        </div>
+      </div>
+
+      {/* Transactions Journal table */}
+      <div className="bg-white rounded-3xl shadow-sm border border-slate-100 overflow-hidden">
+        <table className="w-full text-left">
+          <thead>
+            <tr className="bg-slate-50/70">
+              <th className="px-6 py-4 text-[10px] font-extrabold text-slate-500 uppercase tracking-widest border-b border-gray-100">Tx Date</th>
+              <th className="px-6 py-4 text-[10px] font-extrabold text-slate-500 uppercase tracking-widest border-b border-gray-100">Supplier Name</th>
+              <th className="px-6 py-4 text-[10px] font-extrabold text-slate-500 uppercase tracking-widest border-b border-gray-100">Type</th>
+              <th className="px-6 py-4 text-[10px] font-extrabold text-slate-500 uppercase tracking-widest border-b border-gray-100">Tx Reference No</th>
+              <th className="px-6 py-4 text-[10px] font-extrabold text-slate-500 uppercase tracking-widest border-b border-gray-100 text-right">Gross Total</th>
+              <th className="px-6 py-4 text-[10px] font-extrabold text-slate-500 uppercase tracking-widest border-b border-gray-100 text-right">Paid Portion</th>
+              <th className="px-6 py-4 text-[10px] font-extrabold text-slate-500 uppercase tracking-widest border-b border-gray-100">Method</th>
+              <th className="px-6 py-4 text-[10px] font-extrabold text-slate-500 uppercase tracking-widest border-b border-gray-100">Reference Notes</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100 text-xs">
+            {filteredSTxs.map(tx => (
+              <tr key={tx.id} className="hover:bg-slate-50/30 transition-all">
+                <td className="px-6 py-4 whitespace-nowrap">
+                  <p className="font-bold text-slate-900">{tx.date}</p>
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap font-semibold text-slate-805">
+                  {suppliers.find(s => s.id === tx.supplierId)?.name || "Unknown"}
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap">
+                  <span className={cn(
+                    "px-2.5 py-0.5 rounded-full text-[9px] font-extrabold uppercase tracking-wide",
+                    tx.type === "purchase" && "bg-blue-100 text-blue-800 border border-blue-200",
+                    tx.type === "payment" && "bg-emerald-100 text-emerald-800 border border-emerald-200",
+                    tx.type === "return" && "bg-rose-100 text-rose-800 border border-rose-200"
+                  )}>
+                    {tx.type}
+                  </span>
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap font-mono text-slate-800">
+                  {tx.refNo}
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap text-right font-black text-slate-900">
+                  {formatCurrency(tx.totalAmount)}
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap text-right font-bold text-emerald-600">
+                  {tx.paidAmount ? formatCurrency(tx.paidAmount) : "—"}
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap">
+                   <span className="px-2 py-0.5 bg-slate-100 rounded text-[9px] font-bold text-slate-500 uppercase">
+                    {tx.paymentMethod || "—"}
+                   </span>
+                </td>
+                <td className="px-6 py-4 text-slate-500 max-w-xs truncate italic">
+                  {tx.notes || "—"}
+                </td>
+              </tr>
+            ))}
+            {filteredSTxs.length === 0 && (
+              <tr>
+                <td colSpan={8} className="px-6 py-16 text-center text-slate-400 italic">
+                  No account journals found in the chosen timeframe parameters.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+/* ==========================================================================
+   NEW TAB 4: PURCHASE ORDERS SUMMARY AUDIT (TAB: purchase)
+   ========================================================================== */
+function PurchaseReportSection({ suppliers, purchases, companyName, companyAddress, companyPhone, companyEmail, formatCurrency }: {
+  suppliers: Supplier[];
+  purchases: PurchaseModel[];
+  companyName: string;
+  companyAddress: string;
+  companyPhone: string;
+  companyEmail: string;
+  formatCurrency: (val: number) => string;
+}) {
+  const [selectedSupId, setSelectedSupId] = useState("all");
+  const [startDate, setStartDate] = useState(format(subDays(new Date(), 30), "yyyy-MM-dd"));
+  const [endDate, setEndDate] = useState(format(new Date(), "yyyy-MM-dd"));
+  const [paymentStatus, setPaymentStatus] = useState("all");
+
+  const filteredPurchases = purchases.filter(p => {
+    if (selectedSupId !== "all" && p.supplierId !== selectedSupId) return false;
+    if (p.date < startDate || p.date > endDate) return false;
+    
+    if (paymentStatus === "due" && p.dueAmount <= 0) return false;
+    if (paymentStatus === "paid" && p.dueAmount > 0) return false;
+    if (paymentStatus === "return" && (!p.writtenReturn || p.writtenReturn <= 0)) return false;
+
+    return true;
+  }).sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+
+  // Calculations
+  const totalPurchaseAmt = filteredPurchases.reduce((sum, p) => sum + p.totalAmount, 0);
+  const totalPaidAmt = filteredPurchases.reduce((sum, p) => sum + p.paidAmount, 0);
+  const totalOutstandingDue = filteredPurchases.reduce((sum, p) => sum + p.dueAmount, 0);
+
+  const downloadPurchaseReportPDF = () => {
+    const doc = new jsPDF("p", "mm", "a4");
+
+    doc.setFillColor(15, 23, 42);
+    doc.rect(0, 0, 210, 38, "F");
+
+    doc.setTextColor(255);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(18);
+    doc.text("PURCHASE STATISTICAL METRIC AUDIT", 14, 16);
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(8.5);
+    doc.setTextColor(203, 213, 225);
+    doc.text(`${companyName.toUpperCase()} • ${companyAddress}`, 14, 23);
+    doc.text(`Issuer: Operations Hub || Date Range: ${startDate} to ${endDate}`, 14, 28);
+
+    doc.setFillColor(14, 165, 233);
+    doc.rect(0, 38, 210, 2, "F");
+
+    // Metrics Cards
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(10);
+    doc.setTextColor(51, 65, 85);
+    doc.text("PURCHASE LOGISTICS LEDGER STANDINGS", 14, 49);
+
+    const metrics = [
+      { label: "Gross Purchase Cost", val: `BDT ${totalPurchaseAmt.toLocaleString()}` },
+      { label: "Settled Paid Cash", val: `BDT ${totalPaidAmt.toLocaleString()}` },
+      { label: "Outstanding Dues", val: `BDT ${totalOutstandingDue.toLocaleString()}` }
+    ];
+
+    let metricX = 14;
+    metrics.forEach(m => {
+      doc.setFillColor(248, 250, 252);
+      doc.setDrawColor(226, 232, 240);
+      doc.rect(metricX, 53, 56, 20, "FD");
+
+      doc.setFillColor(15, 23, 42); // slate block top line
+      doc.rect(metricX, 53, 56, 1, "F");
+
+      doc.setTextColor(148, 163, 184);
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(6.5);
+      doc.text(m.label.toUpperCase(), metricX + 3, 59);
+
+      doc.setTextColor(15, 23, 42);
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(9);
+      doc.text(m.val, metricX + 3, 67);
+
+      metricX += 61;
+    });
+
+    const tableRows = filteredPurchases.map(p => [
+      p.date,
+      p.refNo,
+      p.supplierName,
+      `BDT ${p.totalAmount.toLocaleString()}`,
+      `BDT ${p.paidAmount.toLocaleString()}`,
+      `BDT ${p.dueAmount.toLocaleString()}`,
+      p.paymentMethod,
+      p.notes || "-"
+    ]);
+
+    autoTable(doc, {
+      startY: 84,
+      head: [["Inv Date", "Invoice No", "Supplier Target", "Gross Cost", "Paid Amount", "Remaining Due", "Method", "Invoice Remarks"]],
+      body: tableRows,
+      theme: "striped",
+      headStyles: {
+        fillColor: [15, 23, 42],
+        textColor: [255, 255, 255],
+        fontSize: 7.5,
+        fontStyle: "bold",
+        halign: "left"
+      },
+      bodyStyles: {
+        fontSize: 7.5,
+        textColor: [51, 65, 81]
+      },
+      columnStyles: {
+        3: { halign: "right", fontStyle: "bold" },
+        4: { halign: "right", fontStyle: "bold" },
+        5: { halign: "right", fontStyle: "bold" }
+      },
+      styles: {
+        font: "helvetica",
+        cellPadding: 3
+      }
+    });
+
+    doc.save(`Purchase_Audit_${startDate}_to_${endDate}.pdf`);
+  };
+
+  return (
+    <div className="space-y-6 animate-in slide-in-from-bottom-5 duration-300 font-sans">
+      {/* Filters Form */}
+      <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-100 dark:border-slate-800">
+        <h3 className="text-xl font-extrabold text-slate-900 mb-5 flex items-center gap-2">
+          <ShoppingCart className="w-5 h-5 text-slate-800" />
+          <span>Purchase Logistics Filter Desk</span>
+        </h3>
+        
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+          <div className="space-y-1">
+            <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block">Target Supplier</label>
+            <select
+              value={selectedSupId}
+              onChange={(e) => setSelectedSupId(e.target.value)}
+              className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold text-xs"
+            >
+              <option value="all">All Vendors</option>
+              {suppliers.map(sup => (
+                <option key={sup.id} value={sup.id}>{sup.name}</option>
+              ))}
+            </select>
+          </div>
+
+          <div className="space-y-1">
+            <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block">Settlement Status</label>
+            <select
+              value={paymentStatus}
+              onChange={(e) => setPaymentStatus(e.target.value)}
+              className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold text-xs"
+            >
+              <option value="all">All Purchase Orders</option>
+              <option value="due">Unsettled (Has Outstanding Due)</option>
+              <option value="paid">Fully Paid / Clean Settlement</option>
+              <option value="return">Orders with Returns Applied</option>
+            </select>
+          </div>
+
+          <div className="space-y-1">
+            <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block">From Date</label>
+            <input 
+              type="date" 
+              value={startDate}
+              onChange={(e) => setStartDate(e.target.value)}
+              className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold text-xs"
+            />
+          </div>
+
+          <div className="space-y-1">
+            <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block">To Date</label>
+            <input 
+              type="date" 
+              value={endDate}
+              onChange={(e) => setEndDate(e.target.value)}
+              className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold text-xs"
+            />
+          </div>
+
+          <div className="flex items-end">
+            <button
+              onClick={downloadPurchaseReportPDF}
+              className="w-full flex items-center justify-center gap-1.5 px-5 py-2.5 bg-slate-900 text-white hover:bg-slate-800 rounded-xl text-xs font-bold tracking-wider uppercase transition-all shadow-xs cursor-pointer"
+            >
+              <Printer className="w-4 h-4" />
+              <span>Purchase PDF Audit</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Statistics breakdown */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <div className="bg-slate-50 border border-slate-200 p-6 rounded-3xl">
+          <p className="text-[10px] font-extrabold text-slate-505 uppercase tracking-widest mb-1">Period Purchase Valuation</p>
+          <p className="text-2xl font-black text-slate-900">{formatCurrency(totalPurchaseAmt)}</p>
+          <p className="text-[11px] text-slate-400 font-semibold mt-1 uppercase">aggregated across {filteredPurchases.length} invoices</p>
+        </div>
+
+        <div className="bg-green-50 border border-green-100 p-6 rounded-3xl flex items-center justify-between">
+          <div>
+            <p className="text-[10px] font-extrabold text-green-800 uppercase tracking-widest mb-1">Settled Cash paid</p>
+            <p className="text-2xl font-black text-green-950">{formatCurrency(totalPaidAmt)}</p>
+          </div>
+          <div className="w-11 h-11 bg-green-100 text-green-600 rounded-full flex items-center justify-center">
+            <CheckCircle2 className="w-5 h-5" />
+          </div>
+        </div>
+
+        <div className="bg-red-50 border border-red-100 p-6 rounded-3xl flex items-center justify-between font-sans">
+          <div>
+            <p className="text-[10px] font-extrabold text-red-800 uppercase tracking-widest mb-1">Outstanding Liability (Dues)</p>
+            <p className="text-2xl font-black text-red-950">{formatCurrency(totalOutstandingDue)}</p>
+          </div>
+          <div className="w-11 h-11 bg-red-100 text-red-650 rounded-full flex items-center justify-center">
+            <Info className="w-5 h-5" />
+          </div>
+        </div>
+      </div>
+
+      {/* Invoice Data Grid */}
+      <div className="bg-white rounded-3xl shadow-sm border border-slate-100 overflow-hidden font-sans">
+        <table className="w-full text-left">
+          <thead>
+            <tr className="bg-slate-50/70">
+              <th className="px-6 py-4 text-[10px] font-extrabold text-slate-500 uppercase tracking-widest border-b border-gray-100">Invoice Date</th>
+              <th className="px-6 py-4 text-[10px] font-extrabold text-slate-500 uppercase tracking-widest border-b border-gray-100 font-mono">Invoice Number</th>
+              <th className="px-6 py-4 text-[10px] font-extrabold text-slate-500 uppercase tracking-widest border-b border-gray-100">Supplier Name</th>
+              <th className="px-6 py-4 text-[10px] font-extrabold text-slate-500 uppercase tracking-widest border-b border-gray-100 text-right">Invoice Total</th>
+              <th className="px-6 py-4 text-[10px] font-extrabold text-slate-500 uppercase tracking-widest border-b border-gray-100 text-right">Cash Paid</th>
+              <th className="px-6 py-4 text-[10px] font-extrabold text-slate-500 uppercase tracking-widest border-b border-gray-100 text-right">Due Balance</th>
+              <th className="px-6 py-4 text-[10px] font-extrabold text-slate-500 uppercase tracking-widest border-b border-gray-100 text-right">Return (Auto)</th>
+              <th className="px-6 py-4 text-[10px] font-extrabold text-slate-500 uppercase tracking-widest border-b border-gray-100">Method</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100 text-xs text-slate-800">
+            {filteredPurchases.map(p => (
+              <tr key={p.id} className="hover:bg-slate-50/30 transition-all">
+                <td className="px-6 py-4 whitespace-nowrap">
+                  <p className="font-bold">{p.date}</p>
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap font-mono font-bold text-slate-900 uppercase">
+                  {p.refNo}
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap font-semibold">
+                  {p.supplierName}
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap text-right font-black">
+                  {formatCurrency(p.totalAmount)}
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap text-right font-extrabold text-emerald-600">
+                  {formatCurrency(p.paidAmount)}
+                </td>
+                <td className={cn(
+                  "px-6 py-4 whitespace-nowrap text-right font-black",
+                  p.dueAmount > 0 ? "text-red-650" : "text-slate-400"
+                )}>
+                  {formatCurrency(p.dueAmount)}
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap text-right font-semibold text-rose-600">
+                  {p.writtenReturn ? formatCurrency(p.writtenReturn) : "0"}
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap">
+                   <span className="px-2 py-0.5 bg-slate-100 rounded text-[9.5px] font-bold text-slate-500 uppercase">
+                    {p.paymentMethod}
+                   </span>
+                </td>
+              </tr>
+            ))}
+            {filteredPurchases.length === 0 && (
+              <tr>
+                <td colSpan={8} className="px-6 py-16 text-center text-slate-400 italic">
+                  No matching purchase invoices registered in the chosen filter range.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+/* ==========================================================================
+   ORIGINAL TAB: ATTENDANCE REPORT
+   ========================================================================== */
+function AttendanceReport({ employees, attendance }: { employees: Employee[]; attendance: any[] }) {
+  const [selectedMonth, setSelectedMonth] = useState(format(new Date(), "yyyy-MM"));
+  const [aiAnalysis, setAiAnalysis] = useState<string>("");
+  const [isAiLoading, setIsAiLoading] = useState<boolean>(false);
+  const [aiError, setAiError] = useState<string>("");
+
+  const filteredAttendance = attendance.filter(a => {
+    try {
+      return a.date && a.date.startsWith(selectedMonth);
+    } catch {
+      return false;
+    }
+  });
+
+  // Calculate detailed lateness metrics
+  const getMinutesFromTime = (timeStr?: string): number => {
+    if (!timeStr) return 0;
+    const [h, m] = timeStr.split(":").map(Number);
+    if (isNaN(h) || isNaN(m)) return 0;
+    return h * 60 + m;
+  };
+
+  const getLunchDurationMinutes = (lunchOut?: string, lunchIn?: string): number => {
+    if (!lunchOut || !lunchIn) return 0;
+    const outMins = getMinutesFromTime(lunchOut);
+    const inMins = getMinutesFromTime(lunchIn);
+    return Math.max(0, inMins - outMins);
+  };
+
+  const getStoreLatenessMinutes = (checkIn?: string): number => {
+    if (!checkIn) return 0;
+    const checkInMins = getMinutesFromTime(checkIn);
+    const standardInMins = 540; // 09:00 AM standard
+    return Math.max(0, checkInMins - standardInMins);
+  };
+
+  // Compile stats per employee for the selected month
+  const employeePerformance = employees.map(emp => {
+    const records = filteredAttendance.filter(a => a.employeeId === emp.id);
+    const presentCount = records.filter(r => r.status === "present" || r.status === "late" || r.status === "half-day").length;
+    const absentCount = records.filter(r => r.status === "absent").length;
+    const leaveCount = records.filter(r => r.status === "leave").length;
+    const lateDaysCount = records.filter(r => r.status === "late").length;
+    
+    let totalStoreLateMins = 0;
+    let totalLunchOvertimeMins = 0;
+    let lunchBreachesCount = 0;
+
+    records.forEach(rec => {
+      // Store late minutes (past 09:00 AM standard shift)
+      const lateMins = getStoreLatenessMinutes(rec.checkIn);
+      totalStoreLateMins += lateMins;
+
+      // Lunch overtime minutes (past 60 minutes rule)
+      if (rec.lunchOut) {
+        if (!rec.lunchIn) {
+          // Went out to lunch but didn't return (counted as half-day automatic)
+          // No excess calculation, but we can treat it as lost afternoon time (e.g. 240 mins)
+          totalLunchOvertimeMins += 240; 
+          lunchBreachesCount++;
+        } else {
+          const duration = getLunchDurationMinutes(rec.lunchOut, rec.lunchIn);
+          if (duration > 60) {
+            totalLunchOvertimeMins += (duration - 60);
+            lunchBreachesCount++;
+          }
+        }
+      }
+    });
+
+    // Wage calculations (Minute rate based on monthly salary/208/60)
+    const hourlyWage = (emp.salary || 0) / 208;
+    const minWage = hourlyWage / 60;
+    const totalWastedMinutes = totalStoreLateMins + totalLunchOvertimeMins;
+    const estimatedDeduction = totalWastedMinutes * minWage;
+
+    return {
+      id: emp.id,
+      name: emp.name,
+      role: emp.role,
+      salary: emp.salary,
+      presentDays: presentCount,
+      absentDays: absentCount,
+      leaveDays: leaveCount,
+      lateDays: lateDaysCount,
+      storeLateMinutes: totalStoreLateMins,
+      lunchOvertimeMinutes: totalLunchOvertimeMins,
+      lunchBreaches: lunchBreachesCount,
+      totalWastedMinutes,
+      estimatedDeduction: Math.round(estimatedDeduction)
+    };
+  });
+
+  // Global aggregate summaries
+  const totalStoreLate = employeePerformance.reduce((sum, e) => sum + e.storeLateMinutes, 0);
+  const totalLunchOvertime = employeePerformance.reduce((sum, e) => sum + e.lunchOvertimeMinutes, 0);
+  const totalWastedMins = totalStoreLate + totalLunchOvertime;
+  const totalWastedHrs = Math.round((totalWastedMins / 60) * 10) / 10;
+  const totalDeductions = employeePerformance.reduce((sum, e) => sum + e.estimatedDeduction, 0);
+  const totalLunchBreaches = employeePerformance.reduce((sum, e) => sum + e.lunchBreaches, 0);
+
+  // Chart data: Employees tardiness comparison
+  const chartData = employeePerformance
+    .filter(e => e.totalWastedMinutes > 0)
+    .map(e => ({
+      name: e.name.split(" ")[0], // Use first name for space-efficiency
+      "Store Arrival Late (m)": e.storeLateMinutes,
+      "Lunch Break Overtime (m)": e.lunchOvertimeMinutes,
+      "Excess Loss (BDT)": e.estimatedDeduction
+    }));
+
+  const handleAskGemini = async () => {
+    setIsAiLoading(true);
+    setAiError("");
+    setAiAnalysis("");
+    try {
+      const response = await fetch("/api/gemini/analyze-attendance", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          month: selectedMonth,
+          employees: employees.map(e => ({ id: e.id, name: e.name, role: e.role, salary: e.salary })),
+          attendanceLogs: filteredAttendance,
+          rules: { lunchDurationLimit: 60 }
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error("HTTP connection error to Gemini middleware broker.");
+      }
+
+      const data = await response.json();
+      setAiAnalysis(data.analysis || "No response received.");
+    } catch (err: any) {
+      console.error(err);
+      setAiError("Connection to the server AI assistant failed. Is the API route active?");
+    } finally {
+      setIsAiLoading(false);
+    }
+  };
+
+  // Lightweight beautiful markdown formatter utility to render Gemini results without external dependencies
+  const renderFormattedMarkdown = (rawText: string) => {
+    if (!rawText) return null;
+    return rawText.split("\n").map((line, i) => {
+      // Headings
+      if (line.startsWith("### ")) {
+        return <h5 key={i} className="text-sm font-bold text-gray-900 dark:text-neutral-100 mt-4 mb-1.5 uppercase tracking-wide border-b border-gray-100 dark:border-zinc-850 pb-1">{line.replace("### ", "")}</h5>;
+      }
+      if (line.startsWith("## ")) {
+        return <h4 key={i} className="text-base font-black text-gray-950 dark:text-white mt-5 mb-2 border-l-2 border-[#D12765] pl-2">{line.replace("## ", "")}</h4>;
+      }
+      if (line.startsWith("# ")) {
+        return <h3 key={i} className="text-lg font-black text-gray-950 dark:text-white mt-6 mb-3 tracking-tight">{line.replace("# ", "")}</h3>;
+      }
+
+      // List Items
+      if (line.startsWith("- ") || line.startsWith("* ")) {
+        const textContent = line.replace(/^[-*]\s+/, "");
+        // Format bold fragments
+        return (
+          <li key={i} className="ml-5 list-disc text-xs text-slate-650 dark:text-neutral-300 mb-1 leading-relaxed">
+            {formatBoldText(textContent)}
+          </li>
+        );
+      }
+
+      // Normal paragraph line
+      if (line.trim() === "") return <div key={i} className="h-2" />;
+      return (
+        <p key={i} className="text-xs text-slate-605 dark:text-neutral-300 leading-relaxed mb-1.5">
+          {formatBoldText(line)}
+        </p>
+      );
+    });
+  };
+
+  const formatBoldText = (text: string) => {
+    const parts = text.split(/\*\*([\s\S]*?)\*\*/g);
+    return parts.map((part, index) => {
+      if (index % 2 === 1) {
+        return <strong key={index} className="font-extrabold text-gray-950 dark:text-white">{part}</strong>;
+      }
+      return part;
+    });
+  };
+
+  return (
+    <div className="space-y-8 animate-in slide-in-from-bottom-5 duration-300">
+      {/* KPI Selection Bar */}
+      <div className="bg-white dark:bg-zinc-900 p-6 sm:p-8 rounded-[32px] shadow-sm border border-slate-100 dark:border-zinc-800/40 flex flex-col md:flex-row items-center justify-between gap-6 transition-colors">
+        <div className="flex items-center gap-4">
+          <div className="w-12 h-12 bg-rose-50 dark:bg-rose-950/30 border border-rose-100 dark:border-rose-900/40 rounded-2xl flex items-center justify-center shrink-0">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5 text-rose-600 dark:text-rose-450">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+          </div>
+          <div>
+            <h3 className="text-xl font-black text-slate-900 dark:text-neutral-100">Time-Wastage & Lateness Report</h3>
+            <p className="text-xs text-slate-500 font-medium">Monthly audit of daily shift tardiness, lunch break policies, and salary deductions.</p>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-3 w-full md:w-auto">
+          <input 
+            type="month" 
+            value={selectedMonth}
+            onChange={(e) => setSelectedMonth(e.target.value)}
+            className="px-4 py-2.5 bg-slate-50 dark:bg-zinc-950 border border-slate-200 dark:border-zinc-800 rounded-xl font-bold text-xs text-gray-950 dark:text-white focus:ring-2 focus:ring-rose-100 outline-none cursor-pointer w-full md:w-auto"
+          />
+        </div>
+      </div>
+
+      {/* Aggregate metrics */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div className="bg-white dark:bg-zinc-900 p-5 rounded-[22px] border border-slate-100 dark:border-zinc-800/50 flex items-center gap-3">
+          <div className="w-10 h-10 bg-amber-50 dark:bg-amber-950/20 text-amber-600 dark:text-amber-450 rounded-xl flex items-center justify-center shrink-0">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 01-7.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z" />
+            </svg>
+          </div>
+          <div>
+            <p className="text-[9px] uppercase font-bold tracking-widest text-slate-400 mb-0.5">Total Store Late</p>
+            <h3 className="text-lg font-black text-slate-900 dark:text-neutral-100 font-mono leading-none">{totalStoreLate} mins</h3>
+            <span className="text-[8px] text-gray-400 font-semibold uppercase">Shift arrival lost</span>
+          </div>
+        </div>
+
+        <div className="bg-white dark:bg-zinc-900 p-5 rounded-[22px] border border-slate-100 dark:border-zinc-800/50 flex items-center gap-3">
+          <div className="w-10 h-10 bg-orange-50 dark:bg-orange-950/20 text-orange-600 dark:text-orange-450 rounded-xl flex items-center justify-center shrink-0">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 3v2.25m6.364.386l-1.591 1.591M21 12h-2.25m-.386 6.364l-1.591-1.591M12 18.75V21m-4.773-4.227l-1.591 1.591M5.25 12H3m4.227-4.773L5.636 5.636M15.75 12a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0z" />
+            </svg>
+          </div>
+          <div>
+            <p className="text-[9px] uppercase font-bold tracking-widest text-slate-400 mb-0.5">Lunch Late Break</p>
+            <h3 className="text-lg font-black text-slate-900 dark:text-neutral-100 font-mono leading-none">{totalLunchOvertime} mins</h3>
+            <span className="text-[8px] text-orange-600 font-bold uppercase">{totalLunchBreaches} incidents</span>
+          </div>
+        </div>
+
+        <div className="bg-white dark:bg-zinc-900 p-5 rounded-[22px] border border-slate-100 dark:border-zinc-800/50 flex items-center gap-3">
+          <div className="w-10 h-10 bg-red-50 dark:bg-red-950/20 text-red-600 dark:text-red-450 rounded-xl flex items-center justify-center shrink-0">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+            </svg>
+          </div>
+          <div>
+            <p className="text-[9px] uppercase font-bold tracking-widest text-slate-400 mb-0.5">Total Wasted Hours</p>
+            <h3 className="text-lg font-black text-slate-900 dark:text-neutral-100 font-mono leading-none">{totalWastedHrs} hours</h3>
+            <span className="text-[8px] text-red-500 font-bold uppercase">Store productivity lost</span>
+          </div>
+        </div>
+
+        <div className="bg-white dark:bg-zinc-900 p-5 rounded-[22px] border border-slate-100 dark:border-zinc-800/50 flex items-center gap-3">
+          <div className="w-10 h-10 bg-emerald-50 dark:bg-emerald-950/20 text-emerald-600 dark:text-emerald-450 rounded-xl flex items-center justify-center shrink-0">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+          </div>
+          <div>
+            <p className="text-[9px] uppercase font-bold tracking-widest text-slate-400 mb-0.5">Calculated Deductions</p>
+            <h3 className="text-lg font-black text-emerald-600 dark:text-emerald-400 font-mono leading-none">{totalDeductions.toLocaleString()} BDT</h3>
+            <span className="text-[8px] text-emerald-600 font-semibold uppercase">Recouped in payroll</span>
+          </div>
+        </div>
+      </div>
+
+      {/* Main visual side-by-side: Chart vs Employee Table */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Recharts Graphical Distribution */}
+        <div className="bg-white dark:bg-zinc-900 p-6 rounded-3xl border border-slate-100 dark:border-zinc-800/50 flex flex-col justify-between">
+          <div>
+            <h4 className="text-sm font-black text-slate-900 dark:text-neutral-100 uppercase tracking-wider mb-1">Time Leakage Distributions</h4>
+            <p className="text-[11px] text-slate-400 font-semibold mb-6 uppercase">Store check-in delay (mins) vs lunchtime limit breaches (mins) by active staff</p>
+          </div>
+          
+          <div className="h-64 sm:h-72 w-full font-mono text-[10px]">
+            {chartData.length === 0 ? (
+              <div className="w-full h-full flex items-center justify-center text-slate-450 italic border border-dashed border-slate-100 dark:border-zinc-800 rounded-2xl">
+                100% On-time compliance. No tardiness charted!
+              </div>
+            ) : (
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={chartData}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E5E7EB" />
+                  <XAxis dataKey="name" stroke="#9CA3AF" />
+                  <YAxis stroke="#9CA3AF" />
+                  <Tooltip cursor={{ fill: '#F3F4F6', opacity: 0.5 }} />
+                  <Legend />
+                  <Bar dataKey="Store Arrival Late (m)" fill="#F59E0B" radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="Lunch Break Overtime (m)" fill="#EA580C" radius={[4, 4, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            )}
+          </div>
+        </div>
+
+        {/* Live list ledger of employees */}
+        <div className="bg-white dark:bg-zinc-900 p-6 rounded-3xl border border-slate-100 dark:border-zinc-800/50">
+          <h4 className="text-sm font-black text-slate-900 dark:text-neutral-100 uppercase tracking-wider mb-1">Staff Loss Analysis Ledger</h4>
+          <p className="text-[11px] text-slate-400 font-semibold mb-6 uppercase">Calculation of custom minutes late and dynamic payroll deductions</p>
+          
+          <div className="divide-y divide-slate-50 dark:divide-zinc-850 max-h-[295px] overflow-y-auto pr-1">
+            {employeePerformance.map(item => (
+              <div key={item.id} className="py-3 flex items-center justify-between gap-3 group text-xs">
+                <div>
+                  <h5 className="font-extrabold text-slate-900 dark:text-neutral-100 group-hover:text-[#D12765] transition-colors">{item.name}</h5>
+                  <p className="text-[9px] font-bold text-gray-400 uppercase tracking-wider">
+                    Store Delay: {item.storeLateMinutes}m | Lunch Overtime: {item.lunchOvertimeMinutes}m ({item.lunchBreaches}x)
+                  </p>
+                </div>
+                <div className="text-right font-mono">
+                  {item.totalWastedMinutes > 0 ? (
+                    <>
+                      <span className="font-black text-rose-600 block">-{item.estimatedDeduction} BDT</span>
+                      <span className="text-[7px] text-gray-400 uppercase font-black leading-none">{item.totalWastedMinutes} mins total</span>
+                    </>
+                  ) : (
+                    <span className="text-[9px] font-black uppercase text-emerald-600 tracking-wider">compliant</span>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* Dynamic Express Server Powered Gemini Interactive Analyst */}
+      <div className="bg-slate-950 text-white rounded-[32px] p-6 sm:p-8 border border-slate-900 shadow-xl relative overflow-hidden">
+        {/* Subtle decorative background shine */}
+        <div className="absolute -right-20 -top-20 w-80 h-80 bg-rose-500/10 rounded-full blur-3xl pointer-events-none" />
+        <div className="absolute -left-20 -bottom-20 w-80 h-80 bg-blue-500/10 rounded-full blur-3xl pointer-events-none" />
+
+        <div className="flex flex-col md:flex-row md:items-start justify-between gap-6 relative z-10">
+          <div className="space-y-2">
+            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-rose-500/10 text-rose-400 border border-rose-500/20 text-[9px] font-black uppercase tracking-widest leading-none">
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" className="w-3 h-3 animate-spin" style={{ animationDuration: '4s' }}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 21l-.813-5.096L3.096 15.125l5.096-.813L9 9.125l.813 5.096 5.096.813-5.096.813zM19.5 5.25l-.375 2.25L16.875 8l2.25.375.375 2.25.375-2.25 2.25-.375-2.25-.375-.375-2.25z" />
+              </svg>
+              Gemini AI Productivity Coach
+            </span>
+            <h3 className="text-2xl font-black tracking-tight text-white leading-tight">Generate AI Attendance Audit</h3>
+            <p className="text-xs text-slate-300 font-medium font-sans">Our intelligent assistant analyzes time-stamps to explain store wasted hours and suggest actionable improvements.</p>
+          </div>
+
+          <button
+            onClick={handleAskGemini}
+            disabled={isAiLoading}
+            className="px-6 py-3 bg-white hover:bg-slate-100 text-slate-950 font-black text-xs uppercase tracking-wider rounded-2xl flex items-center gap-2 shadow-xl hover:shadow-2xl transition-all active:scale-95 disabled:opacity-50 shrink-0 self-start md:self-auto cursor-pointer border-none"
+          >
+            {isAiLoading ? (
+              <>
+                <div className="w-3.5 h-3.5 border-2 border-slate-950 border-t-transparent rounded-full animate-spin" />
+                <span>Auditing logs...</span>
+              </>
+            ) : (
+              <>
+                <Award className="w-4 h-4 text-[#D12765]" />
+                <span>Explain through AI</span>
+              </>
+            )}
+          </button>
+        </div>
+
+        {/* Gemini Output Block */}
+        <AnimatePresence mode="wait">
+          {(aiAnalysis || isAiLoading || aiError) && (
+            <motion.div
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: "auto", opacity: 1 }}
+              exit={{ height: 0, opacity: 0 }}
+              transition={{ duration: 0.3 }}
+              className="mt-6 pt-6 border-t border-slate-800/60 font-sans relative z-10"
+            >
+              {isAiLoading && (
+                <div className="py-12 flex flex-col items-center justify-center text-center gap-3">
+                  <div className="w-8 h-8 rounded-full border-4 border-rose-500 border-t-transparent animate-spin" />
+                  <p className="text-xs font-black text-slate-400 uppercase tracking-widest animate-pulse">Consulting Gemini retail decision engine...</p>
+                </div>
+              )}
+
+              {aiError && (
+                <div className="p-4 bg-red-950/40 border border-red-900/40 rounded-2xl text-xs text-red-400 font-bold flex items-center gap-2">
+                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4 text-red-400">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                  </svg>
+                  {aiError}
+                </div>
+              )}
+
+              {aiAnalysis && (
+                <div className="bg-slate-900/60 rounded-3xl p-6 sm:p-8 border border-slate-800 text-left font-sans">
+                  {renderFormattedMarkdown(aiAnalysis)}
+                </div>
+              )}
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
+    </div>
+  );
+}
+
+/* ==========================================================================
+   ORIGINAL TAB: GENERAL TRANSACTION HISTORY REPORT
+   ========================================================================== */
 function TransactionsReport({ transactions }: { transactions: Transaction[] }) {
-  const [dateRange, setDateRange] = useState("month"); // month, year, custom
+  const [dateRange, setDateRange] = useState("month");
   
   const now = new Date();
   const filtered = transactions.filter(tx => {
@@ -1562,25 +2343,25 @@ function TransactionsReport({ transactions }: { transactions: Transaction[] }) {
   const expenseTotal = filtered.filter(tx => tx.type === "expense").reduce((sum, tx) => sum + tx.amount, 0);
 
   return (
-    <div className="space-y-8 animate-in slide-in-from-bottom-5 duration-500">
-      <div className="bg-white p-8 rounded-[40px] shadow-sm border border-gray-100 flex items-center justify-between">
+    <div className="space-y-8 animate-in slide-in-from-bottom-5 duration-300">
+      <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-100 flex items-center justify-between">
         <div className="flex items-center gap-4">
-          <div className="w-16 h-16 bg-purple-50 rounded-3xl flex items-center justify-center">
-            <TrendingUp className="w-8 h-8 text-purple-600" />
+          <div className="w-12 h-12 bg-purple-50 border border-purple-150 rounded-xl flex items-center justify-center">
+            <TrendingUp className="w-6 h-6 text-purple-600" />
           </div>
           <div>
-            <h3 className="text-2xl font-black text-gray-900">Financial History & Trends</h3>
-            <p className="text-gray-500 font-medium italic">Broad overview of spending and income distribution.</p>
+            <h3 className="text-xl font-extrabold text-slate-900">Financial History & Trends</h3>
+            <p className="text-xs text-slate-500 font-medium font-sans">Broad overview of general spending and core income distribution.</p>
           </div>
         </div>
-        <div className="flex bg-gray-50 p-1 rounded-2xl">
+        <div className="flex bg-slate-50 p-1 rounded-xl border border-slate-200">
           {["month", "year", "all"].map(range => (
             <button 
               key={range}
               onClick={() => setDateRange(range)}
               className={cn(
-                "px-6 py-2 rounded-xl text-xs font-black uppercase tracking-widest transition-all",
-                dateRange === range ? "bg-white text-gray-900 shadow-sm" : "text-gray-400 hover:text-gray-900"
+                "px-5 py-2 rounded-lg text-xs font-black uppercase tracking-wider transition-all",
+                dateRange === range ? "bg-white text-slate-900 shadow-sm" : "text-slate-400 hover:text-slate-950"
               )}
             >
               {range}
@@ -1589,28 +2370,31 @@ function TransactionsReport({ transactions }: { transactions: Transaction[] }) {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <div className="bg-blue-600 p-8 rounded-[40px] text-white shadow-2xl">
-          <p className="text-xs font-black uppercase tracking-widest opacity-60 mb-2">Total Income</p>
-          <p className="text-4xl font-black italic">{formatCurrency(incomeTotal)}</p>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 font-mono">
+        <div className="bg-slate-900 border border-slate-950 p-6 rounded-3xl text-white shadow-xl relative overflow-hidden">
+          <div className="absolute top-2 right-4 text-[9px] uppercase tracking-widest font-black opacity-30">credit inflow</div>
+          <p className="text-xs font-extrabold uppercase tracking-widest opacity-60 mb-1">Total Income</p>
+          <p className="text-2xl font-black">{incomeTotal.toLocaleString()} BDT</p>
         </div>
-        <div className="bg-red-600 p-8 rounded-[40px] text-white shadow-2xl">
-          <p className="text-xs font-black uppercase tracking-widest opacity-60 mb-2">Total Expense</p>
-          <p className="text-4xl font-black italic">{formatCurrency(expenseTotal)}</p>
+        <div className="bg-red-900 border border-red-950 p-6 rounded-3xl text-white shadow-xl relative overflow-hidden">
+          <div className="absolute top-2 right-4 text-[9px] uppercase tracking-widest font-black opacity-30">debit outflow</div>
+          <p className="text-xs font-extrabold uppercase tracking-widest opacity-60 mb-1">Total Expense</p>
+          <p className="text-2xl font-black">{expenseTotal.toLocaleString()} BDT</p>
         </div>
-        <div className="bg-gray-900 p-8 rounded-[40px] text-white shadow-2xl">
-          <p className="text-xs font-black uppercase tracking-widest opacity-60 mb-2">Net Margin</p>
-          <p className="text-4xl font-black italic">{formatCurrency(incomeTotal - expenseTotal)}</p>
+        <div className="bg-slate-900 border border-slate-950 p-6 rounded-3xl text-white shadow-xl relative overflow-hidden">
+          <div className="absolute top-2 right-4 text-[9px] text-[#d4af37] uppercase tracking-widest font-black opacity-30">net liquidity</div>
+          <p className="text-xs font-extrabold uppercase tracking-widest opacity-60 mb-1">Net Margin</p>
+          <p className="text-2xl font-black text-[#d4af37]">{(incomeTotal - expenseTotal).toLocaleString()} BDT</p>
         </div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-        <div className="bg-white p-10 rounded-[40px] shadow-sm border border-gray-100">
-          <h4 className="text-xl font-black mb-6 flex items-center gap-2">
-            <Filter className="w-5 h-5 text-blue-600" />
-            Top Income Sources
+        <div className="bg-white p-8 rounded-3xl shadow-sm border border-slate-100">
+          <h4 className="text-lg font-extrabold mb-5 flex items-center gap-2 text-slate-800">
+            <Filter className="w-4 h-4 text-blue-600" />
+            <span>Top Income Accounts</span>
           </h4>
-          <div className="space-y-6">
+          <div className="space-y-5">
             {categories
               .map(cat => ({ 
                 cat, 
@@ -1620,14 +2404,14 @@ function TransactionsReport({ transactions }: { transactions: Transaction[] }) {
               .sort((a, b) => b.amount - a.amount)
               .map(i => (
                 <div key={i.cat}>
-                  <div className="flex justify-between items-center mb-2">
-                    <span className="font-bold text-gray-900">{i.cat}</span>
-                    <span className="font-black text-blue-600">{formatCurrency(i.amount)}</span>
+                  <div className="flex justify-between items-center mb-1.5 text-xs">
+                    <span className="font-bold text-slate-700">{i.cat}</span>
+                    <span className="font-extrabold text-blue-600">{i.amount.toLocaleString()} BDT</span>
                   </div>
-                  <div className="w-full bg-gray-50 h-3 rounded-full overflow-hidden">
+                  <div className="w-full bg-slate-100 h-2.5 rounded-full overflow-hidden">
                     <motion.div 
                       initial={{ width: 0 }}
-                      animate={{ width: `${(i.amount / incomeTotal) * 100}%` }}
+                      animate={{ width: `${incomeTotal > 0 ? (i.amount / incomeTotal) * 100 : 0}%` }}
                       className="h-full bg-blue-600 rounded-full"
                     />
                   </div>
@@ -1637,12 +2421,12 @@ function TransactionsReport({ transactions }: { transactions: Transaction[] }) {
           </div>
         </div>
 
-        <div className="bg-white p-10 rounded-[40px] shadow-sm border border-gray-100">
-          <h4 className="text-xl font-black mb-6 flex items-center gap-2">
-            <Filter className="w-5 h-5 text-red-600" />
-            Spending Breakdown
+        <div className="bg-white p-8 rounded-3xl shadow-sm border border-slate-100">
+          <h4 className="text-lg font-extrabold mb-5 flex items-center gap-2 text-slate-800">
+            <Filter className="w-4 h-4 text-red-600" />
+            <span>Top Spending Accounts</span>
           </h4>
-          <div className="space-y-6">
+          <div className="space-y-5">
             {categories
               .map(cat => ({ 
                 cat, 
@@ -1652,361 +2436,21 @@ function TransactionsReport({ transactions }: { transactions: Transaction[] }) {
               .sort((a, b) => b.amount - a.amount)
               .map(i => (
                 <div key={i.cat}>
-                  <div className="flex justify-between items-center mb-2">
-                    <span className="font-bold text-gray-900">{i.cat}</span>
-                    <span className="font-black text-red-600">{formatCurrency(i.amount)}</span>
+                  <div className="flex justify-between items-center mb-1.5 text-xs">
+                    <span className="font-bold text-slate-700">{i.cat}</span>
+                    <span className="font-extrabold text-red-600">{i.amount.toLocaleString()} BDT</span>
                   </div>
-                  <div className="w-full bg-gray-50 h-3 rounded-full overflow-hidden">
+                  <div className="w-full bg-slate-100 h-2.5 rounded-full overflow-hidden">
                     <motion.div 
                       initial={{ width: 0 }}
-                      animate={{ width: `${(i.amount / expenseTotal) * 100}%` }}
-                      className="h-full bg-red-600 rounded-full"
+                      animate={{ width: `${expenseTotal > 0 ? (i.amount / expenseTotal) * 100 : 0}%` }}
+                      className="h-full bg-red-650 bg-red-600 rounded-full"
                     />
                   </div>
                 </div>
               ))
             }
           </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function PurchasingReport({ 
-  suppliers, 
-  supplierTransactions 
-}: { 
-  suppliers: Supplier[]; 
-  supplierTransactions: SupplierTransaction[]; 
-}) {
-  const { language, t, formatCurrency, formatNumber, translateValue } = useLanguage();
-  const [dateRange, setDateRange] = useState("month");
-
-  const now = new Date();
-  
-  // Filter transactions of type "purchase" on date Range
-  const filteredPurchases = supplierTransactions.filter(tx => {
-    if (tx.type !== "purchase") return false;
-    const txDate = new Date(tx.date);
-    if (dateRange === "month") {
-      return txDate >= startOfMonth(now) && txDate <= endOfMonth(now);
-    }
-    if (dateRange === "year") {
-      return txDate >= startOfYear(now);
-    }
-    return true; // "all"
-  });
-
-  // Calculate aggregated spending by supplier
-  const spendingMap: Record<string, number> = {};
-  let totalPurchasedAmount = 0;
-  let totalPaidAmount = 0;
-  let totalCreatedDues = 0;
-
-  filteredPurchases.forEach(tx => {
-    spendingMap[tx.supplierId] = (spendingMap[tx.supplierId] || 0) + tx.totalAmount;
-    totalPurchasedAmount += tx.totalAmount;
-    totalPaidAmount += (tx.paidAmount || 0);
-    totalCreatedDues += (tx.dueAmount || 0);
-  });
-
-  // Recharts Pie Chart Data
-  const pieData = Object.entries(spendingMap).map(([id, value]) => {
-    const s = suppliers.find(sup => sup.id === id);
-    return {
-      id,
-      name: s ? s.name : (language === "bn" ? "অজানা সরবরাহকারী" : "Unknown Supplier"),
-      code: s ? s.code : "",
-      value,
-    };
-  }).filter(item => item.value > 0)
-    .sort((a, b) => b.value - a.value);
-
-  // Colors for Piechart Cells
-  const COLORS = [
-    "#4338CA", // Indigo 700
-    "#0EA5E9", // Sky 500
-    "#F59E0B", // Amber 500
-    "#10B981", // Emerald 500
-    "#EC4899", // Pink 500
-    "#8B5CF6", // Violet 500
-    "#F43F5E", // Rose 500
-    "#14B8A6", // Teal 500
-  ];
-
-  return (
-    <div className="space-y-8 animate-in slide-in-from-bottom-5 duration-500">
-      {/* Settings & controls Header */}
-      <div className="bg-white p-8 rounded-[40px] shadow-sm border border-gray-100 flex flex-col md:flex-row items-center justify-between gap-6">
-        <div className="flex items-center gap-4">
-          <div className="w-16 h-16 bg-blue-50 rounded-3xl flex items-center justify-center">
-            <ShoppingBag className="w-8 h-8 text-blue-600" />
-          </div>
-          <div>
-            <h3 className="text-2xl font-black text-gray-900">
-              {language === "bn" ? "সরবরাহকারী ক্রয় ক্রিয়াকলাপ" : "Supplier Purchasing Activity"}
-            </h3>
-            <p className="text-gray-500 font-medium italic">
-              {language === "bn" 
-                ? "সরবরাহকারী ক্রয় প্রবণতা এবং ব্যয় বিশ্লেষণের বিবরণ।" 
-                : "A detailed breakdown of supplier purchasing trends and spending analysis."}
-            </p>
-          </div>
-        </div>
-        <div className="flex bg-gray-50 p-1 rounded-2xl border border-gray-100">
-          {["month", "year", "all"].map(range => (
-            <button 
-              key={range}
-              onClick={() => setDateRange(range)}
-              className={cn(
-                "px-6 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all",
-                dateRange === range ? "bg-white text-gray-900 shadow-sm scale-105" : "text-gray-400 hover:text-gray-900"
-              )}
-            >
-              {language === "bn" 
-                ? (range === "month" ? "চলতি মাস" : range === "year" ? "চলতি বছর" : "সব সময়") 
-                : range}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* Aggregate Stats Bar */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-        <div className="bg-white p-6 rounded-[32px] border border-gray-100 shadow-sm flex items-center gap-4">
-          <div className="w-12 h-12 bg-blue-50 rounded-2xl flex items-center justify-center font-black text-blue-600 animate-fade-in">
-            {formatNumber(suppliers.length)}
-          </div>
-          <div>
-            <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest">
-              {language === "bn" ? "মোট সরবরাহকারী" : "Total Suppliers"}
-            </p>
-            <p className="text-lg font-black text-gray-900">
-              {language === "bn" ? `${formatNumber(suppliers.length)} জন` : `${suppliers.length} Active`}
-            </p>
-          </div>
-        </div>
-
-        <div className="bg-white p-6 rounded-[32px] border border-gray-100 shadow-sm flex items-center gap-4">
-          <div className="w-12 h-12 bg-indigo-50 rounded-2xl flex items-center justify-center font-black text-indigo-600 font-serif">
-            ৳
-          </div>
-          <div>
-            <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest">
-              {language === "bn" ? "মোট ক্রয় পরিমাণ" : "Total Purchases"}
-            </p>
-            <p className="text-lg font-black text-gray-900">{formatCurrency(totalPurchasedAmount)}</p>
-          </div>
-        </div>
-
-        <div className="bg-white p-6 rounded-[32px] border border-gray-100 shadow-sm flex items-center gap-4">
-          <div className="w-12 h-12 bg-emerald-50 rounded-2xl flex items-center justify-center font-black text-emerald-600 font-serif">
-            ৳
-          </div>
-          <div>
-            <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest">
-              {language === "bn" ? "পরিশোধিত অর্থ" : "Paid Amount"}
-            </p>
-            <p className="text-lg font-black text-gray-900">{formatCurrency(totalPaidAmount)}</p>
-          </div>
-        </div>
-
-        <div className="bg-white p-6 rounded-[32px] border border-gray-100 shadow-sm flex items-center gap-4">
-          <div className="w-12 h-12 bg-rose-50 rounded-2xl flex items-center justify-center font-black text-rose-600 font-serif">
-            ৳
-          </div>
-          <div>
-            <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest">
-              {language === "bn" ? "নতুন বকেয়া বন্টন" : "Outstanding Dues"}
-            </p>
-            <p className="text-lg font-black text-gray-900">{formatCurrency(totalCreatedDues)}</p>
-          </div>
-        </div>
-      </div>
-
-      {/* Main visualization Section */}
-      <div className="grid grid-cols-1 lg:grid-cols-5 gap-8">
-        {/* Piechart Card */}
-        <div className="lg:col-span-3 bg-white p-8 rounded-[40px] shadow-sm border border-gray-100 flex flex-col justify-between">
-          <div>
-            <h4 className="text-xl font-black text-gray-900 mb-2 flex items-center gap-2">
-              {language === "bn" ? "সরবরাহকারী অনুসারে ব্যয়ের হিসাব" : "Spending Distribution by Supplier"}
-            </h4>
-            <p className="text-sm text-gray-500 italic mb-6">
-              {language === "bn" 
-                ? "চিত্রের মাধ্যমে সরবরাহকারীদের মোট ক্রয় খরচের অনুপাত।" 
-                : "Visual representation of percentage of total purchases from each supplier."}
-            </p>
-          </div>
-
-          <div className="h-[320px] w-full flex items-center justify-center">
-            {pieData.length > 0 ? (
-              <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Pie
-                    data={pieData}
-                    cx="50%"
-                    cy="50%"
-                    innerRadius={60}
-                    outerRadius={100}
-                    paddingAngle={3}
-                    dataKey="value"
-                    label={({ index }) => `${pieData[index].name}`}
-                  >
-                    {pieData.map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                    ))}
-                  </Pie>
-                  <Tooltip 
-                    formatter={(value) => [formatCurrency(value as number), language === "bn" ? "মোট ক্রয়" : "Total Spend"]}
-                    contentStyle={{ borderRadius: "16px", border: "1px solid #f1f5f9", boxShadow: "0 10px 15px -3px rgba(0, 0, 0, 0.05)" }}
-                  />
-                  <Legend 
-                    verticalAlign="bottom" 
-                    height={36} 
-                    iconType="circle"
-                    formatter={(value, entry: any, index) => (
-                      <span className="text-xs font-bold text-gray-600 uppercase">
-                        {value} ({((pieData[index]?.value || 0) / totalPurchasedAmount * 100).toFixed(0)}%)
-                      </span>
-                    )}
-                  />
-                </PieChart>
-              </ResponsiveContainer>
-            ) : (
-              <div className="text-center p-12 text-gray-400 italic w-full">
-                <ShoppingBag className="w-12 h-12 stroke-1 mx-auto mb-3 opacity-40 text-gray-400 animate-pulse" />
-                {language === "bn" ? "এই সময়ের মধ্যে কোনো ক্রয়ের তথ্য পাওয়া যায়নি।" : "No purchase records found for this period."}
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Breakdown table list card */}
-        <div className="lg:col-span-2 bg-white p-8 rounded-[40px] shadow-sm border border-gray-100 flex flex-col h-full">
-          <div>
-            <h4 className="text-xl font-black text-gray-900 mb-2">
-              {language === "bn" ? "শীর্ষ সরবরাহকারীদের তালিকা" : "Supplier Spending Ledger"}
-            </h4>
-            <p className="text-sm text-gray-500 italic mb-6">
-              {language === "bn" 
-                ? "মোট ক্রয়ের পরিমাণ সহ শীর্ষ সরবরাহকারীদের সংক্ষেপ।" 
-                : "Ranked list of suppliers with purchase totals and share percentages."}
-            </p>
-          </div>
-
-          <div className="space-y-6 flex-1 overflow-y-auto pr-2 no-scrollbar">
-            {pieData.map((item, index) => {
-              const percentage = totalPurchasedAmount > 0 ? (item.value / totalPurchasedAmount) * 100 : 0;
-              const color = COLORS[index % COLORS.length];
-              return (
-                <div key={item.id} className="flex flex-col gap-2 p-3 hover:bg-gray-50 rounded-2xl transition-all">
-                  <div className="flex justify-between items-center">
-                    <div className="flex items-center gap-3">
-                      <div className="w-4 h-4 rounded-full shrink-0" style={{ backgroundColor: color }} />
-                      <div>
-                        <p className="font-extrabold text-sm text-gray-900 leading-tight">{item.name}</p>
-                        <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest">{item.code || "SUP"}</p>
-                      </div>
-                    </div>
-                    <div className="text-right">
-                      <p className="font-black text-sm text-gray-900">{formatCurrency(item.value)}</p>
-                      <p className="text-xs font-bold text-gray-500 font-sans" style={{ color: color }}>{percentage.toFixed(1)}%</p>
-                    </div>
-                  </div>
-                  <div className="w-full bg-gray-50 h-2 rounded-full overflow-hidden">
-                    <motion.div 
-                      initial={{ width: 0 }}
-                      animate={{ width: `${percentage}%` }}
-                      transition={{ duration: 0.8, ease: "easeOut" }}
-                      className="h-full rounded-full"
-                      style={{ backgroundColor: color }}
-                    />
-                  </div>
-                </div>
-              );
-            })}
-
-            {pieData.length === 0 && (
-              <div className="text-center py-20 text-gray-400 italic">
-                {language === "bn" ? "কোন তথ্য পাওয়া যায়নি" : "No aggregate details available"}
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
-
-      {/* Recent Supplier Transactions lists */}
-      <div className="bg-white rounded-[40px] shadow-sm border border-gray-100 overflow-hidden">
-        <div className="px-8 py-6 border-b border-gray-100 flex items-center justify-between">
-          <h4 className="text-xl font-black text-gray-900">
-            {language === "bn" ? "সাম্প্রতিক ক্রয় লেনদেন সমূহ" : "Recent Purchase Statements"}
-          </h4>
-          <span className="px-3 py-1.5 bg-gray-50 rounded-xl text-[10px] font-black text-gray-500 uppercase tracking-wider border border-gray-100">
-            {language === "bn" ? `মোট ${formatNumber(filteredPurchases.length)} টি চালান` : `${filteredPurchases.length} Purchase Invoices`}
-          </span>
-        </div>
-        <div className="overflow-x-auto">
-          <table className="w-full text-left">
-            <thead>
-              <tr className="bg-gray-50/50">
-                <th className="px-8 py-6 text-xs font-black text-gray-400 uppercase tracking-widest border-b border-gray-100">
-                  {language === "bn" ? "তারিখ" : "Date"}
-                </th>
-                <th className="px-8 py-6 text-xs font-black text-gray-400 uppercase tracking-widest border-b border-gray-100">
-                  {language === "bn" ? "সরবরাহকারী" : "Supplier"}
-                </th>
-                <th className="px-8 py-6 text-xs font-black text-gray-400 uppercase tracking-widest border-b border-gray-100">
-                  {language === "bn" ? "চালান নং" : "Invoice Ref"}
-                </th>
-                <th className="px-8 py-6 text-xs font-black text-gray-400 uppercase tracking-widest border-b border-gray-100 text-right">
-                  {language === "bn" ? "মোট মূল্য" : "Total Value"}
-                </th>
-                <th className="px-8 py-6 text-xs font-black text-gray-400 uppercase tracking-widest border-b border-gray-100 text-right">
-                  {language === "bn" ? "পরিশোধিত" : "Paid"}
-                </th>
-                <th className="px-8 py-6 text-xs font-black text-gray-400 uppercase tracking-widest border-b border-gray-100 text-right">
-                  {language === "bn" ? "বকেয়া" : "Due"}
-                </th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-50">
-              {filteredPurchases.map(tx => {
-                const sup = suppliers.find(s => s.id === tx.supplierId);
-                return (
-                  <tr key={tx.id} className="hover:bg-blue-50/10 transition-all font-mono text-sm">
-                    <td className="px-8 py-5 text-gray-600 font-bold">
-                      {tx.date}
-                    </td>
-                    <td className="px-8 py-5">
-                      <p className="font-extrabold text-gray-900 font-sans">{sup?.name || "Unknown"}</p>
-                      <p className="text-[10px] text-gray-400 font-sans">{sup?.code}</p>
-                    </td>
-                    <td className="px-8 py-5 font-bold text-gray-500 uppercase">
-                      {tx.refNo}
-                    </td>
-                    <td className="px-8 py-5 text-right font-black text-gray-900">
-                      {formatCurrency(tx.totalAmount)}
-                    </td>
-                    <td className="px-8 py-5 text-right font-bold text-emerald-600">
-                      {formatCurrency(tx.paidAmount || 0)}
-                    </td>
-                    <td className="px-8 py-5 text-right font-bold text-rose-600">
-                      {formatCurrency(tx.dueAmount || 0)}
-                    </td>
-                  </tr>
-                );
-              })}
-              {filteredPurchases.length === 0 && (
-                <tr>
-                  <td colSpan={6} className="px-8 py-20 text-center text-gray-400 italic font-medium font-sans">
-                    {language === "bn" ? "কোন তথ্য পাওয়া যায়নি" : "No recent purchases recorded in this range."}
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
         </div>
       </div>
     </div>

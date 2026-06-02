@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { User } from "firebase/auth";
-import { collection, onSnapshot, addDoc, doc, updateDoc, query, where, deleteDoc } from "firebase/firestore";
-import { db, OperationType, handleFirestoreError } from "@/src/lib/firebase";
+import { collection, onSnapshot, addDoc, doc, query, where, deleteDoc } from "firebase/firestore";
+import { db, OperationType, handleFirestoreError, updateDoc } from "@/src/lib/firebase";
 import { Employee, UserRole, Attendance, AttendanceStatus } from "@/src/types";
 import { cn } from "@/src/lib/utils";
 import { 
@@ -18,7 +18,6 @@ import {
   Search,
   ChevronLeft,
   ChevronRight,
-  ChevronDown,
   Filter,
   Save,
   Download,
@@ -36,7 +35,7 @@ import {
   TrendingUp,
   UserCircle
 } from "lucide-react";
-import { format, startOfMonth, endOfMonth, eachDayOfInterval, isSameDay, startOfToday, addDays, subDays, parseISO, startOfDay, endOfDay } from "date-fns";
+import { format, startOfMonth, endOfMonth, eachDayOfInterval, isSameDay, startOfToday, addDays, subDays, parseISO } from "date-fns";
 import { motion, AnimatePresence } from "motion/react";
 
 const STATUS_CONFIG: Record<AttendanceStatus, { label: string; icon: any; color: string; bg: string; dot: string }> = {
@@ -82,20 +81,6 @@ export default function AttendancePage({
   const [listTab, setListTab] = useState<"matrix" | "logs" | "lunch">("matrix");
   const [selectedMonth, setSelectedMonth] = useState<string>(format(new Date(), "yyyy-MM")); // e.g. "2026-05"
 
-  // Advanced filters (Like sales!)
-  const [selectedRole, setSelectedRole] = useState("");
-  const [selectedDept, setSelectedDept] = useState("");
-  const [selectedStatus, setSelectedStatus] = useState("");
-  const [startDate, setStartDate] = useState("");
-  const [endDate, setEndDate] = useState("");
-
-  // Local cache for inline input selectors to prevent real-time database roundtrip cursor reset issues
-  const [localTimes, setLocalTimes] = useState<Record<string, { checkIn?: string; lunchOut?: string; lunchIn?: string; notes?: string }>>({});
-
-  useEffect(() => {
-    setLocalTimes({});
-  }, [selectedDate]);
-
   useEffect(() => {
     // Determine the month bounds based on view selection context
     let rangeDate = selectedDate;
@@ -129,27 +114,8 @@ export default function AttendancePage({
     }, (error) => handleFirestoreError(error, OperationType.LIST, "settings"));
 
     // Fetch attendance for the selected date's / month's range
-    let start = startOfMonth(rangeDate);
-    let end = endOfMonth(rangeDate);
-
-    if (mode === "list") {
-      if (startDate) {
-        try {
-          const parsedStart = parseISO(startDate);
-          if (!isNaN(parsedStart.getTime())) {
-            start = startOfDay(parsedStart);
-          }
-        } catch {}
-      }
-      if (endDate) {
-        try {
-          const parsedEnd = parseISO(endDate);
-          if (!isNaN(parsedEnd.getTime())) {
-            end = endOfDay(parsedEnd);
-          }
-        } catch {}
-      }
-    }
+    const start = startOfMonth(rangeDate);
+    const end = endOfMonth(rangeDate);
     
     const unsubAttendance = onSnapshot(
       query(
@@ -165,7 +131,7 @@ export default function AttendancePage({
     );
 
     return () => { unsubEmps(); unsubSettings(); unsubAttendance(); };
-  }, [selectedDate, selectedMonth, mode, startDate, endDate]);
+  }, [selectedDate, selectedMonth, mode]);
 
   const getAttendanceForDay = (empId: string, date: Date) => {
     return attendance.find(a => 
@@ -191,9 +157,18 @@ export default function AttendancePage({
     }
   };
 
-  const computeStatus = (checkInTime: string, desiredStatus: AttendanceStatus): AttendanceStatus => {
+  const computeStatus = (
+    checkInTime: string, 
+    desiredStatus: AttendanceStatus, 
+    lunchOut?: string, 
+    lunchIn?: string
+  ): AttendanceStatus => {
     if (desiredStatus !== "present" && desiredStatus !== "late" && desiredStatus !== "half-day") {
       return desiredStatus;
+    }
+    // If lunchOut is filled but lunchIn is empty/falsy, count as half-day
+    if (lunchOut && !lunchIn) {
+      return "half-day";
     }
     if (!checkInTime) return "present";
     if (checkInTime > halfDayThreshold) {
@@ -209,38 +184,22 @@ export default function AttendancePage({
     const existing = getAttendanceForDay(empId, selectedDate);
     const dateStr = selectedDate.toISOString();
     
-    const isWorkingStatus = status === "present" || status === "late" || status === "half-day";
-    const currentIn = existing?.checkIn || (isWorkingStatus ? "09:00" : "");
-    const finalStatus = computeStatus(currentIn, status);
+    const currentIn = existing?.checkIn || "09:00";
+    const currentLunchOut = existing?.lunchOut || "";
+    const currentLunchIn = existing?.lunchIn || "";
+    const finalStatus = computeStatus(currentIn, status, currentLunchOut, currentLunchIn);
 
     try {
       if (existing) {
         if (existing.id) {
-          const updates: any = { status: finalStatus };
-          if (!isWorkingStatus) {
-            updates.checkIn = "";
-            updates.lunchOut = "";
-            updates.lunchIn = "";
-          } else if (!existing.checkIn) {
-            updates.checkIn = finalStatus === "half-day" ? "12:00" : (finalStatus === "late" ? "10:15" : "09:00");
-            updates.lunchOut = "13:00";
-            updates.lunchIn = "14:00";
-          }
-          await updateDoc(doc(db, "attendance", existing.id), updates);
+          await updateDoc(doc(db, "attendance", existing.id), { status: finalStatus });
         }
       } else {
-        let defaultIn = "";
-        let defaultLunchOut = "";
-        let defaultLunchIn = "";
-        if (isWorkingStatus) {
-          defaultIn = "09:00";
-          if (finalStatus === "half-day") {
-            defaultIn = "12:00";
-          } else if (finalStatus === "late") {
-            defaultIn = "10:15";
-          }
-          defaultLunchOut = "13:00";
-          defaultLunchIn = "14:00";
+        let defaultIn = "09:00";
+        if (finalStatus === "half-day") {
+          defaultIn = "12:00";
+        } else if (finalStatus === "late") {
+          defaultIn = "10:15";
         }
 
         await addDoc(collection(db, "attendance"), {
@@ -248,8 +207,8 @@ export default function AttendancePage({
           date: dateStr,
           status: finalStatus,
           checkIn: defaultIn,
-          lunchOut: defaultLunchOut,
-          lunchIn: defaultLunchIn,
+          lunchOut: "",
+          lunchIn: "",
           notes: ""
         });
       }
@@ -261,25 +220,19 @@ export default function AttendancePage({
   const handleBulkAttendance = async (status: AttendanceStatus) => {
     setIsSaving(true);
     try {
-      const isWorkingStatus = status === "present" || status === "late" || status === "half-day";
       for (const emp of employees) {
         const existing = getAttendanceForDay(emp.id!, selectedDate);
-        const currentIn = existing?.checkIn || (isWorkingStatus ? "09:00" : "");
-        const finalStatus = computeStatus(currentIn, status);
+        const currentIn = existing?.checkIn || "09:00";
+        const currentLunchOut = existing?.lunchOut || "";
+        const currentLunchIn = existing?.lunchIn || "";
+        const finalStatus = computeStatus(currentIn, status, currentLunchOut, currentLunchIn);
 
         if (!existing) {
-          let defaultIn = "";
-          let defaultLunchOut = "";
-          let defaultLunchIn = "";
-          if (isWorkingStatus) {
-            defaultIn = "09:00";
-            if (finalStatus === "half-day") {
-              defaultIn = "12:00";
-            } else if (finalStatus === "late") {
-              defaultIn = "10:15";
-            }
-            defaultLunchOut = "13:00";
-            defaultLunchIn = "14:00";
+          let defaultIn = "09:00";
+          if (finalStatus === "half-day") {
+            defaultIn = "12:00";
+          } else if (finalStatus === "late") {
+            defaultIn = "10:15";
           }
 
           await addDoc(collection(db, "attendance"), {
@@ -287,18 +240,12 @@ export default function AttendancePage({
             date: selectedDate.toISOString(),
             status: finalStatus,
             checkIn: defaultIn,
-            lunchOut: defaultLunchOut,
-            lunchIn: defaultLunchIn,
+            lunchOut: "",
+            lunchIn: "",
             notes: ""
           });
         } else if (existing.id) {
-          const updates: any = { status: finalStatus };
-          if (!isWorkingStatus) {
-            updates.checkIn = "";
-            updates.lunchOut = "";
-            updates.lunchIn = "";
-          }
-          await updateDoc(doc(db, "attendance", existing.id), updates);
+          await updateDoc(doc(db, "attendance", existing.id), { status: finalStatus });
         }
       }
     } catch (e) {
@@ -327,17 +274,6 @@ export default function AttendancePage({
   const executeDeleteAttendance = async () => {
     if (!attendanceToDelete) return;
     const { id } = attendanceToDelete;
-
-    const recordToDelete = attendance.find(a => a.id === id);
-    if (recordToDelete) {
-      const empId = recordToDelete.employeeId;
-      setLocalTimes(prev => {
-        const copy = { ...prev };
-        delete copy[empId];
-        return copy;
-      });
-    }
-
     setAttendanceToDelete(null);
     try {
       await deleteDoc(doc(db, "attendance", id));
@@ -352,8 +288,8 @@ export default function AttendancePage({
     setSelectedEmpForTime(emp);
     setModalStatus(record?.status || "present");
     setModalCheckIn(record?.checkIn || "09:00");
-    setModalLunchOut(record?.lunchOut || "13:00");
-    setModalLunchIn(record?.lunchIn || "14:00");
+    setModalLunchOut(record?.lunchOut || "");
+    setModalLunchIn(record?.lunchIn || "");
     setModalNotes(record?.notes || "");
   };
 
@@ -363,8 +299,8 @@ export default function AttendancePage({
     const empId = selectedEmpForTime.id!;
     const record = getAttendanceForDay(empId, selectedDate);
     
-    // Compute computed state status based on check-in time
-    const finalStatus = computeStatus(modalCheckIn, modalStatus);
+    // Compute computed state status based on check-in time and lunch status
+    const finalStatus = computeStatus(modalCheckIn, modalStatus, modalLunchOut, modalLunchIn);
 
     try {
       if (record && record.id) {
@@ -386,14 +322,6 @@ export default function AttendancePage({
           notes: modalNotes
         });
       }
-      
-      // Clear localTimes entry for this employee since it's just been saved from the modal
-      setLocalTimes(prev => {
-        const copy = { ...prev };
-        delete copy[empId];
-        return copy;
-      });
-
       setSelectedEmpForTime(null);
     } catch (e) {
       handleFirestoreError(e, OperationType.UPDATE, "attendance");
@@ -409,17 +337,19 @@ export default function AttendancePage({
     try {
       if (existing && existing.id) {
         const updates: any = { [field]: value };
-        if (field === "checkIn") {
-          if (existing.status === "present" || existing.status === "late" || existing.status === "half-day") {
-            updates.status = computeStatus(value, "present");
-          }
+        const checkIn = field === "checkIn" ? value : (existing.checkIn || "09:00");
+        const lunchOut = field === "lunchOut" ? value : (existing.lunchOut || "");
+        const lunchIn = field === "lunchIn" ? value : (existing.lunchIn || "");
+        
+        if (existing.status === "present" || existing.status === "late" || existing.status === "half-day") {
+          updates.status = computeStatus(checkIn, existing.status, lunchOut, lunchIn);
         }
         await updateDoc(doc(db, "attendance", existing.id), updates);
       } else {
         const checkIn = field === "checkIn" ? value : "09:00";
-        const lunchOut = field === "lunchOut" ? value : "13:00";
-        const lunchIn = field === "lunchIn" ? value : "14:00";
-        const finalStatus = computeStatus(checkIn, "present");
+        const lunchOut = field === "lunchOut" ? value : "";
+        const lunchIn = field === "lunchIn" ? value : "";
+        const finalStatus = computeStatus(checkIn, "present", lunchOut, lunchIn);
 
         await addDoc(collection(db, "attendance"), {
           employeeId: empId,
@@ -436,46 +366,12 @@ export default function AttendancePage({
     }
   };
 
-  const handleNotesFieldChange = async (empId: string, value: string) => {
-    const existing = getAttendanceForDay(empId, selectedDate);
-    const dateStr = selectedDate.toISOString();
-
-    try {
-      if (existing && existing.id) {
-        await updateDoc(doc(db, "attendance", existing.id), { notes: value });
-      } else {
-        await addDoc(collection(db, "attendance"), {
-          employeeId: empId,
-          date: dateStr,
-          status: "present",
-          checkIn: "09:00",
-          lunchOut: "13:00",
-          lunchIn: "14:00",
-          notes: value
-        });
-      }
-    } catch (e) {
-      handleFirestoreError(e, OperationType.UPDATE, "attendance");
-    }
-  };
-
-  // Extract distinct active roles and departments for filter selectors
-  const roles = Array.from(new Set(employees.map(e => e.role).filter(Boolean)));
-  const departments = Array.from(new Set(employees.map(e => e.department).filter(Boolean)));
-
-  // Filter staff by search box query and selectable dropdown options (like sales!)
-  const filteredEmployees = employees.filter(e => {
-    const matchesSearch = searchQuery 
-      ? (e.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-         e.role.toLowerCase().includes(searchQuery.toLowerCase()) ||
-         (e.department && e.department.toLowerCase().includes(searchQuery.toLowerCase())))
-      : true;
-    
-    const matchesRole = selectedRole ? e.role === selectedRole : true;
-    const matchesDept = selectedDept ? e.department === selectedDept : true;
-
-    return matchesSearch && matchesRole && matchesDept;
-  });
+  // Filter staff by search box query
+  const filteredEmployees = employees.filter(e => 
+    e.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    e.role.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    (e.department && e.department.toLowerCase().includes(searchQuery.toLowerCase()))
+  );
 
   const getRangeDateContext = () => {
     try {
@@ -487,73 +383,16 @@ export default function AttendancePage({
   };
 
   const listMonthDate = getRangeDateContext();
-
-  // Dynamically compute days in interval based on custom start and end date overrides just like Sales!
-  const getDaysForMatrix = () => {
-    let startForDays = startOfMonth(listMonthDate);
-    let endForDays = endOfMonth(listMonthDate);
-    if (mode === "list") {
-      if (startDate) {
-        try {
-          const parsed = parseISO(startDate);
-          if (!isNaN(parsed.getTime())) startForDays = startOfDay(parsed);
-        } catch {}
-      }
-      if (endDate) {
-        try {
-          const parsed = parseISO(endDate);
-          if (!isNaN(parsed.getTime())) endForDays = endOfDay(parsed);
-        } catch {}
-      }
-    }
-    try {
-      return eachDayOfInterval({ start: startForDays, end: endForDays });
-    } catch {
-      return eachDayOfInterval({ start: startOfMonth(listMonthDate), end: endOfMonth(listMonthDate) });
-    }
-  };
-
-  const daysInMonth = getDaysForMatrix();
-
-  // Filter valid attendance logs dynamically by status, and custom date range filters just like Sales!
-  const filteredAttendance = attendance.filter(a => {
-    const emp = employees.find(e => e.id === a.employeeId);
-    if (!emp) return false;
-
-    // Check staff employee specific filters
-    const matchesEmployeeSearch = searchQuery 
-      ? (emp.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-         emp.role.toLowerCase().includes(searchQuery.toLowerCase()) ||
-         (emp.department && emp.department.toLowerCase().includes(searchQuery.toLowerCase())))
-      : true;
-
-    const matchesRole = selectedRole ? emp.role === selectedRole : true;
-    const matchesDept = selectedDept ? emp.department === selectedDept : true;
-    const matchesStatus = selectedStatus ? a.status === selectedStatus : true;
-
-    let matchesDateRange = true;
-    if (mode === "list") {
-      const recDate = new Date(a.date);
-      if (startDate) {
-        try {
-          matchesDateRange = matchesDateRange && recDate >= startOfDay(new Date(startDate));
-        } catch {}
-      }
-      if (endDate) {
-        try {
-          matchesDateRange = matchesDateRange && recDate <= endOfDay(new Date(endDate));
-        } catch {}
-      }
-    }
-
-    return matchesEmployeeSearch && matchesRole && matchesDept && matchesStatus && matchesDateRange;
+  const daysInMonth = eachDayOfInterval({
+    start: startOfMonth(listMonthDate),
+    end: endOfMonth(listMonthDate)
   });
 
-  // Reference for legacy variable names and metrics
-  const validAttendance = filteredAttendance;
+  // Filter out any entries that don't belong to active employees (remove test or orphan data logs)
+  const validAttendance = attendance.filter(a => employees.some(e => e.id === a.employeeId));
 
-  // Calculate detailed stats dynamically based on the filtered results!
-  const totalSlotsPossible = filteredEmployees.length * daysInMonth.length;
+  // Calculate detailed dashboard stats for the selected list month
+  const totalSlotsPossible = employees.length * daysInMonth.length;
   const presentCount = validAttendance.filter(a => a.status === "present" || a.status === "late" || a.status === "half-day").length;
   const lateCount = validAttendance.filter(a => a.status === "late").length;
   const absentCount = validAttendance.filter(a => a.status === "absent").length;
@@ -635,132 +474,52 @@ export default function AttendancePage({
         </header>
 
         {/* Action Controls */}
-        <div className="space-y-4">
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 items-center">
-            {/* Date Navigator */}
-            <div className="flex bg-white p-2.5 rounded-2xl shadow-sm border border-gray-100 items-center justify-between gap-4 font-sans">
-              <button 
-                type="button"
-                onClick={() => setSelectedDate(prev => subDays(prev, 1))}
-                className="p-2 hover:bg-gray-50 rounded-xl transition-all text-gray-500 hover:text-gray-900 shrink-0 cursor-pointer"
-                title="Previous Day"
-              >
-                <ChevronLeft className="w-5 h-5" />
-              </button>
-              <div className="relative flex flex-col items-center gap-0.5 font-black text-gray-950 text-sm cursor-pointer hover:bg-slate-50 px-4 py-2 rounded-xl transition-all group border border-dashed border-gray-200">
-                <div className="flex items-center gap-2">
-                  <CalendarDays className="w-4 h-4 text-blue-600 animate-pulse group-hover:scale-110 transition-transform" />
-                  <span className="relative">
-                    {format(selectedDate, "EEEE, dd MMMM yyyy")}
-                  </span>
-                </div>
-                <span className="text-[9px] font-bold text-gray-400 uppercase tracking-wider">Click to select/filter date</span>
-                {/* Native html date picker element that overlays/fills parent but is invisible */}
-                <input 
-                  type="date"
-                  value={format(selectedDate, "yyyy-MM-dd")}
-                  onChange={(e) => {
-                    const parsed = parseISO(e.target.value);
-                    if (!isNaN(parsed.getTime())) {
-                      setSelectedDate(parsed);
-                    }
-                  }}
-                  className="absolute inset-0 opacity-0 w-full h-full cursor-pointer"
-                  title="Select custom date"
-                />
-              </div>
-              <button 
-                type="button"
-                onClick={() => setSelectedDate(prev => addDays(prev, 1))}
-                className="p-2 hover:bg-gray-50 rounded-xl transition-all text-gray-500 hover:text-gray-900 shrink-0 cursor-pointer"
-                title="Next Day"
-              >
-                <ChevronRight className="w-5 h-5" />
-              </button>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-center">
+          <div className="flex bg-white p-2.5 rounded-2xl shadow-sm border border-gray-100 items-center justify-between">
+            <button 
+              onClick={() => setSelectedDate(prev => subDays(prev, 1))}
+              className="p-2 hover:bg-gray-50 rounded-xl transition-all text-gray-500 hover:text-gray-900"
+            >
+              <ChevronLeft className="w-5 h-5" />
+            </button>
+            <div className="flex items-center gap-2 font-black text-gray-950 text-sm">
+              <Calendar className="w-4 h-4 text-blue-600 animate-pulse" />
+              {format(selectedDate, "EEEE, dd MMMM yyyy")}
             </div>
-
-            {/* Role Filter Selector */}
-            <div className="relative">
-              <select
-                value={selectedRole}
-                onChange={(e) => setSelectedRole(e.target.value)}
-                className="w-full pl-4 pr-10 py-3.5 bg-white rounded-2xl border border-gray-100 shadow-sm focus:ring-2 focus:ring-blue-100 text-xs font-bold text-gray-700 cursor-pointer appearance-none outline-none transition-all"
-              >
-                <option value="">All Roles</option>
-                {roles.map(r => (
-                  <option key={r} value={r}>{r}</option>
-                ))}
-              </select>
-              <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
-            </div>
-
-            {/* Department Filter Selector */}
-            <div className="relative">
-              <select
-                value={selectedDept}
-                onChange={(e) => setSelectedDept(e.target.value)}
-                className="w-full pl-4 pr-10 py-3.5 bg-white rounded-2xl border border-gray-100 shadow-sm focus:ring-2 focus:ring-blue-100 text-xs font-bold text-gray-700 cursor-pointer appearance-none outline-none transition-all"
-              >
-                <option value="">All Departments</option>
-                {departments.map(d => (
-                  <option key={d} value={d}>{d}</option>
-                ))}
-              </select>
-              <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
-            </div>
-
-            {/* Search Box */}
-            <div className="relative">
-              <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-              <input 
-                type="text"
-                placeholder="Search staff name or role..."
-                value={searchQuery}
-                onChange={e => setSearchQuery(e.target.value)}
-                className="w-full pl-11 pr-4 py-3.5 bg-white rounded-2xl border border-gray-100 shadow-sm focus:ring-2 focus:ring-blue-100 text-xs font-bold leading-none placeholder:text-gray-400 outline-none transition-all"
-              />
-            </div>
+            <button 
+              onClick={() => setSelectedDate(prev => addDays(prev, 1))}
+              className="p-2 hover:bg-gray-50 rounded-xl transition-all text-gray-500 hover:text-gray-900"
+            >
+              <ChevronRight className="w-5 h-5" />
+            </button>
           </div>
 
-          {/* Filters Sub-row & Bulk Operations */}
-          <div className="flex flex-col sm:flex-row justify-between sm:items-center bg-white p-4 rounded-2xl border border-gray-100 shadow-sm gap-3 font-sans">
-            <div className="flex flex-wrap items-center gap-2">
-              {(selectedRole || selectedDept || searchQuery) && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setSelectedRole("");
-                    setSelectedDept("");
-                    setSearchQuery("");
-                  }}
-                  className="px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-600 rounded-xl text-[10px] font-black uppercase tracking-wider cursor-pointer transition-all border border-rose-100/30"
-                >
-                  Clear Active Filters
-                </button>
-              )}
-              <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">
-                Showing {filteredEmployees.length} of {employees.length} active staff members
-              </span>
-            </div>
+          <div className="relative">
+            <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+            <input 
+              type="text"
+              placeholder="Search staff name or role..."
+              value={searchQuery}
+              onChange={e => setSearchQuery(e.target.value)}
+              className="w-full pl-11 pr-4 py-3.5 bg-white rounded-2xl border-none shadow-sm focus:ring-2 focus:ring-blue-100 text-xs font-bold leading-none placeholder:text-gray-400"
+            />
+          </div>
 
-            <div className="flex gap-2 w-full sm:w-auto">
-              <button 
-                type="button"
-                onClick={() => handleBulkAttendance("present")}
-                disabled={isSaving || filteredEmployees.length === 0}
-                className="flex-1 sm:flex-initial px-5 py-3 bg-emerald-50 hover:bg-emerald-110/60 text-emerald-700 rounded-xl font-black text-xs uppercase tracking-wider transition-all border border-emerald-100/50 hover:border-emerald-200 active:scale-95 disabled:opacity-50 cursor-pointer"
-              >
-                Mark Filtered Present
-              </button>
-              <button 
-                type="button"
-                onClick={() => handleBulkAttendance("holiday")}
-                disabled={isSaving || filteredEmployees.length === 0}
-                className="flex-1 sm:flex-initial px-5 py-3 bg-purple-50 hover:bg-purple-110/60 text-purple-700 rounded-xl font-black text-xs uppercase tracking-wider transition-all border border-purple-100/50 hover:border-purple-200 active:scale-95 disabled:opacity-50 cursor-pointer"
-              >
-                Set Filtered Holiday
-              </button>
-            </div>
+          <div className="flex gap-2">
+            <button 
+              onClick={() => handleBulkAttendance("present")}
+              disabled={isSaving || employees.length === 0}
+              className="flex-1 py-3.5 bg-green-50 hover:bg-green-100 text-green-700 rounded-2xl font-black text-xs uppercase tracking-wider transition-all border border-green-100/50 hover:border-green-200 active:scale-95 disabled:opacity-50 cursor-pointer"
+            >
+              Mark All Present
+            </button>
+            <button 
+              onClick={() => handleBulkAttendance("holiday")}
+              disabled={isSaving || employees.length === 0}
+              className="flex-1 py-3.5 bg-purple-50 hover:bg-purple-100 text-purple-700 rounded-2xl font-black text-xs uppercase tracking-wider transition-all border border-purple-100/50 hover:border-purple-200 active:scale-95 disabled:opacity-50 cursor-pointer"
+            >
+              Set Holiday
+            </button>
           </div>
         </div>
 
@@ -833,142 +592,31 @@ export default function AttendancePage({
                       <td className="px-6 py-5">
                         <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
                           <div className="flex items-center gap-1">
-                            <span className="text-[10px] font-bold text-gray-400 uppercase shrink-0">In:</span>
-                            <div className="relative flex items-center bg-gray-50 hover:bg-gray-100/50 rounded-lg p-1 pr-1.5 border border-transparent focus-within:border-blue-200 focus-within:bg-white transition-all">
-                              <input 
-                                type="time" 
-                                value={localTimes[emp.id!]?.checkIn ?? record?.checkIn ?? ""} 
-                                onChange={(e) => {
-                                  const val = e.target.value;
-                                  setLocalTimes(prev => ({
-                                    ...prev,
-                                    [emp.id!]: {
-                                      ...prev[emp.id!],
-                                      checkIn: val
-                                    }
-                                  }));
-                                }}
-                                onBlur={async () => {
-                                  const val = localTimes[emp.id!]?.checkIn;
-                                  if (val !== undefined) {
-                                    await handleTimeFieldChange(emp.id!, "checkIn", val);
-                                  }
-                                }}
-                                className="bg-transparent border-none text-xs font-bold w-16 focus:ring-0 outline-none cursor-pointer p-0 text-center"
-                              />
-                              {(localTimes[emp.id!]?.checkIn ?? record?.checkIn) && (
-                                <button
-                                  type="button"
-                                  onClick={async (e) => {
-                                    e.stopPropagation();
-                                    setLocalTimes(prev => ({
-                                      ...prev,
-                                      [emp.id!]: {
-                                        ...prev[emp.id!],
-                                        checkIn: ""
-                                      }
-                                    }));
-                                    await handleTimeFieldChange(emp.id!, "checkIn", "");
-                                  }}
-                                  className="text-gray-400 hover:text-red-500 hover:bg-gray-200/50 rounded-md p-0.5 transition-colors cursor-pointer shrink-0 ml-0.5 font-bold"
-                                  title="Clear Check-In"
-                                >
-                                  <X className="w-3 h-3" />
-                                </button>
-                              )}
-                            </div>
+                            <span className="text-[10px] font-bold text-gray-400 uppercase">In:</span>
+                            <input 
+                              type="time" 
+                              value={record?.checkIn || ""} 
+                              onChange={async (e) => await handleTimeFieldChange(emp.id!, "checkIn", e.target.value)}
+                              className="bg-gray-50 border-none rounded-lg text-xs font-bold p-1 w-18 focus:ring-1 focus:ring-blue-100 focus:bg-white outline-none cursor-pointer"
+                            />
                           </div>
 
                           <div className="flex items-center gap-1">
-                            <span className="text-[10px] font-bold text-gray-400 uppercase shrink-0">L.Out:</span>
-                            <div className="relative flex items-center bg-gray-50 hover:bg-gray-100/50 rounded-lg p-1 pr-1.5 border border-transparent focus-within:border-blue-200 focus-within:bg-white transition-all">
-                              <input 
-                                type="time" 
-                                value={localTimes[emp.id!]?.lunchOut ?? record?.lunchOut ?? ""} 
-                                onChange={(e) => {
-                                  const val = e.target.value;
-                                  setLocalTimes(prev => ({
-                                    ...prev,
-                                    [emp.id!]: {
-                                      ...prev[emp.id!],
-                                      lunchOut: val
-                                    }
-                                  }));
-                                }}
-                                onBlur={async () => {
-                                  const val = localTimes[emp.id!]?.lunchOut;
-                                  if (val !== undefined) {
-                                    await handleTimeFieldChange(emp.id!, "lunchOut", val);
-                                  }
-                                }}
-                                className="bg-transparent border-none text-xs font-bold w-16 focus:ring-0 outline-none cursor-pointer p-0 text-center"
-                              />
-                              {(localTimes[emp.id!]?.lunchOut ?? record?.lunchOut) && (
-                                <button
-                                  type="button"
-                                  onClick={async (e) => {
-                                    e.stopPropagation();
-                                    setLocalTimes(prev => ({
-                                      ...prev,
-                                      [emp.id!]: {
-                                        ...prev[emp.id!],
-                                        lunchOut: ""
-                                      }
-                                    }));
-                                    await handleTimeFieldChange(emp.id!, "lunchOut", "");
-                                  }}
-                                  className="text-gray-400 hover:text-red-500 hover:bg-gray-200/50 rounded-md p-0.5 transition-colors cursor-pointer shrink-0 ml-0.5 font-bold"
-                                  title="Clear Lunch Out"
-                                >
-                                  <X className="w-3 h-3" />
-                                </button>
-                              )}
-                            </div>
-                            <span className="text-gray-350 text-[10px] shrink-0">-</span>
-                            <span className="text-[10px] font-bold text-gray-400 uppercase shrink-0">In:</span>
-                            <div className="relative flex items-center bg-gray-50 hover:bg-gray-100/50 rounded-lg p-1 pr-1.5 border border-transparent focus-within:border-blue-200 focus-within:bg-white transition-all">
-                              <input 
-                                type="time" 
-                                value={localTimes[emp.id!]?.lunchIn ?? record?.lunchIn ?? ""} 
-                                onChange={(e) => {
-                                  const val = e.target.value;
-                                  setLocalTimes(prev => ({
-                                    ...prev,
-                                    [emp.id!]: {
-                                      ...prev[emp.id!],
-                                      lunchIn: val
-                                    }
-                                  }));
-                                }}
-                                onBlur={async () => {
-                                  const val = localTimes[emp.id!]?.lunchIn;
-                                  if (val !== undefined) {
-                                    await handleTimeFieldChange(emp.id!, "lunchIn", val);
-                                  }
-                                }}
-                                className="bg-transparent border-none text-xs font-bold w-16 focus:ring-0 outline-none cursor-pointer p-0 text-center"
-                              />
-                              {(localTimes[emp.id!]?.lunchIn ?? record?.lunchIn) && (
-                                <button
-                                  type="button"
-                                  onClick={async (e) => {
-                                    e.stopPropagation();
-                                    setLocalTimes(prev => ({
-                                      ...prev,
-                                      [emp.id!]: {
-                                        ...prev[emp.id!],
-                                        lunchIn: ""
-                                      }
-                                    }));
-                                    await handleTimeFieldChange(emp.id!, "lunchIn", "");
-                                  }}
-                                  className="text-gray-400 hover:text-red-500 hover:bg-gray-200/50 rounded-md p-0.5 transition-colors cursor-pointer shrink-0 ml-0.5 font-bold"
-                                  title="Clear Lunch In"
-                                >
-                                  <X className="w-3 h-3" />
-                                </button>
-                              )}
-                            </div>
+                            <span className="text-[10px] font-bold text-gray-400 uppercase">L.Out:</span>
+                            <input 
+                              type="time" 
+                              value={record?.lunchOut || ""} 
+                              onChange={async (e) => await handleTimeFieldChange(emp.id!, "lunchOut", e.target.value)}
+                              className="bg-gray-50 border-none rounded-lg text-xs font-bold p-1 w-18 focus:ring-1 focus:ring-blue-100 focus:bg-white outline-none cursor-pointer"
+                            />
+                            <span className="text-gray-350 text-[10px]">-</span>
+                            <span className="text-[10px] font-bold text-gray-400 uppercase">In:</span>
+                            <input 
+                              type="time" 
+                              value={record?.lunchIn || ""} 
+                              onChange={async (e) => await handleTimeFieldChange(emp.id!, "lunchIn", e.target.value)}
+                              className="bg-gray-50 border-none rounded-lg text-xs font-bold p-1 w-18 focus:ring-1 focus:ring-blue-100 focus:bg-white outline-none cursor-pointer"
+                            />
                           </div>
 
                           {/* Submit / detailed time edit shortcut indicator/button */}
@@ -988,21 +636,10 @@ export default function AttendancePage({
                         <input 
                           type="text"
                           placeholder="Add comment..."
-                          value={localTimes[emp.id!]?.notes ?? record?.notes ?? ""}
-                          onChange={(e) => {
-                            const val = e.target.value;
-                            setLocalTimes(prev => ({
-                              ...prev,
-                              [emp.id!]: {
-                                ...prev[emp.id!],
-                                notes: val
-                              }
-                            }));
-                          }}
-                          onBlur={async () => {
-                            const val = localTimes[emp.id!]?.notes;
-                            if (val !== undefined) {
-                              await handleNotesFieldChange(emp.id!, val);
+                          value={record?.notes || ""}
+                          onChange={async (e) => {
+                            if (record?.id) {
+                              await updateDoc(doc(db, "attendance", record.id), { notes: e.target.value });
                             }
                           }}
                           className="w-full bg-transparent hover:bg-gray-50 text-xs font-semibold px-2 py-1.5 rounded-lg border-none focus:ring-1 focus:ring-slate-200 focus:bg-slate-50 transition-all outline-none"
@@ -1083,141 +720,30 @@ export default function AttendancePage({
                 <div className="bg-gray-50/50 p-3 rounded-xl border border-gray-150 grid grid-cols-4 gap-1.5 text-xs text-gray-500 font-semibold font-mono">
                   <div>
                     <span className="text-[9px] font-black text-gray-400 block uppercase mb-1">In</span>
-                    <div className="relative flex items-center bg-white border border-gray-200 rounded-lg p-0.5">
-                      <input 
-                        type="time" 
-                        value={localTimes[emp.id!]?.checkIn ?? record?.checkIn ?? ""} 
-                        onChange={(e) => {
-                          const val = e.target.value;
-                          setLocalTimes(prev => ({
-                            ...prev,
-                            [emp.id!]: {
-                              ...prev[emp.id!],
-                              checkIn: val
-                            }
-                          }));
-                        }}
-                        onBlur={async () => {
-                          const val = localTimes[emp.id!]?.checkIn;
-                          if (val !== undefined) {
-                            await handleTimeFieldChange(emp.id!, "checkIn", val);
-                          }
-                        }}
-                        className="border-none bg-transparent text-[11px] font-bold w-full focus:ring-0 outline-none cursor-pointer p-1 text-center pr-3"
-                      />
-                      {(localTimes[emp.id!]?.checkIn ?? record?.checkIn) && (
-                        <button
-                          type="button"
-                          onClick={async (e) => {
-                            e.stopPropagation();
-                            setLocalTimes(prev => ({
-                              ...prev,
-                              [emp.id!]: {
-                                ...prev[emp.id!],
-                                checkIn: ""
-                              }
-                            }));
-                            await handleTimeFieldChange(emp.id!, "checkIn", "");
-                          }}
-                          className="absolute right-0.5 text-gray-400 hover:text-red-500 p-0.5"
-                          title="Clear Check-In"
-                        >
-                          <X className="w-2.5 h-2.5" />
-                        </button>
-                      )}
-                    </div>
+                    <input 
+                      type="time" 
+                      value={record?.checkIn || ""} 
+                      onChange={async (e) => await handleTimeFieldChange(emp.id!, "checkIn", e.target.value)}
+                      className="bg-white border border-gray-200 rounded-lg text-xs font-bold p-1 w-full text-center focus:ring-1 focus:ring-blue-105 outline-none cursor-pointer"
+                    />
                   </div>
                   <div>
                     <span className="text-[9px] font-black text-gray-400 block uppercase mb-1">L.Out</span>
-                    <div className="relative flex items-center bg-white border border-gray-200 rounded-lg p-0.5">
-                      <input 
-                        type="time" 
-                        value={localTimes[emp.id!]?.lunchOut ?? record?.lunchOut ?? ""} 
-                        onChange={(e) => {
-                          const val = e.target.value;
-                          setLocalTimes(prev => ({
-                            ...prev,
-                            [emp.id!]: {
-                              ...prev[emp.id!],
-                              lunchOut: val
-                            }
-                          }));
-                        }}
-                        onBlur={async () => {
-                          const val = localTimes[emp.id!]?.lunchOut;
-                          if (val !== undefined) {
-                            await handleTimeFieldChange(emp.id!, "lunchOut", val);
-                          }
-                        }}
-                        className="border-none bg-transparent text-[11px] font-bold w-full focus:ring-0 outline-none cursor-pointer p-1 text-center pr-3"
-                      />
-                      {(localTimes[emp.id!]?.lunchOut ?? record?.lunchOut) && (
-                        <button
-                          type="button"
-                          onClick={async (e) => {
-                            e.stopPropagation();
-                            setLocalTimes(prev => ({
-                              ...prev,
-                              [emp.id!]: {
-                                ...prev[emp.id!],
-                                lunchOut: ""
-                              }
-                            }));
-                            await handleTimeFieldChange(emp.id!, "lunchOut", "");
-                          }}
-                          className="absolute right-0.5 text-gray-400 hover:text-red-500 p-0.5"
-                          title="Clear Lunch Out"
-                        >
-                          <X className="w-2.5 h-2.5" />
-                        </button>
-                      )}
-                    </div>
+                    <input 
+                      type="time" 
+                      value={record?.lunchOut || ""} 
+                      onChange={async (e) => await handleTimeFieldChange(emp.id!, "lunchOut", e.target.value)}
+                      className="bg-white border border-gray-200 rounded-lg text-xs font-bold p-1 w-full text-center focus:ring-1 focus:ring-blue-105 outline-none cursor-pointer"
+                    />
                   </div>
                   <div>
                     <span className="text-[9px] font-black text-gray-400 block uppercase mb-1">L.In</span>
-                    <div className="relative flex items-center bg-white border border-gray-200 rounded-lg p-0.5">
-                      <input 
-                        type="time" 
-                        value={localTimes[emp.id!]?.lunchIn ?? record?.lunchIn ?? ""} 
-                        onChange={(e) => {
-                          const val = e.target.value;
-                          setLocalTimes(prev => ({
-                            ...prev,
-                            [emp.id!]: {
-                              ...prev[emp.id!],
-                              lunchIn: val
-                            }
-                          }));
-                        }}
-                        onBlur={async () => {
-                          const val = localTimes[emp.id!]?.lunchIn;
-                          if (val !== undefined) {
-                            await handleTimeFieldChange(emp.id!, "lunchIn", val);
-                          }
-                        }}
-                        className="border-none bg-transparent text-[11px] font-bold w-full focus:ring-0 outline-none cursor-pointer p-1 text-center pr-3"
-                      />
-                      {(localTimes[emp.id!]?.lunchIn ?? record?.lunchIn) && (
-                        <button
-                          type="button"
-                          onClick={async (e) => {
-                            e.stopPropagation();
-                            setLocalTimes(prev => ({
-                              ...prev,
-                              [emp.id!]: {
-                                ...prev[emp.id!],
-                                lunchIn: ""
-                              }
-                            }));
-                            await handleTimeFieldChange(emp.id!, "lunchIn", "");
-                          }}
-                          className="absolute right-0.5 text-gray-400 hover:text-red-500 p-0.5"
-                          title="Clear Lunch In"
-                        >
-                          <X className="w-2.5 h-2.5" />
-                        </button>
-                      )}
-                    </div>
+                    <input 
+                      type="time" 
+                      value={record?.lunchIn || ""} 
+                      onChange={async (e) => await handleTimeFieldChange(emp.id!, "lunchIn", e.target.value)}
+                      className="bg-white border border-gray-200 rounded-lg text-xs font-bold p-1 w-full text-center focus:ring-1 focus:ring-blue-105 outline-none cursor-pointer"
+                    />
                   </div>
                   <div>
                     <span className="text-[9px] font-black text-gray-400 block uppercase mb-2">Overtime</span>
@@ -1350,68 +876,32 @@ export default function AttendancePage({
                 <div className="grid grid-cols-3 gap-3">
                   <div className="flex flex-col gap-1.5">
                     <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1 block">In Time</label>
-                    <div className="relative flex items-center bg-slate-50 border border-slate-200 rounded-xl px-1">
-                      <input 
-                        type="time" 
-                        value={modalCheckIn}
-                        onChange={(e) => setModalCheckIn(e.target.value)}
-                        className="w-full pl-2 pr-6 py-2.5 bg-transparent font-bold text-xs focus:ring-0 outline-none cursor-pointer text-center"
-                      />
-                      {modalCheckIn && (
-                        <button
-                          type="button"
-                          onClick={() => setModalCheckIn("")}
-                          className="absolute right-1 text-gray-400 hover:text-red-500 hover:bg-slate-200/50 rounded-md p-1 transition-colors cursor-pointer"
-                          title="Clear In Time"
-                        >
-                          <X className="w-3.5 h-3.5 font-bold" />
-                        </button>
-                      )}
-                    </div>
+                    <input 
+                      type="time" 
+                      value={modalCheckIn}
+                      onChange={(e) => setModalCheckIn(e.target.value)}
+                      className="px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold text-xs focus:ring-2 focus:ring-blue-105 outline-none cursor-pointer"
+                    />
                   </div>
 
                   <div className="flex flex-col gap-1.5">
                     <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1 block">Lunch Out</label>
-                    <div className="relative flex items-center bg-slate-50 border border-slate-200 rounded-xl px-1">
-                      <input 
-                        type="time" 
-                        value={modalLunchOut}
-                        onChange={(e) => setModalLunchOut(e.target.value)}
-                        className="w-full pl-2 pr-6 py-2.5 bg-transparent font-bold text-xs focus:ring-0 outline-none cursor-pointer text-center"
-                      />
-                      {modalLunchOut && (
-                        <button
-                          type="button"
-                          onClick={() => setModalLunchOut("")}
-                          className="absolute right-1 text-gray-400 hover:text-red-500 hover:bg-slate-200/50 rounded-md p-1 transition-colors cursor-pointer"
-                          title="Clear Lunch Out"
-                        >
-                          <X className="w-3.5 h-3.5 font-bold" />
-                        </button>
-                      )}
-                    </div>
+                    <input 
+                      type="time" 
+                      value={modalLunchOut}
+                      onChange={(e) => setModalLunchOut(e.target.value)}
+                      className="px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold text-xs focus:ring-2 focus:ring-blue-105 outline-none cursor-pointer"
+                    />
                   </div>
 
                   <div className="flex flex-col gap-1.5">
                     <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1 block">Lunch In</label>
-                    <div className="relative flex items-center bg-slate-50 border border-slate-200 rounded-xl px-1">
-                      <input 
-                        type="time" 
-                        value={modalLunchIn}
-                        onChange={(e) => setModalLunchIn(e.target.value)}
-                        className="w-full pl-2 pr-6 py-2.5 bg-transparent font-bold text-xs focus:ring-0 outline-none cursor-pointer text-center"
-                      />
-                      {modalLunchIn && (
-                        <button
-                          type="button"
-                          onClick={() => setModalLunchIn("")}
-                          className="absolute right-1 text-gray-400 hover:text-red-500 hover:bg-slate-200/50 rounded-md p-1 transition-colors cursor-pointer"
-                          title="Clear Lunch In"
-                        >
-                          <X className="w-3.5 h-3.5 font-bold" />
-                        </button>
-                      )}
-                    </div>
+                    <input 
+                      type="time" 
+                      value={modalLunchIn}
+                      onChange={(e) => setModalLunchIn(e.target.value)}
+                      className="px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold text-xs focus:ring-2 focus:ring-blue-105 outline-none cursor-pointer"
+                    />
                   </div>
                 </div>
 
@@ -1553,112 +1043,7 @@ export default function AttendancePage({
             <span className="text-[8px] text-purple-600 font-bold">{leaveCount} leaves, {holidayCount} holidays</span>
           </div>
         </div>
-      </div>
-
-      {/* Advanced Filter and Search Controls (Like Sales! With dates, roles, status) */}
-      <div className="bg-white p-5 rounded-[22px] border border-gray-100 shadow-xs space-y-4 font-sans max-w-full">
-        <div className="flex items-center gap-1.5 px-1 py-1.5 border-b border-gray-50">
-          <Filter className="w-4 h-4 text-[#D12765]" />
-          <h3 className="text-xs font-black uppercase tracking-widest text-slate-800">Advanced Ledger Filters & Search</h3>
-        </div>
-        
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
-          {/* Text/Search query wrapper */}
-          <div className="relative">
-            <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-            <input
-              type="text"
-              placeholder="Search staff name, role..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full pl-10 pr-4 py-3 bg-gray-50 border border-gray-155 rounded-xl text-xs font-bold placeholder-gray-400 focus:bg-white focus:ring-2 focus:ring-blue-150 outline-none transition-all"
-            />
-          </div>
-
-          {/* Start Date selection (Like Sales!) */}
-          <div className="flex items-center bg-gray-50 border border-gray-155 rounded-xl px-3 py-1.5 gap-2 focus-within:bg-white focus-within:ring-2 focus-within:ring-blue-150 transition-all">
-            <Calendar className="w-4 h-4 text-gray-400 shrink-0" />
-            <div className="flex flex-col w-full">
-              <span className="text-[7px] font-black text-gray-400 uppercase tracking-widest leading-none mb-0.5">Start Date</span>
-              <input
-                type="date"
-                value={startDate}
-                onChange={(e) => setStartDate(e.target.value)}
-                className="w-full bg-transparent border-none p-0 text-xs font-bold outline-none text-gray-800 cursor-pointer focus:ring-0"
-              />
-            </div>
-          </div>
-
-          {/* End Date selection (Like Sales!) */}
-          <div className="flex items-center bg-gray-50 border border-gray-155 rounded-xl px-3 py-1.5 gap-2 focus-within:bg-white focus-within:ring-2 focus-within:ring-blue-150 transition-all">
-            <Calendar className="w-4 h-4 text-gray-400 shrink-0" />
-            <div className="flex flex-col w-full">
-              <span className="text-[7px] font-black text-gray-400 uppercase tracking-widest leading-none mb-0.5">End Date</span>
-              <input
-                type="date"
-                value={endDate}
-                onChange={(e) => setEndDate(e.target.value)}
-                className="w-full bg-transparent border-none p-0 text-xs font-bold outline-none text-gray-800 cursor-pointer focus:ring-0"
-              />
-            </div>
-          </div>
-
-          {/* Role selector filter */}
-          <div className="relative">
-            <select
-              value={selectedRole}
-              onChange={(e) => setSelectedRole(e.target.value)}
-              className="w-full pl-4 pr-10 py-3 bg-gray-50 border border-gray-155 rounded-xl text-xs font-bold text-gray-700 cursor-pointer appearance-none outline-none focus:bg-white focus:ring-2 focus:ring-blue-150 transition-all"
-            >
-              <option value="">All Roles</option>
-              {roles.map(r => (
-                <option key={r} value={r}>{r}</option>
-              ))}
-            </select>
-            <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
-          </div>
-
-          {/* Status filter selection */}
-          <div className="relative">
-            <select
-              value={selectedStatus}
-              onChange={(e) => setSelectedStatus(e.target.value)}
-              className="w-full pl-4 pr-10 py-3 bg-gray-50 border border-gray-155 rounded-xl text-xs font-bold text-gray-700 cursor-pointer appearance-none outline-none focus:bg-white focus:ring-2 focus:ring-blue-150 transition-all"
-            >
-              <option value="">All Statuses</option>
-              {Object.entries(STATUS_CONFIG).map(([val, cfg]) => (
-                <option key={val} value={val}>{cfg.label}</option>
-              ))}
-            </select>
-            <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
-          </div>
-        </div>
-
-        {/* Filters status sub-infobar */}
-        {(startDate || endDate || searchQuery || selectedRole || selectedDept || selectedStatus) && (
-          <div className="flex items-center justify-between border-t border-gray-50 pt-2 px-1">
-            <p className="text-[10px] font-bold text-emerald-600">
-              Active ledger filters are running. Matches found: {filteredAttendance.length} records.
-            </p>
-            <button
-              type="button"
-              onClick={() => {
-                setStartDate("");
-                setEndDate("");
-                setSearchQuery("");
-                setSelectedRole("");
-                setSelectedDept("");
-                setSelectedStatus("");
-              }}
-              className="text-[10px] font-black uppercase text-rose-600 hover:text-rose-700 cursor-pointer transition-colors"
-            >
-              Reset Filters
-            </button>
-          </div>
-        )}
-      </div>
-
-      {/* Main Tab selectors for Ledger Lists */}
+      </div>      {/* Main Tab selectors for Ledger Lists */}
       <div className="bg-white rounded-[32px] border border-gray-100 p-6 shadow-xs space-y-6">
         <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-4 border-b border-gray-150 pb-4 flex-wrap">
           <div className="flex bg-gray-50 p-1 rounded-xl flex-wrap gap-1">
@@ -1691,9 +1076,15 @@ export default function AttendancePage({
             </button>
           </div>
 
-          <div className="flex items-center text-[10px] font-black uppercase tracking-wider text-gray-400 gap-1.5 pr-2">
-            <Activity className="w-4 h-4 text-blue-500 animate-pulse" />
-            <span>Interactive Logs Data Summary</span>
+          <div className="relative w-full sm:w-64">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" />
+            <input 
+              type="text"
+              placeholder="Search employee..."
+              value={searchQuery}
+              onChange={e => setSearchQuery(e.target.value)}
+              className="w-full pl-9 pr-3 py-2 bg-gray-50 hover:bg-gray-100/50 rounded-xl border-none outline-none text-xs font-bold placeholder:text-gray-400"
+            />
           </div>
         </div>
 

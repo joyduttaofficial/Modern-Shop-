@@ -47,7 +47,84 @@ import Suppliers from "./components/Suppliers";
 import Purchase from "./components/Purchase";
 import UsersManager from "./components/UsersManager";
 import Login from "./components/Login";
-import QuotaExceededView from "./components/QuotaExceededView";
+
+function QuotaExceededOverlay({ onDismiss, databaseId, projectId }: { onDismiss: () => void; databaseId: string; projectId: string }) {
+  const upgradeUrl = `https://console.firebase.google.com/project/${projectId}/firestore/databases/${databaseId}/data?openUpgradeDialog=true`;
+  const pricingUrl = "https://firebase.google.com/pricing#cloud-firestore";
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs min-h-screen">
+      <motion.div 
+        initial={{ opacity: 0, scale: 0.95, y: 20 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        className="bg-white dark:bg-zinc-900 max-w-lg w-full rounded-2xl border border-amber-200 dark:border-amber-900/40 shadow-2xl p-6 sm:p-8 space-y-6 relative"
+      >
+        <div className="flex items-center gap-3">
+          <div className="w-12 h-12 bg-amber-50 dark:bg-amber-900/20 rounded-xl flex items-center justify-center text-amber-500 shrink-0 border border-amber-100 dark:border-amber-900/30">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-6 h-6">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
+            </svg>
+          </div>
+          <div>
+            <h2 className="text-xl font-bold text-slate-900 dark:text-neutral-100 tracking-tight">
+              Firestore Quota Limit Exceeded
+            </h2>
+            <p className="text-xs text-slate-400 font-mono mt-0.5 uppercase tracking-wider font-semibold">
+              spark plan free tier exhausted
+            </p>
+          </div>
+        </div>
+
+        <div className="space-y-4 text-slate-650 dark:text-neutral-300 text-sm leading-relaxed">
+          <p>
+            The standard Firebase Spark plan has reached its free limit of <strong>daily read units</strong> for this project.
+          </p>
+          <div className="p-4 bg-slate-50 dark:bg-zinc-950 rounded-xl border border-slate-100 dark:border-zinc-800 space-y-2">
+            <p className="font-medium text-slate-805 dark:text-neutral-200 text-xs text-amber-600 dark:text-amber-500 uppercase tracking-widest leading-none">
+              Status & Resolution:
+            </p>
+            <p className="text-xs text-slate-600 dark:text-neutral-400">
+              Firestore read operations are temporarily restricted. Standard daily free tier quotas will automatically reset tomorrow. To instantly restore database connectivity, please enable billing or upgrade the project in the Firebase Console.
+            </p>
+          </div>
+          <p className="text-xs text-slate-500">
+            Detailed quota information is available under the <strong>Spark plan</strong> column in the <strong>Enterprise edition</strong> section of official Firebase Documentation.
+          </p>
+        </div>
+
+        <div className="flex flex-col gap-2 pt-2">
+          <a
+            href={upgradeUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="w-full py-3 bg-slate-950 dark:bg-[#d4af37] dark:text-black hover:bg-slate-850 text-white font-bold text-sm tracking-wider uppercase rounded-xl transition-all flex items-center justify-center gap-2 shadow-lg shadow-slate-950/10 cursor-pointer text-center"
+          >
+            <span>Upgrade & Enable Billing</span>
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
+              <path fillRule="evenodd" d="M5.22 14.78a.75.75 0 001.06 0l7.22-7.22v5.69a.75.75 0 001.5 0v-7.5a.75.75 0 00-.75-.75h-7.5a.75.75 0 000 1.5h5.69l-7.22 7.22a.75.75 0 000 1.06z" clipRule="evenodd" />
+            </svg>
+          </a>
+
+          <a
+            href={pricingUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="w-full py-2.5 bg-slate-50 dark:bg-zinc-850 hover:bg-slate-100 dark:hover:bg-zinc-850 text-slate-705 dark:text-neutral-200 font-bold text-xs tracking-wider uppercase rounded-xl transition-all flex items-center justify-center gap-2 border border-slate-200 dark:border-zinc-700 cursor-pointer text-center"
+          >
+            View Firebase Pricing Tiers
+          </a>
+
+          <button
+            onClick={onDismiss}
+            className="w-full py-2.5 hover:bg-slate-50 dark:hover:bg-zinc-800/40 text-slate-500 hover:text-slate-800 dark:hover:text-neutral-300 font-semibold text-xs tracking-wider uppercase rounded-xl transition-all cursor-pointer text-center"
+          >
+            Dismiss & Attempt with Cached Data
+          </button>
+        </div>
+      </motion.div>
+    </div>
+  );
+}
 
 type View = "dashboard" | "transactions" | "newSale" | "salesList" | "newEmployee" | "employeesList" | "salaryEntry" | "salarySheet" | "addAttendance" | "attendanceList" | "attendance" | "reports" | "settings" | "newSupplier" | "suppliersList" | "suppliers" | "newPurchase" | "purchaseList" | "newUser" | "usersList" | "rolesList" | "profileView";
 
@@ -74,6 +151,76 @@ export default function App() {
       localStorage.setItem("darkMode", "false");
     }
   }, [darkMode]);
+
+  const [quotaExceeded, setQuotaExceeded] = useState(() => {
+    if (typeof window !== "undefined") {
+      return !!(window as any).__firestore_quota_exceeded__;
+    }
+    return false;
+  });
+
+  useEffect(() => {
+    const checkErrorForQuota = (errStr: string) => {
+      if (
+        errStr.toLowerCase().includes("quota exceeded") ||
+        errStr.toLowerCase().includes("quota limit exceeded") ||
+        errStr.toLowerCase().includes("free daily read units") ||
+        errStr.toLowerCase().includes("exceeded free quota") ||
+        errStr.toLowerCase().includes("unavailable") ||
+        errStr.toLowerCase().includes("could not reach cloud firestore backend")
+      ) {
+        if (typeof window !== "undefined") {
+          (window as any).__firestore_quota_exceeded__ = true;
+        }
+        setQuotaExceeded(true);
+      }
+    };
+
+    const handleError = (event: ErrorEvent) => {
+      const msg = event.message || (event.error && event.error.message) || "";
+      checkErrorForQuota(msg);
+    };
+
+    const handleRejection = (event: PromiseRejectionEvent) => {
+      const reason = event.reason;
+      const msg = reason instanceof Error ? reason.message : String(reason);
+      checkErrorForQuota(msg);
+    };
+
+    const handleCustomEvent = () => {
+      setQuotaExceeded(true);
+    };
+
+    window.addEventListener("error", handleError);
+    window.addEventListener("unhandledrejection", handleRejection);
+    window.addEventListener("firestore-quota-exceeded", handleCustomEvent);
+
+    // Patch console.error to track errors caught and logged by firebase code
+    const originalConsoleError = console.error;
+    console.error = function (...args) {
+      originalConsoleError.apply(console, args);
+      const strArgs = args.map(arg => {
+        try {
+          return typeof arg === "object" ? JSON.stringify(arg) : String(arg);
+        } catch {
+          return String(arg);
+        }
+      }).join(" ");
+      checkErrorForQuota(strArgs);
+    };
+
+    if (typeof window !== "undefined" && (window as any).__firestore_quota_exceeded__) {
+      setQuotaExceeded(true);
+    }
+
+    return () => {
+      window.removeEventListener("error", handleError);
+      window.removeEventListener("unhandledrejection", handleRejection);
+      window.removeEventListener("firestore-quota-exceeded", handleCustomEvent);
+      console.error = originalConsoleError;
+    };
+  }, []);
+
   const [expandedMenus, setExpandedMenus] = useState<Record<string, boolean>>({
     sales: true,
     employees: true,
@@ -85,73 +232,6 @@ export default function App() {
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [customRoles, setCustomRoles] = useState<RolePermission[]>([]);
   const [loading, setLoading] = useState(true);
-  const [quotaError, setQuotaError] = useState<any>(null);
-
-  // Global listeners for Firestore Quota Limit Exceeded errors
-  useEffect(() => {
-    const handleQuotaExceeded = (e: Event) => {
-      const detail = (e as CustomEvent).detail;
-      setQuotaError(detail);
-    };
-
-    const handleGlobalError = (event: ErrorEvent) => {
-      let msg = "";
-      if (event?.error) {
-        const err = event.error;
-        msg = err instanceof Error ? err.message : (typeof err === "object" ? JSON.stringify(err) : String(err));
-      } else {
-        msg = event?.message || "";
-      }
-      const isQuotaOrApiKey = msg.toLowerCase().includes("quota") || 
-                              msg.toLowerCase().includes("api-key") || 
-                              msg.toLowerCase().includes("api key") || 
-                              msg.toLowerCase().includes("api_key") ||
-                              msg.toLowerCase().includes("offline") ||
-                              msg.toLowerCase().includes("unavailable") ||
-                              msg.toLowerCase().includes("network") ||
-                              msg.toLowerCase().includes("credential");
-      if (isQuotaOrApiKey) {
-        setQuotaError(msg);
-      }
-    };
-
-    const handlePromiseRejection = (event: PromiseRejectionEvent) => {
-      const reason = event?.reason;
-      let msg = "";
-      if (reason instanceof Error) {
-        msg = reason.message;
-      } else if (typeof reason === "object" && reason !== null) {
-        try {
-          msg = JSON.stringify(reason);
-        } catch {
-          msg = String(reason);
-        }
-      } else {
-        msg = String(reason);
-      }
-      const isQuotaOrApiKey = msg.toLowerCase().includes("quota") || 
-                              msg.toLowerCase().includes("api-key") || 
-                              msg.toLowerCase().includes("api key") || 
-                              msg.toLowerCase().includes("api_key") ||
-                              msg.toLowerCase().includes("offline") ||
-                              msg.toLowerCase().includes("unavailable") ||
-                              msg.toLowerCase().includes("network") ||
-                              msg.toLowerCase().includes("credential");
-      if (isQuotaOrApiKey) {
-        setQuotaError(msg);
-      }
-    };
-
-    window.addEventListener("firestore-quota-exceeded", handleQuotaExceeded);
-    window.addEventListener("error", handleGlobalError);
-    window.addEventListener("unhandledrejection", handlePromiseRejection);
-
-    return () => {
-      window.removeEventListener("firestore-quota-exceeded", handleQuotaExceeded);
-      window.removeEventListener("error", handleGlobalError);
-      window.removeEventListener("unhandledrejection", handlePromiseRejection);
-    };
-  }, []);
 
   // Dynamic Company Branding & Profile States
   const [companyName, setCompanyName] = useState("Modern Shop");
@@ -184,13 +264,7 @@ export default function App() {
         parsedRoles.push({ id: doc.id, ...doc.data() } as RolePermission);
       });
       setCustomRoles(parsedRoles);
-    }, (err) => {
-      const isQuota = (err instanceof Error ? err.message : String(err)).toLowerCase().includes("quota");
-      if (!isQuota) {
-        console.error("Roles fetch error", err);
-      }
-      handleFirestoreError(err, OperationType.LIST, "roles");
-    });
+    }, (err) => console.error("Roles fetch error", err));
     return () => unsubRoles();
   }, [user]);
 
@@ -286,20 +360,12 @@ export default function App() {
             }, (error) => {
               // Only log if the user is still actively signed in
               if (auth.currentUser) {
-                const isQuota = (error instanceof Error ? error.message : String(error)).toLowerCase().includes("quota");
-                if (!isQuota) {
-                  console.error("Profile sync error", error);
-                }
-                handleFirestoreError(error, OperationType.GET, `users/${profileId}`);
+                console.error("Profile sync error", error);
               }
             });
           }
         } catch (err) {
-          const isQuota = (err instanceof Error ? err.message : String(err)).toLowerCase().includes("quota");
-          if (!isQuota) {
-            console.error("Error loading user profile:", err);
-          }
-          handleFirestoreError(err, OperationType.GET, "users/profile-bootstrap");
+          console.error("Error loading user profile:", err);
         } finally {
           setLoading(false);
         }
@@ -319,23 +385,21 @@ export default function App() {
 
   const handleLogout = () => signOut(auth);
 
-  if (quotaError) {
-    return (
-      <QuotaExceededView 
-        errorDetails={quotaError} 
-        onRetry={() => {
-          setQuotaError(null);
-          window.location.reload();
-        }} 
-      />
-    );
-  }
-
-  if (loading) {
+  if (loading && !quotaExceeded) {
     return (
       <div className="flex items-center justify-center h-screen bg-[#F5F5F4]">
         <div className="animate-spin rounded-full h-12 w-12 border-slate-900 border-b-2"></div>
       </div>
+    );
+  }
+
+  if (quotaExceeded) {
+    return (
+      <QuotaExceededOverlay 
+        onDismiss={() => setQuotaExceeded(false)} 
+        databaseId="ai-studio-254e2cd5-7d37-444e-878d-72afd87a600f"
+        projectId="studio-1767695098-65e9f"
+      />
     );
   }
 
@@ -410,22 +474,21 @@ export default function App() {
   const hasAccessToView = (viewId: string) => {
     if (!profile) return false;
     
-    // Only admins can see the salary calculators and sheet ledger inputs
-    const adminOnlyViews = ["newEmployee", "salaryEntry", "salarySheet"];
-    if (adminOnlyViews.includes(viewId) && profile.role !== "admin") {
-      return false;
-    }
-
     // Admins always have full, unrestricted access to all menus
     if (profile.role === "admin") return true;
 
-    // Direct match check on user's assigned role from custom roles collection
+    // Direct match check on user's assigned role from custom roles collection first
     const matchedRole = customRoles.find(r => r.id === profile.role);
     if (matchedRole) {
       return matchedRole.allowedMenus.includes(viewId);
     }
 
     // Default built-in fallback permissions if no custom roles are matched
+    const adminOnlyViews = ["newEmployee", "salaryEntry", "salarySheet"];
+    if (adminOnlyViews.includes(viewId) && profile.role !== "admin") {
+      return false;
+    }
+
     if (profile.role === "accountant") {
       const restrictedForAccountant = ["newUser", "usersList", "rolesList", "settings"];
       return !restrictedForAccountant.includes(viewId);

@@ -1,12 +1,26 @@
 import React, { useState, useEffect } from "react";
-import { User } from "firebase/auth";
-import { collection, onSnapshot, doc, setDoc, deleteDoc, query, orderBy, getDocs } from "firebase/firestore";
-import { db, OperationType, handleFirestoreError } from "@/src/lib/firebase";
 import { UserProfile, RolePermission } from "@/src/types";
 import { cn } from "@/src/lib/utils";
-import { initializeApp, deleteApp } from "firebase/app";
-import { getAuth, createUserWithEmailAndPassword, updateProfile, signOut } from "firebase/auth";
-import firebaseConfig from "@/firebase-applet-config.json";
+import { 
+  db, 
+  OperationType, 
+  handleFirestoreError,
+  User,
+  collection,
+  onSnapshot,
+  doc,
+  setDoc,
+  deleteDoc,
+  query,
+  orderBy,
+  getDocs,
+  initializeApp,
+  deleteApp,
+  getAuth,
+  createUserWithEmailAndPassword,
+  updateProfile,
+  signOut
+} from "@/src/lib/supabase";
 import { 
   Users, Plus, Trash2, Shield, UserCheck, X, Search, Check, Pencil, 
   Mail, Phone, Briefcase, ChevronRight, UserCircle, ShieldAlert, BadgeCheck,
@@ -244,7 +258,7 @@ export default function UsersManager({
       if (!editingUser) {
         // Create full user auth in background using a secondary Firebase app so we don't log the admin out!
         const tempAppName = `app-${Date.now()}`;
-        const tempApp = initializeApp(firebaseConfig, tempAppName);
+        const tempApp = initializeApp({}, tempAppName);
         const tempAuth = getAuth(tempApp);
         try {
           const userCred = await createUserWithEmailAndPassword(tempAuth, finalEmail, userPassword.trim());

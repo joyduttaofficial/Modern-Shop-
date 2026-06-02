@@ -1,23 +1,39 @@
 import React, { useState, useEffect } from "react";
-import { User } from "firebase/auth";
-import { collection, onSnapshot, query, orderBy, doc, getDocs, writeBatch, setDoc, deleteDoc } from "firebase/firestore";
-import { db, OperationType, handleFirestoreError } from "@/src/lib/firebase";
+import { 
+  db, 
+  OperationType, 
+  handleFirestoreError,
+  User,
+  collection,
+  onSnapshot,
+  query,
+  orderBy,
+  doc,
+  getDocs,
+  writeBatch,
+  setDoc,
+  deleteDoc
+} from "@/src/lib/supabase";
 import { Transaction, UserRole, Employee } from "@/src/types";
 import { cn, formatCurrency } from "@/src/lib/utils";
-import { Calendar, UserCircle, Save, CheckCircle, Loader2, Home, ChevronRight, ShoppingCart } from "lucide-react";
+import { Calendar, UserCircle, Save, CheckCircle, Loader2, Home, ChevronRight, ShoppingCart, Printer, FileText } from "lucide-react";
 import { format, startOfDay, endOfDay } from "date-fns";
 import { useLanguage } from "../contexts/LanguageContext";
+import { jsPDF } from "jspdf";
+import autoTable from "jspdf-autotable";
 
 export default function NewSale({ 
   user, 
   role, 
   editDate, 
-  onClearEditDate 
+  onClearEditDate,
+  onSaveSuccess
 }: { 
   user: User; 
   role: UserRole; 
   editDate?: string; 
   onClearEditDate?: () => void; 
+  onSaveSuccess?: (recordedDate?: string) => void;
 }) {
   const { language, t, formatCurrency, formatDate, formatNumber, translateValue } = useLanguage();
   const [employees, setEmployees] = useState<Employee[]>([]);
@@ -26,6 +42,9 @@ export default function NewSale({
   const [companyName, setCompanyName] = useState("Modern Shop");
   const [companyPoweredBy, setCompanyPoweredBy] = useState("Powered by ModernManager");
   const [showPoweredBy, setShowPoweredBy] = useState(true);
+  const [companyPhone, setCompanyPhone] = useState("+880 1234 567890");
+  const [companyEmail, setCompanyEmail] = useState("info@modernmanager.com");
+  const [companyAddress, setCompanyAddress] = useState("Dhaka, Bangladesh");
 
   useEffect(() => {
     const unsub = onSnapshot(doc(db, "settings", "company"), (docSnap) => {
@@ -34,6 +53,9 @@ export default function NewSale({
         setCompanyName(data.companyName || "Modern Shop");
         setCompanyPoweredBy(data.companyPoweredBy || "Powered by ModernManager");
         setShowPoweredBy(data.showPoweredBy ?? true);
+        setCompanyPhone(data.companyPhone || "+880 1234 567890");
+        setCompanyEmail(data.companyEmail || "info@modernmanager.com");
+        setCompanyAddress(data.companyAddress || "Dhaka, Bangladesh");
       }
     }, (error) => {
       handleFirestoreError(error, OperationType.GET, "settings/company");
@@ -117,9 +139,11 @@ export default function NewSale({
       if (!selectedDate) return;
       setLoadingSales(true);
       try {
-        // Get start and end range for the chosen date to query Firestore safely
-        const start = startOfDay(new Date(selectedDate));
-        const end = endOfDay(new Date(selectedDate));
+        // Parse "YYYY-MM-DD" strictly as local calendar date
+        const [year, month, day] = selectedDate.split("-").map(Number);
+        const localDate = new Date(year, month - 1, day);
+        const start = startOfDay(localDate);
+        const end = endOfDay(localDate);
 
         const q = query(
           collection(db, "transactions")
@@ -196,6 +220,10 @@ export default function NewSale({
 
     try {
       const batch = writeBatch(db);
+      const [year, month, day] = selectedDate.split("-").map(Number);
+      const localDate = new Date(year, month - 1, day);
+      const isoDateString = localDate.toISOString();
+      const currentTimestamp = new Date().toISOString();
 
       for (const emp of employees) {
         if (!emp.id) continue;
@@ -209,13 +237,14 @@ export default function NewSale({
             const txRef = doc(db, "transactions", existingTxId);
             batch.update(txRef, {
               amount: currentAmount,
-              date: new Date(selectedDate).toISOString()
+              date: isoDateString,
+              updatedAt: currentTimestamp
             });
           } else {
             // Create new transaction doc reference
             const newTxRef = doc(collection(db, "transactions"));
             const newTx: Transaction = {
-              date: new Date(selectedDate).toISOString(),
+              date: isoDateString,
               type: "income",
               category: "Employee Sales",
               amount: currentAmount,
@@ -223,7 +252,9 @@ export default function NewSale({
               notes: `Daily Sales for ${emp.name}`,
               createdBy: user.uid,
               employeeId: emp.id,
-              subCategory: emp.name
+              subCategory: emp.name,
+              createdAt: currentTimestamp,
+              updatedAt: currentTimestamp
             };
             batch.set(newTxRef, newTx);
           }
@@ -241,19 +272,22 @@ export default function NewSale({
           const txRef = doc(db, "transactions", wholesaleTxId);
           batch.update(txRef, {
             amount: currentWholesale,
-            date: new Date(selectedDate).toISOString()
+            date: isoDateString,
+            updatedAt: currentTimestamp
           });
         } else {
           const newTxRef = doc(collection(db, "transactions"));
           const newTx: Transaction = {
-            date: new Date(selectedDate).toISOString(),
+            date: isoDateString,
             type: "income",
             category: "Wholesale Sales",
             amount: currentWholesale,
             paymentMethod: "Cash",
             notes: `Wholesale Sales for ${selectedDate}`,
             createdBy: user.uid,
-            subCategory: "Wholesale"
+            subCategory: "Wholesale",
+            createdAt: currentTimestamp,
+            updatedAt: currentTimestamp
           };
           batch.set(newTxRef, newTx);
         }
@@ -269,19 +303,22 @@ export default function NewSale({
           const txRef = doc(db, "transactions", depositTxId);
           batch.update(txRef, {
             amount: currentDeposit,
-            date: new Date(selectedDate).toISOString()
+            date: isoDateString,
+            updatedAt: currentTimestamp
           });
         } else {
           const newTxRef = doc(collection(db, "transactions"));
           const newTx: Transaction = {
-            date: new Date(selectedDate).toISOString(),
+            date: isoDateString,
             type: "income",
             category: "Total Deposit",
             amount: currentDeposit,
             paymentMethod: "Cash",
             notes: `Total Deposit for ${selectedDate}`,
             createdBy: user.uid,
-            subCategory: "Deposit"
+            subCategory: "Deposit",
+            createdAt: currentTimestamp,
+            updatedAt: currentTimestamp
           };
           batch.set(newTxRef, newTx);
         }
@@ -294,7 +331,12 @@ export default function NewSale({
 
       // Refresh mapping by manually querying again (triggered via slight state refresh or fake delay)
       setSuccess(true);
-      setTimeout(() => setSuccess(false), 4000);
+      setTimeout(() => {
+        setSuccess(false);
+        if (onSaveSuccess) {
+          onSaveSuccess(selectedDate);
+        }
+      }, 1500);
     } catch (error) {
       handleFirestoreError(error, OperationType.UPDATE, "transactions");
     } finally {
@@ -304,11 +346,182 @@ export default function NewSale({
     }
   };
 
+  const handleGenerateInvoicePDF = () => {
+    const doc = new jsPDF("p", "mm", "a4");
+    const pageWidth = doc.internal.pageSize.getWidth();
+
+    // Corp Header banner
+    doc.setFillColor(15, 23, 42); // slate bg
+    doc.rect(0, 0, pageWidth, 42, "F");
+
+    doc.setTextColor(255);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(22);
+    const companyTitleStr = companyName.toUpperCase();
+    const companyTitleWidth = doc.getTextWidth(companyTitleStr);
+    doc.text(companyTitleStr, pageWidth / 2 - (companyTitleWidth / 2), 16);
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9);
+    doc.setTextColor(203, 213, 225);
+    const companyTaglineStr = `Phone: ${companyPhone} • Email: ${companyEmail} • Address: ${companyAddress}`;
+    const taglineWidth = doc.getTextWidth(companyTaglineStr);
+    doc.text(companyTaglineStr, pageWidth / 2 - (taglineWidth / 2), 24);
+
+    doc.setFontSize(10);
+    doc.setFont("helvetica", "bold");
+    doc.setTextColor(220, 38, 38); // crimson accent
+    const printedTitle = "DAILY SALES SHIFT STATEMENT & INVOICE";
+    const printedTitleWidth = doc.getTextWidth(printedTitle);
+    doc.text(printedTitle, pageWidth / 2 - (printedTitleWidth / 2), 33);
+
+    doc.setFillColor(220, 38, 38); // crimson line
+    doc.rect(0, 42, pageWidth, 1.5, "F");
+
+    // Memo Box
+    const boxY = 48;
+    doc.setFillColor(248, 250, 252);
+    doc.rect(14, boxY, pageWidth - 28, 22, "F");
+    doc.setDrawColor(226, 232, 240);
+    doc.rect(14, boxY, pageWidth - 28, 22);
+    doc.line(pageWidth / 2, boxY, pageWidth / 2, boxY + 22);
+
+    doc.setFontSize(8.5);
+    doc.setFont("helvetica", "bold");
+    doc.setTextColor(71, 85, 105);
+    doc.text("STATEMENT INVOICE METADATA:", 18, boxY + 6);
+    doc.setFont("helvetica", "normal");
+    doc.text(`Reference: INV-SL-${selectedDate.replace(/-/g, "")}`, 18, boxY + 12);
+    doc.text(`Created By: ${user.email} (${role})`, 18, boxY + 18);
+
+    doc.setFont("helvetica", "bold");
+    doc.text("STATEMENT DETAILS:", pageWidth / 2 + 5, boxY + 6);
+    doc.setFont("helvetica", "normal");
+    doc.text(`Sales Date: ${format(new Date(selectedDate), "dd MMM yyyy (EEEE)")}`, pageWidth / 2 + 5, boxY + 12);
+    const syncStatus = Object.keys(salesTxIds).length > 0 ? "LEDGER SYNCED" : "DRAFT STATEMENT";
+    doc.text(`Save Status: ${syncStatus}`, pageWidth / 2 + 5, boxY + 18);
+
+    // Table rows of Sales Employees
+    const tableRows = employees.map((emp, index) => {
+      const amountValue = salesAmounts[emp.id!] || "0.00";
+      return [
+        (index + 1).toString(),
+        emp.name,
+        emp.role.toUpperCase(),
+        emp.department || "Sales",
+        `BDT ${(parseFloat(amountValue) || 0).toFixed(2)}`
+      ];
+    });
+
+    const startTableY = boxY + 28;
+
+    autoTable(doc, {
+      startY: startTableY,
+      head: [["S.No", "Sales Officer", "Designation", "Department", "Daily Inflow Volume"]],
+      body: tableRows,
+      theme: "grid",
+      headStyles: {
+        fillColor: [15, 23, 42],
+        textColor: [255, 255, 255],
+        fontSize: 8.5,
+        fontStyle: "bold",
+        halign: "left"
+      },
+      bodyStyles: {
+        fontSize: 8,
+        textColor: [51, 65, 85]
+      },
+      columnStyles: {
+        0: { halign: "center", fontStyle: "bold" },
+        4: { halign: "right", fontStyle: "bold", textColor: [15, 23, 42] }
+      },
+      styles: {
+        font: "helvetica",
+        cellPadding: 3.5
+      }
+    });
+
+    // Drawing the summary list card
+    const finalY = (doc as any).lastAutoTable.finalY + 8;
+    const cardWidth = 72;
+    const cardX = pageWidth - 14 - cardWidth;
+
+    doc.setDrawColor(226, 232, 240);
+    doc.setFillColor(250, 250, 250);
+    doc.rect(cardX, finalY, cardWidth, 34, "F");
+    doc.rect(cardX, finalY, cardWidth, 34);
+
+    doc.setFontSize(8.5);
+    doc.setFont("helvetica", "normal");
+    doc.setTextColor(115, 115, 115);
+    doc.text("Total Staff Sales:", cardX + 4, finalY + 7);
+    doc.text(`BDT ${totalSale.toFixed(2)}`, pageWidth - 18, finalY + 7, { align: "right" });
+
+    doc.text("Wholesale Sales (+):", cardX + 4, finalY + 14);
+    const wholesaleFloat = parseFloat(wholesaleAmount) || 0;
+    doc.text(`BDT ${wholesaleFloat.toFixed(2)}`, pageWidth - 18, finalY + 14, { align: "right" });
+
+    doc.text("Total Deposit (-):", cardX + 4, finalY + 21);
+    const depositFloat = parseFloat(depositAmount) || 0;
+    doc.text(`BDT ${depositFloat.toFixed(2)}`, pageWidth - 18, finalY + 21, { align: "right" });
+
+    doc.setFillColor(15, 23, 42); // slate highlight for grand total
+    doc.rect(cardX, finalY + 25, cardWidth, 9, "F");
+    doc.setTextColor(255);
+    doc.setFont("helvetica", "bold");
+    doc.text("Grand Net Total:", cardX + 4, finalY + 31);
+    doc.text(`BDT ${grandTotal.toFixed(2)}`, pageWidth - 18, finalY + 31, { align: "right" });
+
+    // Signatures
+    const sigY = finalY + 48;
+    doc.setDrawColor(200, 200, 200);
+    doc.line(14, sigY, 64, sigY);
+    doc.line(pageWidth - 14 - 50, sigY, pageWidth - 14, sigY);
+
+    doc.setFontSize(7.5);
+    doc.setFont("helvetica", "bold");
+    doc.setTextColor(115, 115, 115);
+    doc.text("PREPARED BY (STAFF SIGNATURE)", 14, sigY + 4);
+    doc.text("APPROVED BY (AUTHORIZED SIGNATURE)", pageWidth - 14, sigY + 4, { align: "right" });
+
+    // Audit Info
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(7);
+    doc.setTextColor(148, 163, 184);
+    doc.text(`Invoice generated automatically on ${format(new Date(), "dd/MM/yyyy HH:mm:ss")} from ${companyName} Ledger.`, 14, sigY + 15);
+
+    doc.save(`Invoice_Sales_${selectedDate}.pdf`);
+  };
+
   const handleAmountChange = (empId: string, val: string) => {
     setSalesAmounts(prev => ({
       ...prev,
       [empId]: val
     }));
+  };
+
+  const getQuickDates = () => {
+    const dates = [];
+    for (let i = 0; i < 5; i++) {
+      const d = new Date();
+      d.setDate(d.getDate() - i);
+      const isToday = i === 0;
+      const isYesterday = i === 1;
+      let label = "";
+      if (isToday) {
+        label = t("Today");
+      } else if (isYesterday) {
+        label = t("Yesterday");
+      } else {
+        label = format(d, "EEE, dd MMM");
+      }
+      dates.push({
+        label,
+        value: format(d, "yyyy-MM-dd"),
+        day: format(d, "EEEE"),
+      });
+    }
+    return dates;
   };
 
   const totalSale = (Object.values(salesAmounts) as string[]).reduce<number>((acc, curr) => acc + (parseFloat(curr) || 0), 0);
@@ -379,6 +592,39 @@ export default function NewSale({
               >
                 <option value={dayName}>{language === "bn" ? translateValue(dayName) : dayName}</option>
               </select>
+            </div>
+          </div>
+
+          {/* Quick Date Select Shortcuts panel */}
+          <div className="space-y-3 bg-slate-50/50 p-4 rounded-3xl border border-slate-100 shadow-sm">
+            <label className="text-[10px] font-black text-slate-400 uppercase tracking-wider pl-1 block">
+              ⚡ {t("Quick Switch (Last 5 Days)")}
+            </label>
+            <div className="flex flex-wrap gap-2">
+              {getQuickDates().map((item) => {
+                const isActive = selectedDate === item.value;
+                return (
+                  <button
+                    key={item.value}
+                    type="button"
+                    onClick={() => setSelectedDate(item.value)}
+                    className={cn(
+                      "px-4 py-2.5 rounded-2xl font-bold text-xs transition-all border outline-none cursor-pointer flex items-center gap-1.5 active:scale-95",
+                      isActive 
+                        ? "bg-[#2D7BBF] text-white border-transparent shadow shadow-blue-105" 
+                        : "bg-white border-slate-200/60 hover:bg-slate-50 hover:border-slate-300 text-slate-600"
+                    )}
+                  >
+                    <span>{item.label}</span>
+                    <span className={cn(
+                      "text-[9px] opacity-75 font-medium uppercase",
+                      isActive ? "text-blue-100" : "text-slate-400"
+                    )}>
+                      ({language === "bn" ? translateValue(item.day.slice(0, 3) + "day") : item.day.slice(0, 3)})
+                    </span>
+                  </button>
+                );
+              })}
             </div>
           </div>
 
@@ -525,13 +771,23 @@ export default function NewSale({
             </div>
           </div>
 
-          {/* Action Button */}
+          {/* Action Buttons */}
           {employees.length > 0 && (
-            <div className="pt-6">
+            <div className="pt-6 flex flex-col md:flex-row items-center gap-4">
               <button
+                id="download-invoice-btn"
+                type="button"
+                onClick={handleGenerateInvoicePDF}
+                className="w-full md:w-1/2 bg-slate-900 hover:bg-slate-800 text-white py-4 font-bold flex items-center justify-center gap-2 transition-all cursor-pointer active:scale-[0.99] rounded-xl text-base"
+              >
+                <Printer className="w-5 h-5 text-amber-400" />
+                <span>{t("Download Invoice PDF")}</span>
+              </button>
+              <button
+                id="save-sales-btn"
                 type="submit"
                 disabled={saving || loadingSales}
-                className="w-full bg-[#D12765] hover:bg-[#B41A50] text-white py-4 font-bold flex items-center justify-center transition-all cursor-pointer active:scale-[0.99] disabled:opacity-50 rounded-xl"
+                className="w-full md:w-1/2 bg-[#D12765] hover:bg-[#B41A50] text-white py-4 font-bold flex items-center justify-center transition-all cursor-pointer active:scale-[0.99] disabled:opacity-50 rounded-xl text-base"
               >
                 {saving ? (
                   <div className="flex items-center gap-2">
@@ -539,7 +795,7 @@ export default function NewSale({
                     <span>{t("saving...")}</span>
                   </div>
                 ) : (
-                  <span className="text-base text-white">{t("save")}</span>
+                  <span className="text-white">{t("save")}</span>
                 )}
               </button>
             </div>

@@ -73,6 +73,8 @@ export interface Transaction {
   createdBy: string;
   employeeId?: string; // Link to employee for salary/advances
   supplierId?: string; // Link to supplier for payments
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface Category {

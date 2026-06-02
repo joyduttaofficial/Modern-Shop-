@@ -1,7 +1,18 @@
 import React, { useState, useEffect } from "react";
-import { User } from "firebase/auth";
-import { collection, onSnapshot, query, where, deleteDoc, doc, writeBatch, increment } from "firebase/firestore";
-import { db, OperationType, handleFirestoreError } from "@/src/lib/firebase";
+import { 
+  db, 
+  OperationType, 
+  handleFirestoreError,
+  User,
+  collection,
+  onSnapshot,
+  query,
+  where,
+  deleteDoc,
+  doc,
+  writeBatch,
+  increment
+} from "@/src/lib/supabase";
 import { Employee, Bank, Transaction, UserRole } from "@/src/types";
 import { cn, formatCurrency } from "@/src/lib/utils";
 import { 

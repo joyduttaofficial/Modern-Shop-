@@ -1,7 +1,18 @@
 import React, { useState, useEffect } from "react";
-import { User } from "firebase/auth";
-import { collection, onSnapshot, addDoc, doc, increment, query, where } from "firebase/firestore";
-import { db, OperationType, handleFirestoreError, updateDoc } from "@/src/lib/firebase";
+import { 
+  db, 
+  OperationType, 
+  handleFirestoreError,
+  updateDoc,
+  User,
+  collection,
+  onSnapshot,
+  addDoc,
+  doc,
+  increment,
+  query,
+  where
+} from "@/src/lib/supabase";
 import { Employee, Bank, UserRole } from "@/src/types";
 import { cn, formatCurrency } from "@/src/lib/utils";
 import { Table, Save, Calendar, Landmark, Wallet, CheckCircle2, AlertCircle, Users } from "lucide-react";

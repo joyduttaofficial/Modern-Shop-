@@ -1,7 +1,18 @@
 import React, { useState, useEffect } from "react";
-import { User } from "firebase/auth";
-import { collection, onSnapshot, addDoc, doc, query, where, deleteDoc } from "firebase/firestore";
-import { db, OperationType, handleFirestoreError, updateDoc } from "@/src/lib/firebase";
+import { 
+  db, 
+  OperationType, 
+  handleFirestoreError,
+  updateDoc,
+  User,
+  collection,
+  onSnapshot,
+  addDoc,
+  doc,
+  query,
+  where,
+  deleteDoc
+} from "@/src/lib/supabase";
 import { Employee, UserRole, Attendance, AttendanceStatus } from "@/src/types";
 import { cn } from "@/src/lib/utils";
 import { 
@@ -473,27 +484,132 @@ export default function AttendancePage({
           )}
         </header>
 
-        {/* Action Controls */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-center">
-          <div className="flex bg-white p-2.5 rounded-2xl shadow-sm border border-gray-100 items-center justify-between">
-            <button 
-              onClick={() => setSelectedDate(prev => subDays(prev, 1))}
-              className="p-2 hover:bg-gray-50 rounded-xl transition-all text-gray-500 hover:text-gray-900"
-            >
-              <ChevronLeft className="w-5 h-5" />
-            </button>
-            <div className="flex items-center gap-2 font-black text-gray-950 text-sm">
-              <Calendar className="w-4 h-4 text-blue-600 animate-pulse" />
-              {format(selectedDate, "EEEE, dd MMMM yyyy")}
-            </div>
-            <button 
-              onClick={() => setSelectedDate(prev => addDays(prev, 1))}
-              className="p-2 hover:bg-gray-50 rounded-xl transition-all text-gray-500 hover:text-gray-900"
-            >
-              <ChevronRight className="w-5 h-5" />
-            </button>
-          </div>
+        {/* Interactive Premium Weekly Stripe & Unified Date Select Option */}
+        {(() => {
+          const surroundingDays = Array.from({ length: 7 }, (_, i) => {
+            return addDays(subDays(selectedDate, 3), i);
+          });
+          return (
+            <div className="bg-white p-4 md:p-6 rounded-3xl shadow-sm border border-gray-150/50 space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div>
+                  <p className="text-[10px] font-black uppercase text-gray-400 tracking-widest leading-none mb-1.5">Active Attendance Registry Date</p>
+                  <div className="relative inline-flex items-center gap-2.5 group cursor-pointer text-gray-950 hover:text-blue-650 transition-colors">
+                    <Calendar className="w-5 h-5 text-blue-600 animate-pulse" />
+                    <h3 className="text-sm md:text-base font-black tracking-tight leading-none group-hover:underline">
+                      {format(selectedDate, "EEEE, dd MMMM yyyy")}
+                    </h3>
+                    <span className="text-[9px] bg-blue-50 text-blue-700 font-extrabold px-2 py-0.5 rounded-md uppercase tracking-wider group-hover:bg-blue-100 transition-colors">
+                      Select Any Date
+                    </span>
+                    <input 
+                      type="date"
+                      value={format(selectedDate, "yyyy-MM-dd")}
+                      onChange={(e) => {
+                        if (e.target.value) {
+                          const [year, month, day] = e.target.value.split("-").map(Number);
+                          setSelectedDate(new Date(year, month - 1, day));
+                        }
+                      }}
+                      className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
+                      title="Click to select custom date"
+                    />
+                  </div>
+                </div>
 
+                {/* Quick Actions for Date */}
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setSelectedDate(startOfToday())}
+                    className={cn(
+                      "py-2 px-3 text-[10px] font-black uppercase tracking-wider rounded-xl transition-all cursor-pointer border",
+                      isSameDay(selectedDate, startOfToday())
+                        ? "bg-blue-600 text-white border-blue-600 shadow-sm shadow-blue-500/10"
+                        : "bg-gray-50 text-gray-600 border-gray-150 hover:bg-gray-100 hover:text-gray-900"
+                    )}
+                  >
+                    Today
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedDate(subDays(startOfToday(), 1))}
+                    className={cn(
+                      "py-2 px-3 text-[10px] font-black uppercase tracking-wider rounded-xl transition-all cursor-pointer border",
+                      isSameDay(selectedDate, subDays(startOfToday(), 1))
+                        ? "bg-blue-600 text-white border-blue-600 shadow-sm"
+                        : "bg-gray-50 text-gray-600 border-gray-150 hover:bg-gray-100 hover:text-gray-900"
+                    )}
+                  >
+                    Yesterday
+                  </button>
+                </div>
+              </div>
+
+              {/* Week stripe days slider */}
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setSelectedDate(prev => subDays(prev, 1))}
+                  className="p-2.5 md:p-3 bg-gray-50 hover:bg-gray-100 border border-gray-150 rounded-2xl text-gray-500 hover:text-gray-900 transition-all cursor-pointer shadow-xs active:scale-95 shrink-0"
+                  title="Previous Day"
+                >
+                  <ChevronLeft className="w-5 h-5" />
+                </button>
+
+                <div className="flex-1 grid grid-cols-7 gap-1 md:gap-2 overflow-hidden">
+                  {surroundingDays.map((day) => {
+                    const isSelected = isSameDay(day, selectedDate);
+                    const isToday = isSameDay(day, startOfToday());
+                    return (
+                      <button
+                        key={day.toISOString()}
+                        type="button"
+                        onClick={() => setSelectedDate(day)}
+                        className={cn(
+                          "flex flex-col items-center justify-center py-2 md:py-3 rounded-2xl border transition-all cursor-pointer text-center relative overflow-hidden group min-w-0",
+                          isSelected
+                            ? "bg-slate-900 text-white border-slate-900 shadow-md shadow-slate-900/10 scale-102"
+                            : "bg-white text-gray-500 border-gray-150 hover:bg-slate-50 hover:text-gray-950"
+                        )}
+                      >
+                        <span className={cn(
+                          "text-[8px] md:text-[9px] font-black uppercase tracking-widest block truncate max-w-full px-1",
+                          isSelected ? "text-gray-300" : "text-gray-400 group-hover:text-gray-600"
+                        )}>
+                          {format(day, "EEE")}
+                        </span>
+                        <span className="text-xs md:text-sm font-black tracking-tight block">
+                          {format(day, "dd")}
+                        </span>
+                        
+                        {/* Tiny visual underline indicator for 'Today' */}
+                        {isToday && (
+                          <span className={cn(
+                            "absolute bottom-0.5 md:bottom-1 w-1 md:w-1.5 h-1 md:h-1.5 rounded-full",
+                            isSelected ? "bg-blue-400" : "bg-blue-600 animate-pulse"
+                          )} />
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setSelectedDate(prev => addDays(prev, 1))}
+                  className="p-2.5 md:p-3 bg-gray-50 hover:bg-gray-100 border border-gray-150 rounded-2xl text-gray-500 hover:text-gray-900 transition-all cursor-pointer shadow-xs active:scale-95 shrink-0"
+                  title="Next Day"
+                >
+                  <ChevronRight className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
+          );
+        })()}
+
+        {/* Action Controls */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-center">
           <div className="relative">
             <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
             <input 

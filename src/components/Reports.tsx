@@ -1,7 +1,17 @@
 import React, { useState, useEffect } from "react";
-import { User } from "firebase/auth";
-import { collection, query, where, getDocs, orderBy, doc, onSnapshot } from "firebase/firestore";
-import { db, OperationType, handleFirestoreError } from "@/src/lib/firebase";
+import { 
+  db, 
+  OperationType, 
+  handleFirestoreError,
+  User,
+  collection,
+  query,
+  where,
+  getDocs,
+  orderBy,
+  doc,
+  onSnapshot
+} from "@/src/lib/supabase";
 import { Transaction, UserRole, Bank, Employee, Supplier, SupplierTransaction } from "@/src/types";
 import { cn } from "@/src/lib/utils";
 import { format, startOfDay, endOfDay, subDays, isWithinInterval, isBefore, startOfMonth, endOfMonth, eachMonthOfInterval, startOfYear, parseISO } from "date-fns";
@@ -38,6 +48,54 @@ import { motion, AnimatePresence } from "motion/react";
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, LineChart, Line } from "recharts";
 
 type ReportTab = "daily" | "bank" | "salary" | "supplier" | "purchase" | "attendance" | "transactions";
+
+export function addPdfGlobalLedgerSummary(
+  doc: jsPDF,
+  totals: {
+    totalSales: number;
+    totalPurchase: number;
+    totalPayment: number;
+    totalBankDeposit: number;
+    totalBankWithdrawal: number;
+  },
+  startY: number
+) {
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(9.5);
+  doc.setTextColor(51, 65, 85);
+  doc.text("GLOBAL SYSTEM LEDGER METRIC INDEX (AUDITED)", 14, startY);
+
+  autoTable(doc, {
+    startY: startY + 4,
+    head: [["LEDGER METRIC CATEGORY", "GLOBAL SYSTEM ACCUMULATED VALUES"]],
+    body: [
+      ["Combined Gross Sales (Sales Sum)", `BDT ${(totals?.totalSales || 0).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}`],
+      ["Aggregate Supplier Sourcing Volume (Purchases Sum)", `BDT ${(totals?.totalPurchase || 0).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}`],
+      ["Combined General & Payroll Payments (Disbursements Sum)", `BDT ${(totals?.totalPayment || 0).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}`],
+      ["Aggregate Multi-Channel Bank Deposits (Banks Inflow Sum)", `BDT ${(totals?.totalBankDeposit || 0).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}`],
+      ["Aggregate Multi-Channel Bank Withdrawals (Banks Outflow Sum)", `BDT ${(totals?.totalBankWithdrawal || 0).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}`],
+    ],
+    theme: "grid",
+    headStyles: {
+      fillColor: [30, 41, 59], // Slate-800
+      textColor: [255, 255, 255],
+      fontSize: 8,
+      fontStyle: "bold",
+      halign: "left"
+    },
+    bodyStyles: {
+      fontSize: 7.5,
+      textColor: [51, 65, 85]
+    },
+    columnStyles: {
+      1: { halign: "right", fontStyle: "bold", textColor: [15, 23, 42] }
+    },
+    styles: {
+      font: "helvetica",
+      cellPadding: 3.5
+    }
+  });
+}
 
 export interface PurchaseModel {
   id?: string;
@@ -110,6 +168,58 @@ export default function Reports({ user, role }: { user: User; role: UserRole }) 
     totalExpense: 0,
     netCash: 0
   });
+
+  // Dynamic Global Ledger Totals calculations
+  const globalLedgerTotals = React.useMemo(() => {
+    let empSales = 0;
+    let wsSales = 0;
+    let deposits = 0;
+    let bankDeps = 0;
+    let bankWds = 0;
+    let cashPay = 0;
+    let bankPay = 0;
+
+    transactions.forEach(tx => {
+      const cat = tx.category || "";
+      if (tx.type === "income") {
+        if (cat === "Employee Sales") {
+          empSales += tx.amount;
+        } else if (cat === "Wholesale Sales" || cat.toLowerCase().includes("wholesale")) {
+          wsSales += tx.amount;
+        } else if (cat === "Total Deposit" || cat.toLowerCase() === "deposit") {
+          deposits += tx.amount;
+        } else if (cat === "Bank Deposit") {
+          bankDeps += tx.amount;
+        } else {
+          empSales += tx.amount;
+        }
+      } else if (tx.type === "expense") {
+        if (cat === "Bank Credit") {
+          bankWds += tx.amount;
+        } else {
+          if (tx.paymentMethod === "Cash") {
+            cashPay += tx.amount;
+          } else {
+            bankPay += tx.amount;
+          }
+        }
+      }
+    });
+
+    const totalSales = empSales + wsSales - deposits;
+    const totalPurchase = purchases.reduce((sum, p) => sum + p.totalAmount, 0);
+    const totalPayment = cashPay + bankPay;
+    const totalBankDeposit = bankDeps + transactions.filter(tx => tx.type === "income" && tx.paymentMethod !== "Cash" && tx.category !== "Opening Balance").reduce((sum, tx) => sum + tx.amount, 0);
+    const totalBankWithdrawal = bankWds + transactions.filter(tx => tx.type === "expense" && tx.paymentMethod !== "Cash").reduce((sum, tx) => sum + tx.amount, 0);
+
+    return {
+      totalSales,
+      totalPurchase,
+      totalPayment,
+      totalBankDeposit,
+      totalBankWithdrawal
+    };
+  }, [transactions, purchases]);
 
   useEffect(() => {
     async function fetchData() {
@@ -508,10 +618,14 @@ export default function Reports({ user, role }: { user: User; role: UserRole }) 
       { align: "center" }
     );
 
+    // Call dynamic global overview helper
+    addPdfGlobalLedgerSummary(doc, globalLedgerTotals, finalY + 32);
+
+    const postSummaryY = (doc as any).lastAutoTable.finalY + 10;
     doc.setFontSize(7.5);
     doc.setTextColor(148, 163, 184);
     doc.setFont("helvetica", "normal");
-    doc.text(`Document verified on ${format(new Date(), "dd/MM/yyyy HH:mm:ss")}. System secure ledger.`, 14, finalY + 32);
+    doc.text(`Document verified on ${format(new Date(), "dd/MM/yyyy HH:mm:ss")}. System secure ledger.`, 14, postSummaryY);
 
     doc.save(`Shop_Daily_Statement_${selectedDate}.pdf`);
   };
@@ -733,27 +847,44 @@ export default function Reports({ user, role }: { user: User; role: UserRole }) 
       )}
 
       {activeTab === "bank" && (
-        <BankStatementReport banks={banks} transactions={transactions} companyName={companyName} companyAddress={companyAddress} companyPhone={companyPhone} companyEmail={companyEmail} formatCurrency={formatCurrency} />
+        <BankStatementReport banks={banks} transactions={transactions} companyName={companyName} companyAddress={companyAddress} companyPhone={companyPhone} companyEmail={companyEmail} formatCurrency={formatCurrency} globalLedgerTotals={globalLedgerTotals} />
       )}
 
       {activeTab === "salary" && (
-        <SalaryFilterWiseReport employees={employees} transactions={transactions} companyName={companyName} companyAddress={companyAddress} companyPhone={companyPhone} companyEmail={companyEmail} formatCurrency={formatCurrency} />
+        <SalaryFilterWiseReport employees={employees} transactions={transactions} companyName={companyName} companyAddress={companyAddress} companyPhone={companyPhone} companyEmail={companyEmail} formatCurrency={formatCurrency} globalLedgerTotals={globalLedgerTotals} />
       )}
 
       {activeTab === "supplier" && (
-        <SupplierPaymentsReport suppliers={suppliers} supplierTransactions={supplierTransactions} companyName={companyName} companyAddress={companyAddress} companyPhone={companyPhone} companyEmail={companyEmail} formatCurrency={formatCurrency} />
+        <SupplierPaymentsReport suppliers={suppliers} supplierTransactions={supplierTransactions} companyName={companyName} companyAddress={companyAddress} companyPhone={companyPhone} companyEmail={companyEmail} formatCurrency={formatCurrency} globalLedgerTotals={globalLedgerTotals} />
       )}
 
       {activeTab === "purchase" && (
-        <PurchaseReportSection suppliers={suppliers} purchases={purchases} companyName={companyName} companyAddress={companyAddress} companyPhone={companyPhone} companyEmail={companyEmail} formatCurrency={formatCurrency} />
+        <PurchaseReportSection suppliers={suppliers} purchases={purchases} companyName={companyName} companyAddress={companyAddress} companyPhone={companyPhone} companyEmail={companyEmail} formatCurrency={formatCurrency} globalLedgerTotals={globalLedgerTotals} />
       )}
 
       {activeTab === "attendance" && (
-        <AttendanceReport employees={employees} attendance={attendance} />
+        <AttendanceReport 
+          employees={employees} 
+          attendance={attendance} 
+          companyName={companyName}
+          companyAddress={companyAddress}
+          companyPhone={companyPhone}
+          companyEmail={companyEmail}
+          formatCurrency={formatCurrency}
+          globalLedgerTotals={globalLedgerTotals}
+        />
       )}
 
       {activeTab === "transactions" && (
-        <TransactionsReport transactions={transactions} />
+        <TransactionsReport 
+          transactions={transactions} 
+          companyName={companyName}
+          companyAddress={companyAddress}
+          companyPhone={companyPhone}
+          companyEmail={companyEmail}
+          formatCurrency={formatCurrency}
+          globalLedgerTotals={globalLedgerTotals}
+        />
       )}
     </div>
   );
@@ -762,7 +893,7 @@ export default function Reports({ user, role }: { user: User; role: UserRole }) 
 /* ==========================================================================
    NEW TAB 1: BANK STATEMENT REPORT WITH INDIVIDUAL RECONCILIATIONS
    ========================================================================== */
-function BankStatementReport({ banks, transactions, companyName, companyAddress, companyPhone, companyEmail, formatCurrency }: {
+function BankStatementReport({ banks, transactions, companyName, companyAddress, companyPhone, companyEmail, formatCurrency, globalLedgerTotals }: {
   banks: Bank[];
   transactions: Transaction[];
   companyName: string;
@@ -770,6 +901,7 @@ function BankStatementReport({ banks, transactions, companyName, companyAddress,
   companyPhone: string;
   companyEmail: string;
   formatCurrency: (val: number) => string;
+  globalLedgerTotals: any;
 }) {
   const [selectedBankName, setSelectedBankName] = useState("all");
   const [startDate, setStartDate] = useState(format(startOfMonth(new Date()), "yyyy-MM-dd"));
@@ -913,12 +1045,15 @@ function BankStatementReport({ banks, transactions, companyName, companyAddress,
       }
     });
 
-    const finalY = (doc as any).lastAutoTable.finalY + 14;
-    if (finalY < 280) {
+    const finalY = (doc as any).lastAutoTable.finalY + 8;
+    addPdfGlobalLedgerSummary(doc, globalLedgerTotals, finalY);
+
+    const postSummaryY = (doc as any).lastAutoTable.finalY + 10;
+    if (postSummaryY < 280) {
       doc.setFontSize(8);
       doc.setTextColor(148, 163, 184);
       doc.setFont("helvetica", "italic");
-      doc.text("Statement verified. Generated from corporate audit servers.", 14, finalY);
+      doc.text("Statement verified. Generated from corporate audit servers.", 14, postSummaryY);
     }
 
     doc.save(`Bank_Statement_${selectedBankName}_${startDate}_to_${endDate}.pdf`);
@@ -1087,7 +1222,7 @@ function BankStatementReport({ banks, transactions, companyName, companyAddress,
 /* ==========================================================================
    UPDATED TAB 2: PROPER EMPlOYEE FILTER-WISE SALARY REPORT
    ========================================================================== */
-function SalaryFilterWiseReport({ employees, transactions, companyName, companyAddress, companyPhone, companyEmail, formatCurrency }: {
+function SalaryFilterWiseReport({ employees, transactions, companyName, companyAddress, companyPhone, companyEmail, formatCurrency, globalLedgerTotals }: {
   employees: Employee[];
   transactions: Transaction[];
   companyName: string;
@@ -1095,16 +1230,58 @@ function SalaryFilterWiseReport({ employees, transactions, companyName, companyA
   companyPhone: string;
   companyEmail: string;
   formatCurrency: (val: number) => string;
+  globalLedgerTotals: any;
 }) {
   const [selectedEmpId, setSelectedEmpId] = useState("all");
   const [targetYear, setTargetYear] = useState(new Date().getFullYear().toString());
+  const [targetMonth, setTargetMonth] = useState("all");
+  const [targetDate, setTargetDate] = useState("all");
+
+  const monthsList = [
+    { value: "01", label: "January" },
+    { value: "02", label: "February" },
+    { value: "03", label: "March" },
+    { value: "04", label: "April" },
+    { value: "05", label: "May" },
+    { value: "06", label: "June" },
+    { value: "07", label: "July" },
+    { value: "08", label: "August" },
+    { value: "09", label: "September" },
+    { value: "10", label: "October" },
+    { value: "11", label: "November" },
+    { value: "12", label: "December" }
+  ];
+
+  // Dynamic set of unique dates available in the salary/advance transactions
+  const availableDates = Array.from(
+    new Set(
+      transactions
+        .filter(tx => tx.category === "Salary" || tx.category === "Staff Salary" || tx.category === "Salary Advance" || tx.category === "Staff Advance")
+        .map(tx => tx.date.split("T")[0])
+    )
+  ).sort((a, b) => b.localeCompare(a)); // Sort descending by default for latest first
 
   // Filters salary and advances
   const filteredTxs = transactions.filter(tx => {
     const isSalaryOrAdvance = tx.category === "Salary" || tx.category === "Staff Salary" || tx.category === "Salary Advance" || tx.category === "Staff Advance";
     if (!isSalaryOrAdvance) return false;
     
-    if (new Date(tx.date).getFullYear().toString() !== targetYear) return false;
+    const parts = tx.date.split("T")[0].split("-");
+    const txYear = parts[0];
+    const txMonth = parts[1]; // "01"-"12"
+    const txYMD = tx.date.split("T")[0];
+    
+    if (targetYear !== "all") {
+      if (txYear !== targetYear) return false;
+    }
+    
+    if (targetMonth !== "all") {
+      if (txMonth !== targetMonth) return false;
+    }
+    
+    if (targetDate !== "all") {
+      if (txYMD !== targetDate) return false;
+    }
     
     if (selectedEmpId !== "all") {
       if (tx.employeeId !== selectedEmpId) return false;
@@ -1112,7 +1289,31 @@ function SalaryFilterWiseReport({ employees, transactions, companyName, companyA
     return true;
   }).sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
+  // Selected Employee Basic Reference
+  const empTarget = employees.find(e => e.id === selectedEmpId);
+
   // Aggregate stats
+  const monthlySalaryRate = empTarget 
+    ? empTarget.salary 
+    : employees.reduce((sum, e) => sum + e.salary, 0);
+
+  let periodMonths = 1;
+  let periodLabel = "Monthly Rate";
+  if (targetDate !== "all") {
+    periodMonths = 1;
+    periodLabel = "Month of Date";
+  } else if (targetMonth !== "all") {
+    periodMonths = 1;
+    periodLabel = "Target (Selected Month)";
+  } else if (targetYear !== "all") {
+    periodMonths = 12;
+    periodLabel = "Target (Selected Year)";
+  } else {
+    periodMonths = 12;
+    periodLabel = "Annual Target Est.";
+  }
+  const totalTargetSalary = monthlySalaryRate * periodMonths;
+
   const totalSalaryPayout = filteredTxs
     .filter(tx => tx.category === "Salary" || tx.category === "Staff Salary")
     .reduce((sum, tx) => sum + tx.amount, 0);
@@ -1120,9 +1321,6 @@ function SalaryFilterWiseReport({ employees, transactions, companyName, companyA
   const totalAdvancePayout = filteredTxs
     .filter(tx => tx.category === "Salary Advance" || tx.category === "Staff Advance")
     .reduce((sum, tx) => sum + tx.amount, 0);
-
-  // Selected Employee Basic Reference
-  const empTarget = employees.find(e => e.id === selectedEmpId);
 
   const downloadSalaryReportPDF = () => {
     const doc = new jsPDF("p", "mm", "a4");
@@ -1140,7 +1338,12 @@ function SalaryFilterWiseReport({ employees, transactions, companyName, companyA
     doc.setFontSize(9);
     doc.setTextColor(203, 213, 225);
     doc.text(`${companyName.toUpperCase()} • ${companyAddress}`, 14, 23);
-    doc.text(`Issuer: HR Department || Target Year: ${targetYear}`, 14, 28);
+    
+    const monthLabelPdf = targetMonth !== "all" 
+      ? monthsList.find(m => m.value === targetMonth)?.label || targetMonth
+      : "All Months";
+    const dateLabelPdf = targetDate !== "all" ? targetDate : "All Dates";
+    doc.text(`Issuer: HR Department || Year: ${targetYear === "all" ? "All Years" : targetYear} | Month: ${monthLabelPdf} | Date: ${dateLabelPdf}`, 14, 28);
     
     doc.setFillColor(14, 165, 233);
     doc.rect(0, 38, 210, 2, "F");
@@ -1164,9 +1367,27 @@ function SalaryFilterWiseReport({ employees, transactions, companyName, companyA
       doc.text(`Basic Salary Rate: BDT ${empTarget.salary.toLocaleString()}/mo`, 110, 59);
       doc.text(`Join Date: ${empTarget.joinedDate || "N/A"}`, 110, 64);
       doc.text(`Card Status: ${empTarget.status.toUpperCase()}`, 110, 69);
+    } else {
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(10);
+      doc.setTextColor(51, 65, 85);
+      doc.text("CONSOLIDATED STAFF PAYROLL SUMMARY", 14, 49);
+
+      doc.setFillColor(248, 250, 252);
+      doc.rect(14, 53, 182, 24, "F");
+
+      doc.setFontSize(8);
+      doc.setTextColor(71, 85, 105);
+      doc.text(`Total Personnel Count: ${employees.length} Employees`, 18, 59);
+      doc.text(`Combined Contract Rate: BDT ${monthlySalaryRate.toLocaleString()}/mo`, 18, 64);
+      doc.text(`Dispatch Scope Period: ${targetMonth !== "all" ? monthsList.find(m => m.value === targetMonth)?.label : "Yearly / General"}`, 18, 69);
+      
+      doc.text(`Target Salary Budget: BDT ${totalTargetSalary.toLocaleString()}`, 110, 59);
+      doc.text(`Disbursed (Salary Paid): BDT ${totalSalaryPayout.toLocaleString()}`, 110, 64);
+      doc.text(`Advances Distributed: BDT ${totalAdvancePayout.toLocaleString()}`, 110, 69);
     }
 
-    const startTableY = empTarget ? 84 : 48;
+    const startTableY = 84;
     doc.setFont("helvetica", "bold");
     doc.setFontSize(10);
     doc.setTextColor(51, 65, 85);
@@ -1206,6 +1427,9 @@ function SalaryFilterWiseReport({ employees, transactions, companyName, companyA
       }
     });
 
+    const finalY = (doc as any).lastAutoTable.finalY + 8;
+    addPdfGlobalLedgerSummary(doc, globalLedgerTotals, finalY);
+
     doc.save(`Salary_Audit_${selectedEmpId}_${targetYear}.pdf`);
   };
 
@@ -1218,7 +1442,7 @@ function SalaryFilterWiseReport({ employees, transactions, companyName, companyA
           <span>Staff Payroll Ledger Filters</span>
         </h3>
         
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
           <div className="space-y-1">
             <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block">Target Staff / Employee</label>
             <select
@@ -1240,16 +1464,48 @@ function SalaryFilterWiseReport({ employees, transactions, companyName, companyA
               onChange={(e) => setTargetYear(e.target.value)}
               className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold text-xs"
             >
+              <option value="all">All Years</option>
               <option value="2024">2024</option>
               <option value="2025">2025</option>
               <option value="2026">2026</option>
+              <option value="2027">2027</option>
+            </select>
+          </div>
+
+          <div className="space-y-1">
+            <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block">Target Month</label>
+            <select
+              value={targetMonth}
+              onChange={(e) => setTargetMonth(e.target.value)}
+              className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold text-xs"
+            >
+              <option value="all">All Months</option>
+              {monthsList.map(m => (
+                <option key={m.value} value={m.value}>{m.label}</option>
+              ))}
+            </select>
+          </div>
+
+          <div className="space-y-1">
+            <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block">Specific Date</label>
+            <select
+              value={targetDate}
+              onChange={(e) => setTargetDate(e.target.value)}
+              className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold text-xs"
+            >
+              <option value="all">All Dates</option>
+              {availableDates.map(dateStr => (
+                <option key={dateStr} value={dateStr}>
+                  {format(new Date(dateStr), "dd MMM yyyy")} ({dateStr})
+                </option>
+              ))}
             </select>
           </div>
 
           <div className="flex items-end">
             <button
               onClick={downloadSalaryReportPDF}
-              className="w-full flex items-center justify-center gap-1.5 px-5 py-2.5 bg-slate-900 text-white hover:bg-slate-800 rounded-xl text-xs font-bold tracking-wider uppercase transition-all shadow-xs cursor-pointer"
+              className="w-full flex items-center justify-center gap-1.5 px-5 py-2.5 bg-slate-900 text-white hover:bg-slate-800 rounded-xl text-xs font-bold tracking-wider uppercase transition-all shadow-xs cursor-pointer h-10"
             >
               <Printer className="w-4 h-4" />
               <span>PDF Payroll Audit</span>
@@ -1259,21 +1515,33 @@ function SalaryFilterWiseReport({ employees, transactions, companyName, companyA
       </div>
 
       {/* Stats Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
         <div className="bg-slate-50 border border-slate-200 p-6 rounded-3xl">
           <p className="text-[10px] font-extrabold text-slate-500 uppercase tracking-widest mb-1">Target Monthly Salary</p>
           <p className="text-2xl font-black text-slate-900">
-            {empTarget ? formatCurrency(empTarget.salary) : "N/A (Multiple staff)"}
+            {formatCurrency(monthlySalaryRate)}
           </p>
-          {empTarget && (
-            <p className="text-[10px] text-slate-400 font-bold mt-1 uppercase">department: {empTarget.department || "General"}</p>
-          )}
+          <p className="text-[10px] text-slate-400 font-bold mt-1 uppercase">
+            {empTarget ? `Staff Contract: ${empTarget.name}` : `Aggregated Base (${employees.length} Staff)`}
+          </p>
+        </div>
+
+        <div className="bg-indigo-50 border border-indigo-150 p-6 rounded-3xl flex items-center justify-between">
+          <div>
+            <p className="text-[10px] font-extrabold text-indigo-850 uppercase tracking-widest mb-1">Total Target Salary</p>
+            <p className="text-2xl font-black text-indigo-950">{formatCurrency(totalTargetSalary)}</p>
+            <p className="text-[10px] text-indigo-600 font-bold mt-1 uppercase">Scope: {periodLabel}</p>
+          </div>
+          <div className="w-11 h-11 bg-indigo-100 rounded-full flex items-center justify-center text-indigo-600">
+            <Calendar className="w-5 h-5" />
+          </div>
         </div>
 
         <div className="bg-green-50 border border-green-100 p-6 rounded-3xl flex items-center justify-between">
           <div>
-            <p className="text-[10px] font-extrabold text-green-850 uppercase tracking-widest mb-1">Total Salary Paid (Yearly)</p>
+            <p className="text-[10px] font-extrabold text-green-850 uppercase tracking-widest mb-1">Salary Paid (Period)</p>
             <p className="text-2xl font-black text-green-950">{formatCurrency(totalSalaryPayout)}</p>
+            <p className="text-[10px] text-green-400 font-bold mt-1 uppercase">Disbursed successfully</p>
           </div>
           <div className="w-11 h-11 bg-green-100 rounded-full flex items-center justify-center text-green-600">
             <CheckCircle2 className="w-5 h-5" />
@@ -1282,8 +1550,9 @@ function SalaryFilterWiseReport({ employees, transactions, companyName, companyA
 
         <div className="bg-amber-50 border border-amber-100 p-6 rounded-3xl flex items-center justify-between">
           <div>
-            <p className="text-[10px] font-extrabold text-amber-850 uppercase tracking-widest mb-1">Total Advances Issued</p>
+            <p className="text-[10px] font-extrabold text-amber-850 uppercase tracking-widest mb-1">Salary Advanced</p>
             <p className="text-2xl font-black text-amber-950">{formatCurrency(totalAdvancePayout)}</p>
+            <p className="text-[10px] text-amber-400 font-bold mt-1 uppercase">Dispatched advance funds</p>
           </div>
           <div className="w-11 h-11 bg-amber-100 text-amber-600 rounded-full flex items-center justify-center">
             <Info className="w-5 h-5" />
@@ -1339,7 +1608,7 @@ function SalaryFilterWiseReport({ employees, transactions, companyName, companyA
             {filteredTxs.length === 0 && (
               <tr>
                 <td colSpan={6} className="px-6 py-16 text-center text-slate-400 italic font-medium">
-                  No payroll/salary dispatch matches for fiscal {targetYear}.
+                  No payroll/salary dispatch matches for selected period filters.
                 </td>
               </tr>
             )}
@@ -1353,7 +1622,7 @@ function SalaryFilterWiseReport({ employees, transactions, companyName, companyA
 /* ==========================================================================
    NEW TAB 3: SUPPLIER PAYMENTS & LEDGER REPORT (TAB: supplier)
    ========================================================================== */
-function SupplierPaymentsReport({ suppliers, supplierTransactions, companyName, companyAddress, companyPhone, companyEmail, formatCurrency }: {
+function SupplierPaymentsReport({ suppliers, supplierTransactions, companyName, companyAddress, companyPhone, companyEmail, formatCurrency, globalLedgerTotals }: {
   suppliers: Supplier[];
   supplierTransactions: SupplierTransaction[];
   companyName: string;
@@ -1361,6 +1630,7 @@ function SupplierPaymentsReport({ suppliers, supplierTransactions, companyName, 
   companyPhone: string;
   companyEmail: string;
   formatCurrency: (val: number) => string;
+  globalLedgerTotals: any;
 }) {
   const [selectedSupId, setSelectedSupId] = useState("all");
   const [startDate, setStartDate] = useState(format(subDays(new Date(), 30), "yyyy-MM-dd"));
@@ -1373,7 +1643,26 @@ function SupplierPaymentsReport({ suppliers, supplierTransactions, companyName, 
     return true;
   }).sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
-  // Supplier metrics calculation
+  const selectedSupObj = suppliers.find(s => s.id === selectedSupId);
+
+  // Supplier metrics calculation - Proper lifetime/all-time values for reconciliation
+  const totalOutstandingDue = selectedSupObj
+    ? (selectedSupObj.purchaseDue || 0)
+    : suppliers.reduce((sum, s) => sum + (s.purchaseDue || 0), 0);
+
+  const totalPurchasesOverall = selectedSupObj
+    ? (selectedSupObj.totalAmount || 0)
+    : suppliers.reduce((sum, s) => sum + (s.totalAmount || 0), 0);
+
+  const totalPaymentsOverall = selectedSupObj
+    ? supplierTransactions
+        .filter(tx => tx.supplierId === selectedSupObj.id && tx.type === "payment")
+        .reduce((sum, tx) => sum + (tx.totalAmount || 0), 0)
+    : supplierTransactions
+        .filter(tx => tx.type === "payment")
+        .reduce((sum, tx) => sum + (tx.totalAmount || 0), 0);
+
+  // Still keep period calculations for any reference if needed (like the downloadable statement reports)
   const totalPurchaseGross = filteredSTxs
     .filter(tx => tx.type === "purchase")
     .reduce((sum, tx) => sum + (tx.totalAmount || 0), 0);
@@ -1381,8 +1670,6 @@ function SupplierPaymentsReport({ suppliers, supplierTransactions, companyName, 
   const totalPaymentsMade = filteredSTxs
     .filter(tx => tx.type === "payment")
     .reduce((sum, tx) => sum + (tx.totalAmount || 0), 0);
-
-  const selectedSupObj = suppliers.find(s => s.id === selectedSupId);
 
   const downloadSupplierPDF = () => {
     const doc = new jsPDF("p", "mm", "a4");
@@ -1424,9 +1711,33 @@ function SupplierPaymentsReport({ suppliers, supplierTransactions, companyName, 
       doc.text(`Outstanding Due Balance: BDT ${selectedSupObj.purchaseDue.toLocaleString()}`, 115, 64);
       doc.text(`Advance Ledger Balance: BDT ${selectedSupObj.advanceAmount.toLocaleString()}`, 115, 69);
       doc.text(`Overall Status: ${selectedSupObj.status.toUpperCase()}`, 115, 74);
+    } else {
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(10);
+      doc.setTextColor(51, 65, 85);
+      doc.text("COMBINED SUPPLIERS DOSSIER", 14, 49);
+
+      doc.setFillColor(248, 250, 252);
+      doc.rect(14, 53, 182, 26, "F");
+
+      doc.setFontSize(8);
+      doc.setTextColor(71, 85, 105);
+      doc.text(`Vendor Scope: ALL REGISTERED SUPPLIERS`, 18, 59);
+      doc.text(`Active Count: ${suppliers.filter(s => s.status === "active").length} Suppliers`, 18, 64);
+      doc.text(`Record Logs Range: ${startDate} to ${endDate}`, 18, 69);
+      doc.text(`Generated Date: ${format(new Date(), "yyyy-MM-dd")}`, 18, 74);
+
+      const totalOverallPurchases = suppliers.reduce((sum, s) => sum + (s.totalAmount || 0), 0);
+      const totalOverallDue = suppliers.reduce((sum, s) => sum + (s.purchaseDue || 0), 0);
+      const totalOverallAdvance = suppliers.reduce((sum, s) => sum + (s.advanceAmount || 0), 0);
+
+      doc.text(`Combined Gross Purchases: BDT ${totalOverallPurchases.toLocaleString()}`, 115, 59);
+      doc.text(`Combined Outstanding Dues: BDT ${totalOverallDue.toLocaleString()}`, 115, 64);
+      doc.text(`Combined Advance Balances: BDT ${totalOverallAdvance.toLocaleString()}`, 115, 69);
+      doc.text(`Overall Status: CONSOLIDATED AUDIT`, 115, 74);
     }
 
-    const startTableY = selectedSupObj ? 88 : 48;
+    const startTableY = 88;
     doc.setFont("helvetica", "bold");
     doc.setFontSize(10);
     doc.setTextColor(51, 65, 85);
@@ -1467,6 +1778,9 @@ function SupplierPaymentsReport({ suppliers, supplierTransactions, companyName, 
         cellPadding: 3
       }
     });
+
+    const finalY = (doc as any).lastAutoTable.finalY + 8;
+    addPdfGlobalLedgerSummary(doc, globalLedgerTotals, finalY);
 
     doc.save(`Supplier_Ledger_${selectedSupId}.pdf`);
   };
@@ -1532,17 +1846,19 @@ function SupplierPaymentsReport({ suppliers, supplierTransactions, companyName, 
         <div className="bg-slate-50 border border-slate-200 p-6 rounded-3xl">
           <p className="text-[10px] font-extrabold text-slate-500 uppercase tracking-widest mb-1">Contract Outstanding Due</p>
           <p className="text-2xl font-black text-slate-900">
-            {selectedSupObj ? formatCurrency(selectedSupObj.purchaseDue) : "N/A (Multi-Vendor)"}
+            {formatCurrency(totalOutstandingDue)}
           </p>
-          {selectedSupObj && (
+          {selectedSupObj ? (
             <p className="text-[10px] text-slate-400 font-bold mt-1 uppercase">Supplier Address: {selectedSupObj.address || "—"}</p>
+          ) : (
+            <p className="text-[10px] text-slate-400 font-bold mt-1 uppercase">Combined outstanding ledger dues</p>
           )}
         </div>
 
         <div className="bg-indigo-50 border border-indigo-100 p-6 rounded-3xl flex items-center justify-between">
           <div>
-            <p className="text-[10px] font-extrabold text-indigo-850 uppercase tracking-widest mb-1">Gross Purchases in period</p>
-            <p className="text-2xl font-black text-indigo-950">{formatCurrency(totalPurchaseGross)}</p>
+            <p className="text-[10px] font-extrabold text-indigo-850 uppercase tracking-widest mb-1">Gross Purchases Total</p>
+            <p className="text-2xl font-black text-indigo-950">{formatCurrency(totalPurchasesOverall)}</p>
           </div>
           <div className="w-11 h-11 bg-indigo-100 rounded-full flex items-center justify-center text-indigo-600">
             <ShoppingCart className="w-5 h-5" />
@@ -1551,8 +1867,8 @@ function SupplierPaymentsReport({ suppliers, supplierTransactions, companyName, 
 
         <div className="bg-teal-50 border border-teal-100 p-6 rounded-3xl flex items-center justify-between">
           <div>
-            <p className="text-[10px] font-extrabold text-teal-850 uppercase tracking-widest mb-1">Total Payments Authorized</p>
-            <p className="text-2xl font-black text-teal-950">{formatCurrency(totalPaymentsMade)}</p>
+            <p className="text-[10px] font-extrabold text-teal-850 uppercase tracking-widest mb-1">Total Payments Made</p>
+            <p className="text-2xl font-black text-teal-950">{formatCurrency(totalPaymentsOverall)}</p>
           </div>
           <div className="w-11 h-11 bg-teal-100 text-teal-600 rounded-full flex items-center justify-center">
             <CheckCircle2 className="w-5 h-5" />
@@ -1630,7 +1946,7 @@ function SupplierPaymentsReport({ suppliers, supplierTransactions, companyName, 
 /* ==========================================================================
    NEW TAB 4: PURCHASE ORDERS SUMMARY AUDIT (TAB: purchase)
    ========================================================================== */
-function PurchaseReportSection({ suppliers, purchases, companyName, companyAddress, companyPhone, companyEmail, formatCurrency }: {
+function PurchaseReportSection({ suppliers, purchases, companyName, companyAddress, companyPhone, companyEmail, formatCurrency, globalLedgerTotals }: {
   suppliers: Supplier[];
   purchases: PurchaseModel[];
   companyName: string;
@@ -1638,6 +1954,7 @@ function PurchaseReportSection({ suppliers, purchases, companyName, companyAddre
   companyPhone: string;
   companyEmail: string;
   formatCurrency: (val: number) => string;
+  globalLedgerTotals: any;
 }) {
   const [selectedSupId, setSelectedSupId] = useState("all");
   const [startDate, setStartDate] = useState(format(subDays(new Date(), 30), "yyyy-MM-dd"));
@@ -1751,6 +2068,9 @@ function PurchaseReportSection({ suppliers, purchases, companyName, companyAddre
         cellPadding: 3
       }
     });
+
+    const finalY = (doc as any).lastAutoTable.finalY + 8;
+    addPdfGlobalLedgerSummary(doc, globalLedgerTotals, finalY);
 
     doc.save(`Purchase_Audit_${startDate}_to_${endDate}.pdf`);
   };
@@ -1920,8 +2240,18 @@ function PurchaseReportSection({ suppliers, purchases, companyName, companyAddre
 /* ==========================================================================
    ORIGINAL TAB: ATTENDANCE REPORT
    ========================================================================== */
-function AttendanceReport({ employees, attendance }: { employees: Employee[]; attendance: any[] }) {
+function AttendanceReport({ employees, attendance, companyName, companyAddress, companyPhone, companyEmail, formatCurrency, globalLedgerTotals }: {
+  employees: Employee[];
+  attendance: any[];
+  companyName: string;
+  companyAddress: string;
+  companyPhone: string;
+  companyEmail: string;
+  formatCurrency: (val: number) => string;
+  globalLedgerTotals: any;
+}) {
   const [selectedMonth, setSelectedMonth] = useState(format(new Date(), "yyyy-MM"));
+  const [selectedEmployeeId, setSelectedEmployeeId] = useState<string>("all");
   const [aiAnalysis, setAiAnalysis] = useState<string>("");
   const [isAiLoading, setIsAiLoading] = useState<boolean>(false);
   const [aiError, setAiError] = useState<string>("");
@@ -1956,6 +2286,22 @@ function AttendanceReport({ employees, attendance }: { employees: Employee[]; at
     return Math.max(0, checkInMins - standardInMins);
   };
 
+  const getDaysInMonth = (yearMonthStr: string) => {
+    try {
+      const [year, month] = yearMonthStr.split("-").map(Number);
+      if (isNaN(year) || isNaN(month)) return [];
+      const date = new Date(year, month - 1, 1);
+      const dates: string[] = [];
+      while (date.getMonth() === month - 1) {
+        dates.push(format(new Date(date), "yyyy-MM-dd"));
+        date.setDate(date.getDate() + 1);
+      }
+      return dates;
+    } catch {
+      return [];
+    }
+  };
+
   // Compile stats per employee for the selected month
   const employeePerformance = employees.map(emp => {
     const records = filteredAttendance.filter(a => a.employeeId === emp.id);
@@ -1976,8 +2322,6 @@ function AttendanceReport({ employees, attendance }: { employees: Employee[]; at
       // Lunch overtime minutes (past 60 minutes rule)
       if (rec.lunchOut) {
         if (!rec.lunchIn) {
-          // Went out to lunch but didn't return (counted as half-day automatic)
-          // No excess calculation, but we can treat it as lost afternoon time (e.g. 240 mins)
           totalLunchOvertimeMins += 240; 
           lunchBreachesCount++;
         } else {
@@ -2001,6 +2345,8 @@ function AttendanceReport({ employees, attendance }: { employees: Employee[]; at
       name: emp.name,
       role: emp.role,
       salary: emp.salary,
+      joinedDate: emp.joinedDate,
+      status: emp.status,
       presentDays: presentCount,
       absentDays: absentCount,
       leaveDays: leaveCount,
@@ -2021,6 +2367,18 @@ function AttendanceReport({ employees, attendance }: { employees: Employee[]; at
   const totalDeductions = employeePerformance.reduce((sum, e) => sum + e.estimatedDeduction, 0);
   const totalLunchBreaches = employeePerformance.reduce((sum, e) => sum + e.lunchBreaches, 0);
 
+  // Selected Employee object and performance context
+  const selectedEmpObj = employees.find(e => e.id === selectedEmployeeId);
+  const empPerf = employeePerformance.find(ep => ep.id === selectedEmployeeId);
+
+  // Metrics to display dynamically on cards (team level vs individual)
+  const displayStoreLate = selectedEmployeeId === "all" ? totalStoreLate : (empPerf?.storeLateMinutes || 0);
+  const displayLunchOvertime = selectedEmployeeId === "all" ? totalLunchOvertime : (empPerf?.lunchOvertimeMinutes || 0);
+  const displayWastedMins = selectedEmployeeId === "all" ? totalWastedMins : (empPerf?.totalWastedMinutes || 0);
+  const displayWastedHrs = selectedEmployeeId === "all" ? totalWastedHrs : Math.round((displayWastedMins / 60) * 10) / 10;
+  const displayDeductions = selectedEmployeeId === "all" ? totalDeductions : (empPerf?.estimatedDeduction || 0);
+  const displayLunchBreaches = selectedEmployeeId === "all" ? totalLunchBreaches : (empPerf?.lunchBreaches || 0);
+
   // Chart data: Employees tardiness comparison
   const chartData = employeePerformance
     .filter(e => e.totalWastedMinutes > 0)
@@ -2030,6 +2388,252 @@ function AttendanceReport({ employees, attendance }: { employees: Employee[]; at
       "Lunch Break Overtime (m)": e.lunchOvertimeMinutes,
       "Excess Loss (BDT)": e.estimatedDeduction
     }));
+
+  const downloadAttendanceReportPDF = () => {
+    const doc = new jsPDF("p", "mm", "a4");
+    const pageWidth = doc.internal.pageSize.getWidth();
+
+    if (selectedEmployeeId !== "all" && selectedEmpObj) {
+      // -------------------------------------------------------------
+      // INDIVIDUAL EMPLOYEE ATTENDANCE REPORT
+      // -------------------------------------------------------------
+      doc.setFillColor(15, 23, 42); // slate bg
+      doc.rect(0, 0, pageWidth, 38, "F");
+
+      doc.setTextColor(255);
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(16);
+      doc.text("STAFF INDIVIDUAL ATTENDANCE PORTFOLIO", 14, 16);
+
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(8.5);
+      doc.setTextColor(203, 213, 225);
+      doc.text(`${companyName.toUpperCase()} • ${companyAddress}`, 14, 23);
+      doc.text(`Employee: ${selectedEmpObj.name.toUpperCase()} (${selectedEmpObj.role.toUpperCase()})`, 14, 27);
+      doc.text(`Audit Period: Month of ${selectedMonth} (Generated: ${format(new Date(), "dd MMM yyyy")})`, 14, 31);
+
+      doc.setFillColor(16, 185, 129); // green line accent
+      doc.rect(0, 38, 210, 2, "F");
+
+      // Employee Profile Metrics Frame
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(10);
+      doc.setTextColor(51, 65, 85);
+      doc.text("EMPLOYEE METRICAL INSIGHTS", 14, 49);
+
+      const presentCount = empPerf?.presentDays || 0;
+      const absentCount = empPerf?.absentDays || 0;
+      const leaveCount = empPerf?.leaveDays || 0;
+      const lateCount = empPerf?.lateDays || 0;
+
+      doc.setFillColor(248, 250, 252);
+      doc.setDrawColor(226, 232, 240);
+      doc.rect(14, 53, 182, 38, "FD");
+
+      // Custom metrics lines
+      doc.setFontSize(8.5);
+      doc.setTextColor(71, 85, 105);
+      doc.setFont("helvetica", "normal");
+      doc.text(`Employee Name: ${selectedEmpObj.name}`, 18, 61);
+      doc.text(`Role/Designation: ${selectedEmpObj.role}`, 18, 67);
+      doc.text(`Shift Attendance: Present: ${presentCount} | Absent: ${absentCount} | Leave: ${leaveCount}`, 18, 73);
+      doc.text(`Basic Contract Salary: BDT ${selectedEmpObj.salary.toLocaleString()}/mo`, 18, 79);
+      doc.text(`Join Date: ${selectedEmpObj.joinedDate || "N/A"}`, 18, 85);
+
+      doc.text(`Late Work Shifts: ${lateCount} Days`, 110, 61);
+      doc.text(`Check-in Late Time: ${empPerf?.storeLateMinutes || 0} mins`, 110, 67);
+      doc.text(`Lunch Idle Overtime: ${empPerf?.lunchOvertimeMinutes || 0} mins`, 110, 73);
+      doc.text(`Total Wasted Hours: ${((empPerf?.totalWastedMinutes || 0) / 60).toFixed(1)} Hrs`, 110, 79);
+      doc.setFont("helvetica", "bold");
+      doc.setTextColor(185, 28, 28);
+      doc.text(`Accrued Fine Deduction: BDT ${(empPerf?.estimatedDeduction || 0).toLocaleString()}`, 110, 85);
+
+      // Detailed Day-By-Day Attendance Chronicle Table
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(10);
+      doc.setTextColor(51, 65, 85);
+      doc.text(`DAY-BY-DAY SHIFT ATTENDANCE CHRONICLE`, 14, 101);
+
+      const days = getDaysInMonth(selectedMonth);
+      const personalTableRows = days.map((dayStr) => {
+        const rec = attendance.find(a => a.employeeId === selectedEmployeeId && a.date === dayStr);
+        let arrivalLate = 0;
+        let lunchLate = 0;
+        if (rec) {
+          arrivalLate = getStoreLatenessMinutes(rec.checkIn);
+          if (rec.lunchOut) {
+            if (!rec.lunchIn) {
+              lunchLate = 240;
+            } else {
+              lunchLate = Math.max(0, getLunchDurationMinutes(rec.lunchOut, rec.lunchIn) - 60);
+            }
+          }
+        }
+        const totalWastedOnDay = arrivalLate + lunchLate;
+        const formattedDate = format(new Date(dayStr), "dd MMM (EEE)");
+        const status = rec ? rec.status.toUpperCase() : "NO RECORD";
+        const clockIn = rec?.checkIn || "—";
+        const lunchOut = rec?.lunchOut || "—";
+        const lunchIn = rec?.lunchIn || "—";
+        const wasted = totalWastedOnDay > 0 ? `${totalWastedOnDay} mins` : "—";
+
+        return [formattedDate, status, clockIn, lunchOut, lunchIn, wasted];
+      });
+
+      autoTable(doc, {
+        startY: 105,
+        head: [["Calendar Day", "Shift Status", "Check-in time", "Lunch Out", "Lunch In", "Wasted Time"]],
+        body: personalTableRows,
+        theme: "striped",
+        headStyles: {
+          fillColor: [15, 23, 42],
+          textColor: [255, 255, 255],
+          fontSize: 7.5,
+          fontStyle: "bold",
+          halign: "left"
+        },
+        bodyStyles: {
+          fontSize: 7,
+          textColor: [51, 65, 85]
+        },
+        columnStyles: {
+          0: { fontStyle: "bold" },
+          1: { fontStyle: "bold" },
+          5: { halign: "right", textColor: [185, 28, 28], fontStyle: "bold" }
+        },
+        styles: {
+          font: "helvetica",
+          cellPadding: 3
+        }
+      });
+
+      const finalY = (doc as any).lastAutoTable.finalY + 8;
+      addPdfGlobalLedgerSummary(doc, globalLedgerTotals, finalY);
+
+      doc.save(`Attendance_Dossier_${selectedEmpObj.name.replace(/\s+/g, "_")}_${selectedMonth}.pdf`);
+    } else {
+      // -------------------------------------------------------------
+      // CONSOLIDATED TEAM ATTENDANCE REPORT (ALL EMPLOYEES)
+      // -------------------------------------------------------------
+      doc.setFillColor(15, 23, 42); // slate bg
+      doc.rect(0, 0, pageWidth, 38, "F");
+
+      doc.setTextColor(255);
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(18);
+      doc.text("STAFF ATTENDANCE & LATENESS AUDIT REPORT", 14, 16);
+
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(8.5);
+      doc.setTextColor(203, 213, 225);
+      doc.text(`${companyName.toUpperCase()} • ${companyAddress}`, 14, 23);
+      doc.text(`Email: ${companyEmail} • Phone: ${companyPhone}`, 14, 27);
+      doc.text(`Audit Period: Month of ${selectedMonth}`, 14, 31);
+
+      doc.setFillColor(14, 165, 233); // sky blue line
+      doc.rect(0, 38, 210, 2, "F");
+
+      // Metrics Row
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(10);
+      doc.setTextColor(51, 65, 85);
+      doc.text("MONTHLY ATTENDANCE KPI SUMMARY", 14, 49);
+
+      const cards = [
+        { label: "Arrival Late Vol", val: `${totalStoreLate} min` },
+        { label: "Lunch Breach Vol", val: `${totalLunchOvertime} min` },
+        { label: "Lost Productivity", val: `${totalWastedHrs} Hrs` },
+        { label: "Total Deductions", val: `BDT ${totalDeductions.toLocaleString()}` }
+      ];
+
+      let cardX = 14;
+      cards.forEach(c => {
+        doc.setFillColor(248, 250, 252);
+        doc.setDrawColor(226, 232, 240);
+        doc.rect(cardX, 53, 42, 22, "FD");
+
+        doc.setFillColor(15, 23, 42); // dark box accent top line
+        doc.rect(cardX, 53, 42, 1.2, "F");
+
+        doc.setTextColor(148, 163, 184);
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(6.5);
+        doc.text(c.label.toUpperCase(), cardX + 3, 59);
+
+        doc.setTextColor(15, 23, 42);
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(8);
+        doc.text(c.val, cardX + 3, 67);
+
+        cardX += 45;
+      });
+
+      // Entries Table
+      const tableRows = employeePerformance.map(row => [
+        row.name,
+        row.role.toUpperCase(),
+        row.presentDays.toString(),
+        row.absentDays.toString(),
+        row.leaveDays.toString(),
+        row.lateDays.toString(),
+        `${row.totalWastedMinutes} min`,
+        `BDT ${row.estimatedDeduction.toLocaleString()}`
+      ]);
+
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(10);
+      doc.setTextColor(51, 65, 85);
+      doc.text("EMPLOYEE PRODUCTIVITY & LATENESS LEDGER", 14, 85);
+
+      autoTable(doc, {
+        startY: 89,
+        head: [["Employee Name", "Designation", "Present", "Absent", "Leave", "Late Days", "Time Wasted", "Fine Deduction"]],
+        body: tableRows,
+        theme: "striped",
+        headStyles: {
+          fillColor: [15, 23, 42],
+          textColor: [255, 255, 255],
+          fontSize: 8,
+          fontStyle: "bold",
+          halign: "left"
+        },
+        bodyStyles: {
+          fontSize: 7.5,
+          textColor: [51, 65, 85]
+        },
+        columnStyles: {
+          2: { halign: "center" },
+          3: { halign: "center" },
+          4: { halign: "center" },
+          5: { halign: "center" },
+          6: { halign: "right" },
+          7: { halign: "right", fontStyle: "bold", textColor: [185, 28, 28] }
+        },
+        styles: {
+          font: "helvetica",
+          cellPadding: 3.5
+        }
+      });
+
+      const finalY = (doc as any).lastAutoTable.finalY + 8;
+      addPdfGlobalLedgerSummary(doc, globalLedgerTotals, finalY);
+
+      const postSummaryY = (doc as any).lastAutoTable.finalY + 15;
+      if (postSummaryY < 260) {
+        doc.setDrawColor(200, 200, 200);
+        doc.line(14, postSummaryY + 15, 64, postSummaryY + 15);
+        doc.line(pageWidth - 14 - 50, postSummaryY + 15, pageWidth - 14, postSummaryY + 15);
+
+        doc.setFontSize(7.5);
+        doc.setFont("helvetica", "bold");
+        doc.setTextColor(115, 115, 115);
+        doc.text("AUDITOR SIGNATURE", 14, postSummaryY + 19);
+        doc.text("AUTHORIZED REPRESENTATIVE", pageWidth - 14, postSummaryY + 19, { align: "right" });
+      }
+
+      doc.save(`Attendance_Audit_Report_${selectedMonth}.pdf`);
+    }
+  };
 
   const handleAskGemini = async () => {
     setIsAiLoading(true);
@@ -2042,7 +2646,7 @@ function AttendanceReport({ employees, attendance }: { employees: Employee[]; at
         body: JSON.stringify({
           month: selectedMonth,
           employees: employees.map(e => ({ id: e.id, name: e.name, role: e.role, salary: e.salary })),
-          attendanceLogs: filteredAttendance,
+          attendanceLogs: selectedEmployeeId === "all" ? filteredAttendance : filteredAttendance.filter(a => a.employeeId === selectedEmployeeId),
           rules: { lunchDurationLimit: 60 }
         })
       });
@@ -2123,13 +2727,33 @@ function AttendanceReport({ employees, attendance }: { employees: Employee[]; at
           </div>
         </div>
 
-        <div className="flex items-center gap-3 w-full md:w-auto">
+        <div className="flex flex-col sm:flex-row items-center gap-3 w-full md:w-auto">
+          {/* Employee Filter Choice Selector */}
+          <select
+            value={selectedEmployeeId}
+            onChange={(e) => setSelectedEmployeeId(e.target.value)}
+            className="px-4 py-2.5 bg-slate-50 dark:bg-zinc-950 border border-slate-200 dark:border-zinc-800 rounded-xl font-bold text-xs text-gray-950 dark:text-white focus:ring-2 focus:ring-rose-100 outline-none cursor-pointer w-full sm:w-48"
+          >
+            <option value="all">All Employees Combined</option>
+            {employees.map(emp => (
+              <option key={emp.id} value={emp.id}>{emp.name} ({emp.role})</option>
+            ))}
+          </select>
+
           <input 
             type="month" 
             value={selectedMonth}
             onChange={(e) => setSelectedMonth(e.target.value)}
-            className="px-4 py-2.5 bg-slate-50 dark:bg-zinc-950 border border-slate-200 dark:border-zinc-800 rounded-xl font-bold text-xs text-gray-950 dark:text-white focus:ring-2 focus:ring-rose-100 outline-none cursor-pointer w-full md:w-auto"
+            className="px-4 py-2.5 bg-slate-50 dark:bg-zinc-950 border border-slate-200 dark:border-zinc-800 rounded-xl font-bold text-xs text-gray-950 dark:text-white focus:ring-2 focus:ring-rose-100 outline-none cursor-pointer w-full sm:w-auto"
           />
+          <button
+            id="download-attendance-pdf-btn"
+            onClick={downloadAttendanceReportPDF}
+            className="w-full sm:w-auto px-5 py-2.5 bg-slate-900 hover:bg-slate-800 text-white font-bold rounded-xl text-xs uppercase tracking-wider flex items-center justify-center gap-2 cursor-pointer shadow-xs transition-all active:scale-97 border-none"
+          >
+            <Printer className="w-4 h-4 text-amber-400" />
+            <span>Attendance PDF Audit</span>
+          </button>
         </div>
       </div>
 
@@ -2142,9 +2766,9 @@ function AttendanceReport({ employees, attendance }: { employees: Employee[]; at
             </svg>
           </div>
           <div>
-            <p className="text-[9px] uppercase font-bold tracking-widest text-slate-400 mb-0.5">Total Store Late</p>
-            <h3 className="text-lg font-black text-slate-900 dark:text-neutral-100 font-mono leading-none">{totalStoreLate} mins</h3>
-            <span className="text-[8px] text-gray-400 font-semibold uppercase">Shift arrival lost</span>
+            <p className="text-[9px] uppercase font-bold tracking-widest text-slate-400 mb-0.5">Late Arrive Total</p>
+            <h3 className="text-lg font-black text-slate-900 dark:text-neutral-100 font-mono leading-none">{displayStoreLate} mins</h3>
+            <span className="text-[8px] text-gray-400 font-semibold uppercase">Shift latency loss</span>
           </div>
         </div>
 
@@ -2155,9 +2779,9 @@ function AttendanceReport({ employees, attendance }: { employees: Employee[]; at
             </svg>
           </div>
           <div>
-            <p className="text-[9px] uppercase font-bold tracking-widest text-slate-400 mb-0.5">Lunch Late Break</p>
-            <h3 className="text-lg font-black text-slate-900 dark:text-neutral-100 font-mono leading-none">{totalLunchOvertime} mins</h3>
-            <span className="text-[8px] text-orange-600 font-bold uppercase">{totalLunchBreaches} incidents</span>
+            <p className="text-[9px] uppercase font-bold tracking-widest text-slate-400 mb-0.5">Lunch Idle Break</p>
+            <h3 className="text-lg font-black text-slate-900 dark:text-neutral-100 font-mono leading-none">{displayLunchOvertime} mins</h3>
+            <span className="text-[8px] text-orange-600 font-bold uppercase">{displayLunchBreaches} incidents</span>
           </div>
         </div>
 
@@ -2168,9 +2792,9 @@ function AttendanceReport({ employees, attendance }: { employees: Employee[]; at
             </svg>
           </div>
           <div>
-            <p className="text-[9px] uppercase font-bold tracking-widest text-slate-400 mb-0.5">Total Wasted Hours</p>
-            <h3 className="text-lg font-black text-slate-900 dark:text-neutral-100 font-mono leading-none">{totalWastedHrs} hours</h3>
-            <span className="text-[8px] text-red-500 font-bold uppercase">Store productivity lost</span>
+            <p className="text-[9px] uppercase font-bold tracking-widest text-slate-400 mb-0.5">Productive Hours Lost</p>
+            <h3 className="text-lg font-black text-slate-900 dark:text-neutral-100 font-mono leading-none">{displayWastedHrs} Hrs</h3>
+            <span className="text-[8px] text-red-500 font-bold uppercase">Work hours wasted</span>
           </div>
         </div>
 
@@ -2182,71 +2806,245 @@ function AttendanceReport({ employees, attendance }: { employees: Employee[]; at
           </div>
           <div>
             <p className="text-[9px] uppercase font-bold tracking-widest text-slate-400 mb-0.5">Calculated Deductions</p>
-            <h3 className="text-lg font-black text-emerald-600 dark:text-emerald-400 font-mono leading-none">{totalDeductions.toLocaleString()} BDT</h3>
+            <h3 className="text-lg font-black text-emerald-600 dark:text-emerald-400 font-mono leading-none">{displayDeductions.toLocaleString()} BDT</h3>
             <span className="text-[8px] text-emerald-600 font-semibold uppercase">Recouped in payroll</span>
           </div>
         </div>
       </div>
 
-      {/* Main visual side-by-side: Chart vs Employee Table */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Recharts Graphical Distribution */}
-        <div className="bg-white dark:bg-zinc-900 p-6 rounded-3xl border border-slate-100 dark:border-zinc-800/50 flex flex-col justify-between">
-          <div>
-            <h4 className="text-sm font-black text-slate-900 dark:text-neutral-100 uppercase tracking-wider mb-1">Time Leakage Distributions</h4>
-            <p className="text-[11px] text-slate-400 font-semibold mb-6 uppercase">Store check-in delay (mins) vs lunchtime limit breaches (mins) by active staff</p>
-          </div>
-          
-          <div className="h-64 sm:h-72 w-full font-mono text-[10px]">
-            {chartData.length === 0 ? (
-              <div className="w-full h-full flex items-center justify-center text-slate-450 italic border border-dashed border-slate-100 dark:border-zinc-800 rounded-2xl">
-                100% On-time compliance. No tardiness charted!
+      {/* Main visual layouts dynamically rendered based on team level status vs individual filtering */}
+      <AnimatePresence mode="wait">
+        {selectedEmployeeId === "all" ? (
+          <motion.div 
+            key="team-level-view"
+            initial={{ opacity: 0, y: 15 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -15 }}
+            transition={{ duration: 0.2 }}
+            className="grid grid-cols-1 lg:grid-cols-2 gap-6"
+          >
+            {/* Recharts Graphical Distribution */}
+            <div className="bg-white dark:bg-zinc-900 p-6 rounded-3xl border border-slate-100 dark:border-zinc-800/50 flex flex-col justify-between">
+              <div>
+                <h4 className="text-sm font-black text-slate-900 dark:text-neutral-100 uppercase tracking-wider mb-1">Time Leakage Distributions</h4>
+                <p className="text-[11px] text-slate-400 font-semibold mb-6 uppercase">Store check-in delay (mins) vs lunchtime limit breaches (mins) by active staff</p>
               </div>
-            ) : (
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={chartData}>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E5E7EB" />
-                  <XAxis dataKey="name" stroke="#9CA3AF" />
-                  <YAxis stroke="#9CA3AF" />
-                  <Tooltip cursor={{ fill: '#F3F4F6', opacity: 0.5 }} />
-                  <Legend />
-                  <Bar dataKey="Store Arrival Late (m)" fill="#F59E0B" radius={[4, 4, 0, 0]} />
-                  <Bar dataKey="Lunch Break Overtime (m)" fill="#EA580C" radius={[4, 4, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-            )}
-          </div>
-        </div>
+              
+              <div className="h-64 sm:h-72 w-full font-mono text-[10px]">
+                {chartData.length === 0 ? (
+                  <div className="w-full h-full flex items-center justify-center text-slate-455 italic border border-dashed border-slate-100 dark:border-zinc-800 rounded-2xl">
+                    100% On-time compliance. No tardiness charted!
+                  </div>
+                ) : (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={chartData}>
+                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E5E7EB" />
+                      <XAxis dataKey="name" stroke="#9CA3AF" />
+                      <YAxis stroke="#9CA3AF" />
+                      <Tooltip cursor={{ fill: '#F3F4F6', opacity: 0.5 }} />
+                      <Legend />
+                      <Bar dataKey="Store Arrival Late (m)" fill="#F59E0B" radius={[4, 4, 0, 0]} />
+                      <Bar dataKey="Lunch Break Overtime (m)" fill="#EA580C" radius={[4, 4, 0, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                )}
+              </div>
+            </div>
 
-        {/* Live list ledger of employees */}
-        <div className="bg-white dark:bg-zinc-900 p-6 rounded-3xl border border-slate-100 dark:border-zinc-800/50">
-          <h4 className="text-sm font-black text-slate-900 dark:text-neutral-100 uppercase tracking-wider mb-1">Staff Loss Analysis Ledger</h4>
-          <p className="text-[11px] text-slate-400 font-semibold mb-6 uppercase">Calculation of custom minutes late and dynamic payroll deductions</p>
-          
-          <div className="divide-y divide-slate-50 dark:divide-zinc-850 max-h-[295px] overflow-y-auto pr-1">
-            {employeePerformance.map(item => (
-              <div key={item.id} className="py-3 flex items-center justify-between gap-3 group text-xs">
+            {/* Live list ledger of employees */}
+            <div className="bg-white dark:bg-zinc-900 p-6 rounded-3xl border border-slate-100 dark:border-zinc-800/50">
+              <h4 className="text-sm font-black text-slate-900 dark:text-neutral-100 uppercase tracking-wider mb-1">Staff Loss Analysis Ledger</h4>
+              <p className="text-[11px] text-slate-400 font-semibold mb-6 uppercase">Calculation of custom minutes late and dynamic payroll deductions</p>
+              
+              <div className="divide-y divide-slate-50 dark:divide-zinc-850 max-h-[295px] overflow-y-auto pr-1">
+                {employeePerformance.map(item => (
+                  <div 
+                    key={item.id} 
+                    onClick={() => setSelectedEmployeeId(item.id)}
+                    className="py-3 flex items-center justify-between gap-3 group text-xs cursor-pointer hover:bg-slate-50/50 dark:hover:bg-zinc-800/30 px-2 rounded-xl transition-all"
+                  >
+                    <div>
+                      <h5 className="font-extrabold text-slate-900 dark:text-neutral-100 group-hover:text-rose-600 transition-colors flex items-center gap-1.5">
+                        <span>{item.name}</span>
+                        <span className="text-[9px] font-medium text-slate-400">({item.role})</span>
+                      </h5>
+                      <p className="text-[9px] font-bold text-gray-400 uppercase tracking-wider">
+                        Store Delay: {item.storeLateMinutes}m | Lunch Overtime: {item.lunchOvertimeMinutes}m ({item.lunchBreaches}x)
+                      </p>
+                    </div>
+                    <div className="text-right font-mono">
+                      {item.totalWastedMinutes > 0 ? (
+                        <>
+                          <span className="font-black text-rose-600 block">-{item.estimatedDeduction} BDT</span>
+                          <span className="text-[7px] text-gray-400 uppercase font-black leading-none">{item.totalWastedMinutes} mins total</span>
+                        </>
+                      ) : (
+                        <span className="text-[9px] font-black uppercase text-emerald-600 tracking-wider">compliant</span>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </motion.div>
+        ) : (
+          <motion.div 
+            key="individual-level-view"
+            initial={{ opacity: 0, y: 15 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -15 }}
+            transition={{ duration: 0.2 }}
+            className="grid grid-cols-1 lg:grid-cols-3 gap-6"
+          >
+            {/* Left: Beautiful Employee Profile Card */}
+            {selectedEmpObj && empPerf && (
+              <div className="lg:col-span-1 bg-white dark:bg-zinc-900 p-6 rounded-3xl border border-slate-100 dark:border-zinc-800/50 flex flex-col justify-between">
                 <div>
-                  <h5 className="font-extrabold text-slate-900 dark:text-neutral-100 group-hover:text-[#D12765] transition-colors">{item.name}</h5>
-                  <p className="text-[9px] font-bold text-gray-400 uppercase tracking-wider">
-                    Store Delay: {item.storeLateMinutes}m | Lunch Overtime: {item.lunchOvertimeMinutes}m ({item.lunchBreaches}x)
-                  </p>
+                  <div className="flex items-center gap-3.5 mb-5 pb-5 border-b border-slate-100 dark:border-zinc-800/60">
+                    <div className="w-12 h-12 rounded-2xl bg-rose-500/10 dark:bg-rose-500/20 text-rose-600 dark:text-rose-400 flex items-center justify-center font-black text-lg shadow-inner">
+                      {selectedEmpObj.name.charAt(0)}
+                    </div>
+                    <div>
+                      <h4 className="font-black text-slate-900 dark:text-neutral-100 text-sm leading-tight">{selectedEmpObj.name}</h4>
+                      <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">{selectedEmpObj.role}</p>
+                    </div>
+                  </div>
+
+                  <div className="space-y-4 text-xs font-medium">
+                    <div className="flex justify-between">
+                      <span className="text-slate-400 font-bold uppercase text-[9px]">Status</span>
+                      <span className="font-black uppercase text-emerald-600 dark:text-emerald-400">{selectedEmpObj.status}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-400 font-bold uppercase text-[9px]">Salary Basis</span>
+                      <span className="font-bold text-slate-800 dark:text-neutral-100">{formatCurrency(selectedEmpObj.salary)} / mo</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-400 font-bold uppercase text-[9px]">Join Date</span>
+                      <span className="font-bold text-slate-800 dark:text-neutral-100">{selectedEmpObj.joinedDate || "N/A"}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-400 font-bold uppercase text-[9px]">Shift Ratio</span>
+                      <span className="font-black text-slate-800 dark:text-neutral-100">
+                        {empPerf.presentDays} Pres / {empPerf.absentDays} Abs / {empPerf.leaveDays} Lve
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-400 font-bold uppercase text-[9px]">Lateness Rate</span>
+                      <span className="font-bold text-rose-505 text-amber-600">{empPerf.lateDays} shifts marked late</span>
+                    </div>
+                  </div>
                 </div>
-                <div className="text-right font-mono">
-                  {item.totalWastedMinutes > 0 ? (
-                    <>
-                      <span className="font-black text-rose-600 block">-{item.estimatedDeduction} BDT</span>
-                      <span className="text-[7px] text-gray-400 uppercase font-black leading-none">{item.totalWastedMinutes} mins total</span>
-                    </>
-                  ) : (
-                    <span className="text-[9px] font-black uppercase text-emerald-600 tracking-wider">compliant</span>
-                  )}
+
+                <div className="mt-8 pt-5 border-t border-slate-100 dark:border-zinc-800/60 space-y-3.5">
+                  <div className="bg-slate-50 dark:bg-zinc-950 p-4 rounded-2xl border border-slate-100 dark:border-zinc-900 flex justify-between items-center">
+                    <div>
+                      <span className="text-[8px] font-black uppercase text-slate-400 tracking-wider block">Compliance Score</span>
+                      <span className="text-lg font-black text-slate-900 dark:text-white leading-none">
+                        {Math.round((empPerf.presentDays / (empPerf.presentDays + empPerf.absentDays + empPerf.lateDays || 1)) * 100)}%
+                      </span>
+                    </div>
+                    <span className="text-[10px] font-extrabold uppercase py-1 px-2.5 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 rounded-lg">High</span>
+                  </div>
+                  <button
+                    onClick={() => setSelectedEmployeeId("all")}
+                    className="w-full py-2.5 bg-slate-100 hover:bg-slate-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-slate-800 dark:text-neutral-200 text-xs font-black uppercase tracking-wider rounded-xl transition-all cursor-pointer border-none"
+                  >
+                    Back to team ledger
+                  </button>
                 </div>
               </div>
-            ))}
-          </div>
-        </div>
-      </div>
+            )}
+
+            {/* Right: Detailed Scrollable Calendar Timeline Grid */}
+            <div className="lg:col-span-2 bg-white dark:bg-zinc-900 p-6 rounded-3xl border border-slate-100 dark:border-zinc-800/50 flex flex-col justify-between">
+              <div>
+                <h4 className="text-sm font-black text-slate-900 dark:text-neutral-100 uppercase tracking-wider mb-1">Monthly Timings Ledger</h4>
+                <p className="text-[11px] text-slate-400 font-semibold mb-6 uppercase">Day-by-day timestamps for {selectedEmpObj?.name} in {format(parseISO(selectedMonth + "-01"), "MMMM yyyy")}</p>
+              </div>
+
+              <div className="overflow-y-auto max-h-[350px] pr-1.5 scrollbar-thin">
+                <table className="w-full text-left text-xs border-collapse font-sans">
+                  <thead>
+                    <tr className="border-b border-slate-100 dark:border-zinc-800/60 text-[9px] uppercase font-black text-slate-400 tracking-wider">
+                      <th className="py-2.5">Date</th>
+                      <th className="py-2.5">Status</th>
+                      <th className="py-2.5">In Time</th>
+                      <th className="py-2.5">Lunch Timings</th>
+                      <th className="py-2.5 text-right">Lost Idle</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-50 dark:divide-zinc-850">
+                    {getDaysInMonth(selectedMonth).map(dayStr => {
+                      const rec = filteredAttendance.find(a => a.employeeId === selectedEmployeeId && a.date === dayStr);
+                      let lMins = 0;
+                      let lunchMins = 0;
+                      if (rec) {
+                        lMins = getStoreLatenessMinutes(rec.checkIn);
+                        if (rec.lunchOut) {
+                          if (!rec.lunchIn) {
+                            lunchMins = 240;
+                          } else {
+                            lunchMins = Math.max(0, getLunchDurationMinutes(rec.lunchOut, rec.lunchIn) - 60);
+                          }
+                        }
+                      }
+                      const totalLostOnDay = lMins + lunchMins;
+                      const formattedD = format(new Date(dayStr), "dd MMM (EEE)");
+
+                      return (
+                        <tr key={dayStr} className="hover:bg-slate-50/50 dark:hover:bg-zinc-800/20 py-2">
+                          <td className="py-2.5 font-bold text-slate-905 dark:text-neutral-250">{formattedD}</td>
+                          <td className="py-2.5">
+                            {rec ? (
+                              <span className={cn(
+                                "px-2 py-0.5 rounded-full text-[8px] font-black uppercase tracking-wider",
+                                rec.status === "present" && "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
+                                rec.status === "late" && "bg-amber-500/10 text-amber-600 dark:text-amber-450",
+                                rec.status === "absent" && "bg-red-500/10 text-red-600 dark:text-red-400",
+                                rec.status === "leave" && "bg-indigo-500/10 text-indigo-600 dark:text-indigo-400",
+                                rec.status === "half-day" && "bg-orange-500/10 text-orange-600 dark:text-orange-450"
+                              )}>
+                                {rec.status}
+                              </span>
+                            ) : (
+                              <span className="px-2 py-0.5 rounded-full text-[8px] font-black uppercase tracking-wider bg-slate-100 text-slate-400 dark:bg-zinc-850 dark:text-zinc-500">
+                                off / rest
+                              </span>
+                            )}
+                          </td>
+                          <td className="py-2.5 font-mono text-[11px] text-slate-700 dark:text-neutral-300">
+                            {rec?.checkIn || "—"}
+                          </td>
+                          <td className="py-2.5 font-mono text-[10px] text-slate-500">
+                            {rec?.lunchOut ? (
+                              <span>
+                                {rec.lunchOut} - {rec.lunchIn || "—"} 
+                                {rec.lunchIn && <span className="text-[8px] opacity-75"> ({getLunchDurationMinutes(rec.lunchOut, rec.lunchIn)}m)</span>}
+                              </span>
+                            ) : (
+                              "—"
+                            )}
+                          </td>
+                          <td className="py-2.5 text-right font-mono text-[11px]">
+                            {totalLostOnDay > 0 ? (
+                              <span className="text-red-650 font-black text-rose-600" title={`Arrival Late: ${lMins}m, Lunch Late: ${lunchMins}m`}>
+                                +{totalLostOnDay}m
+                              </span>
+                            ) : (
+                              <span className="text-emerald-600 dark:text-emerald-400 font-extrabold uppercase text-[8px]">on time</span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Dynamic Express Server Powered Gemini Interactive Analyst */}
       <div className="bg-slate-950 text-white rounded-[32px] p-6 sm:p-8 border border-slate-900 shadow-xl relative overflow-hidden">
@@ -2327,7 +3125,15 @@ function AttendanceReport({ employees, attendance }: { employees: Employee[]; at
 /* ==========================================================================
    ORIGINAL TAB: GENERAL TRANSACTION HISTORY REPORT
    ========================================================================== */
-function TransactionsReport({ transactions }: { transactions: Transaction[] }) {
+function TransactionsReport({ transactions, companyName, companyAddress, companyPhone, companyEmail, formatCurrency, globalLedgerTotals }: {
+  transactions: Transaction[];
+  companyName: string;
+  companyAddress: string;
+  companyPhone: string;
+  companyEmail: string;
+  formatCurrency: (val: number) => string;
+  globalLedgerTotals: any;
+}) {
   const [dateRange, setDateRange] = useState("month");
   
   const now = new Date();
@@ -2342,6 +3148,110 @@ function TransactionsReport({ transactions }: { transactions: Transaction[] }) {
   const incomeTotal = filtered.filter(tx => tx.type === "income").reduce((sum, tx) => sum + tx.amount, 0);
   const expenseTotal = filtered.filter(tx => tx.type === "expense").reduce((sum, tx) => sum + tx.amount, 0);
 
+  const downloadTransactionsReportPDF = () => {
+    const doc = new jsPDF("p", "mm", "a4");
+    const pageWidth = doc.internal.pageSize.getWidth();
+
+    // Corp Header banner
+    doc.setFillColor(15, 23, 42); // slate bg
+    doc.rect(0, 0, pageWidth, 38, "F");
+
+    doc.setTextColor(255);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(18);
+    doc.text("GENERAL TRANSACTION ANALYSIS JOURNAL", 14, 16);
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(8.5);
+    doc.setTextColor(203, 213, 225);
+    doc.text(`${companyName.toUpperCase()} • ${companyAddress}`, 14, 23);
+    doc.text(`Email: ${companyEmail} • Phone: ${companyPhone}`, 14, 27);
+    const dateRangeLabel = dateRange === "month" ? "Current Month" : dateRange === "year" ? "Current Year" : "All Time";
+    doc.text(`Ledger Selection: ${dateRangeLabel} (${format(new Date(), "dd MMM yyyy")})`, 14, 31);
+
+    doc.setFillColor(14, 165, 233); // sky blue line
+    doc.rect(0, 38, 210, 2, "F");
+
+    // Metrics Cards Title
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(10);
+    doc.setTextColor(51, 65, 85);
+    doc.text("TRANSACTION ACCUMULATIONS RECORD", 14, 49);
+
+    const cards = [
+      { label: "Aggregate Inflows", val: `BDT ${incomeTotal.toLocaleString()}` },
+      { label: "Aggregate Outflows", val: `BDT ${expenseTotal.toLocaleString()}` },
+      { label: "Net Operational Margin", val: `BDT ${(incomeTotal - expenseTotal).toLocaleString()}` }
+    ];
+
+    let cardX = 14;
+    cards.forEach(c => {
+      doc.setFillColor(248, 250, 252);
+      doc.setDrawColor(226, 232, 240);
+      doc.rect(cardX, 53, 56, 22, "FD");
+
+      doc.setFillColor(15, 23, 42);
+      doc.rect(cardX, 53, 56, 1.2, "F");
+
+      doc.setTextColor(148, 163, 184);
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(6.5);
+      doc.text(c.label.toUpperCase(), cardX + 3, 59);
+
+      doc.setTextColor(15, 23, 42);
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(8);
+      doc.text(c.val, cardX + 3, 67);
+
+      cardX += 61;
+    });
+
+    // Entries Table
+    const tableRows = filtered.map(tx => [
+      format(new Date(tx.date), "dd MMM yyyy (hh:mm a)"),
+      tx.category + (tx.subCategory ? ` (${tx.subCategory})` : ""),
+      tx.type.toUpperCase(),
+      tx.paymentMethod,
+      tx.type === "income" ? `+ BDT ${tx.amount.toLocaleString()}` : `- BDT ${tx.amount.toLocaleString()}`,
+      tx.notes || "-"
+    ]);
+
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(10);
+    doc.setTextColor(51, 65, 85);
+    doc.text("TRANSACTION ENTRIES LEDGER", 14, 85);
+
+    autoTable(doc, {
+      startY: 89,
+      head: [["Tx Datetime", "Category Sub-category", "Type", "Channel", "Amount Value", "Reference Remarks"]],
+      body: tableRows,
+      theme: "striped",
+      headStyles: {
+        fillColor: [15, 23, 42],
+        textColor: [255, 255, 255],
+        fontSize: 8,
+        fontStyle: "bold",
+        halign: "left"
+      },
+      bodyStyles: {
+        fontSize: 7.5,
+        textColor: [51, 65, 85]
+      },
+      columnStyles: {
+        4: { halign: "right", fontStyle: "bold" }
+      },
+      styles: {
+        font: "helvetica",
+        cellPadding: 3.5
+      }
+    });
+
+    const finalY = (doc as any).lastAutoTable.finalY + 8;
+    addPdfGlobalLedgerSummary(doc, globalLedgerTotals, finalY);
+
+    doc.save(`Transactions_Journal_Report_${dateRange}.pdf`);
+  };
+
   return (
     <div className="space-y-8 animate-in slide-in-from-bottom-5 duration-300">
       <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-100 flex items-center justify-between">
@@ -2354,19 +3264,29 @@ function TransactionsReport({ transactions }: { transactions: Transaction[] }) {
             <p className="text-xs text-slate-500 font-medium font-sans">Broad overview of general spending and core income distribution.</p>
           </div>
         </div>
-        <div className="flex bg-slate-50 p-1 rounded-xl border border-slate-200">
-          {["month", "year", "all"].map(range => (
-            <button 
-              key={range}
-              onClick={() => setDateRange(range)}
-              className={cn(
-                "px-5 py-2 rounded-lg text-xs font-black uppercase tracking-wider transition-all",
-                dateRange === range ? "bg-white text-slate-900 shadow-sm" : "text-slate-400 hover:text-slate-950"
-              )}
-            >
-              {range}
-            </button>
-          ))}
+        <div className="flex items-center gap-3">
+          <div className="flex bg-slate-50 p-1 rounded-xl border border-slate-200">
+            {["month", "year", "all"].map(range => (
+              <button 
+                key={range}
+                onClick={() => setDateRange(range)}
+                className={cn(
+                  "px-5 py-2 rounded-lg text-xs font-black uppercase tracking-wider transition-all cursor-pointer",
+                  dateRange === range ? "bg-white text-slate-900 shadow-sm" : "text-slate-400 hover:text-slate-950"
+                )}
+              >
+                {range}
+              </button>
+            ))}
+          </div>
+          <button
+            id="download-tx-pdf-btn"
+            onClick={downloadTransactionsReportPDF}
+            className="flex items-center gap-2 px-5 py-3 bg-slate-900 hover:bg-slate-800 text-white font-bold rounded-xl text-xs uppercase tracking-wider cursor-pointer shadow-xs transition-all active:scale-97"
+          >
+            <Printer className="w-4 h-4 text-amber-400" />
+            <span>Download PDF Journal</span>
+          </button>
         </div>
       </div>
 

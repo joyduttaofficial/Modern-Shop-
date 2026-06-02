@@ -24,6 +24,35 @@ window.alert = function (message?: any): void {
   }
 };
 
+// Suppress benign WebSocket/HMR errors to prevent full-screen unhandled rejection popups
+window.addEventListener('error', (event) => {
+  const msg = event?.message || "";
+  if (
+    msg.includes('WebSocket') ||
+    msg.includes('websocket') ||
+    msg.includes('vite') ||
+    msg.includes('HMR')
+  ) {
+    event.preventDefault();
+  }
+});
+
+window.addEventListener('unhandledrejection', (event) => {
+  const reason = event?.reason;
+  if (reason) {
+    const msg = typeof reason === 'string' ? reason : (reason.message || '');
+    if (
+      msg.includes('WebSocket') ||
+      msg.includes('websocket') ||
+      msg.includes('vite') ||
+      msg.includes('HMR')
+    ) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+  }
+});
+
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <LanguageProvider>

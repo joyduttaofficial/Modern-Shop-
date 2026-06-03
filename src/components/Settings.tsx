@@ -1,20 +1,7 @@
 import React, { useState, useEffect } from "react";
-import { 
-  db, 
-  OperationType, 
-  handleFirestoreError,
-  updateDoc,
-  User,
-  collection,
-  onSnapshot,
-  addDoc,
-  deleteDoc,
-  doc,
-  query,
-  orderBy,
-  setDoc,
-  getDocs
-} from "@/src/lib/supabase";
+import { User } from "firebase/auth";
+import { collection, onSnapshot, addDoc, deleteDoc, doc, query, orderBy, setDoc, getDocs } from "firebase/firestore";
+import { db, OperationType, handleFirestoreError, updateDoc } from "@/src/lib/firebase";
 import { Category, Bank, TransactionType, UserRole, UserProfile } from "@/src/types";
 import { cn } from "@/src/lib/utils";
 import { Plus, Trash2, Landmark, Tag, Briefcase, PlusCircle, LayoutGrid, Users, ShieldAlert } from "lucide-react";

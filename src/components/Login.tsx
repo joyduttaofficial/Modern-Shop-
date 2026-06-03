@@ -1,15 +1,11 @@
 import React, { useState, useEffect } from "react";
+import { auth, db, OperationType, handleFirestoreError } from "@/src/lib/firebase";
+import { onSnapshot, doc } from "firebase/firestore";
 import { 
-  auth, 
-  db, 
-  OperationType, 
-  handleFirestoreError,
-  onSnapshot,
-  doc,
   signInWithEmailAndPassword, 
   createUserWithEmailAndPassword, 
   updateProfile 
-} from "@/src/lib/supabase";
+} from "firebase/auth";
 import { 
   Mail, 
   Lock, 

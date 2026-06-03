@@ -1,17 +1,7 @@
 import { useState, useEffect } from "react";
-import { 
-  db, 
-  OperationType, 
-  handleFirestoreError,
-  User,
-  collection,
-  query,
-  where,
-  orderBy,
-  limit,
-  onSnapshot,
-  getDocs
-} from "@/src/lib/supabase";
+import { User } from "firebase/auth";
+import { collection, query, where, orderBy, limit, onSnapshot, getDocs } from "firebase/firestore";
+import { db, OperationType, handleFirestoreError } from "@/src/lib/firebase";
 import { Transaction, Bank, UserRole } from "@/src/types";
 import { PurchaseModel } from "./Purchase";
 import { formatCurrency, cn } from "@/src/lib/utils";

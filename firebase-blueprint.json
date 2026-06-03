@@ -1,0 +1,174 @@
+{
+  "entities": {
+    "Employee": {
+      "title": "Employee",
+      "description": "Staff member records",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "role": { "type": "string" },
+        "salary": { "type": "number" },
+        "joinedDate": { "type": "string", "format": "date-time" },
+        "status": { "type": "string", "enum": ["active", "inactive"] }
+      },
+      "required": ["name", "role", "salary", "status"]
+    },
+    "Transaction": {
+      "title": "Transaction",
+      "description": "Records of sales and expenses",
+      "type": "object",
+      "properties": {
+        "date": { "type": "string", "format": "date-time" },
+        "type": { "type": "string", "enum": ["income", "expense"] },
+        "category": { "type": "string" },
+        "subCategory": { "type": "string" },
+        "amount": { "type": "number" },
+        "paymentMethod": { "type": "string" },
+        "notes": { "type": "string" },
+        "createdBy": { "type": "string" },
+        "employeeId": { "type": "string" }
+      },
+      "required": ["date", "type", "category", "amount", "paymentMethod"]
+    },
+    "Category": {
+      "title": "Category",
+      "description": "Transaction categories",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "type": { "type": "string", "enum": ["income", "expense"] },
+        "icon": { "type": "string" }
+      },
+      "required": ["name", "type"]
+    },
+    "Bank": {
+      "title": "Bank",
+      "description": "Bank account balances",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "balance": { "type": "number" },
+        "lastUpdated": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "balance"]
+    },
+    "UserProfile": {
+      "title": "User Profile",
+      "description": "User account and role information",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string" },
+        "displayName": { "type": "string" },
+        "role": { "type": "string", "enum": ["admin", "accountant", "sales"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "email", "role"]
+    },
+    "Supplier": {
+      "title": "Supplier",
+      "description": "Supplier records and balances",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "code": { "type": "string" },
+        "mobile": { "type": "string" },
+        "email": { "type": "string" },
+        "phone": { "type": "string" },
+        "openingBalance": { "type": "number" },
+        "country": { "type": "string" },
+        "advanceAmount": { "type": "number" },
+        "totalAmount": { "type": "number" },
+        "purchaseDue": { "type": "number" },
+        "address": { "type": "string" },
+        "status": { "type": "string", "enum": ["active", "inactive"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "code", "country", "status"]
+    },
+    "SupplierTransaction": {
+      "title": "Supplier Transaction",
+      "description": "Purchases, returns, and payments logged for a supplier",
+      "type": "object",
+      "properties": {
+        "supplierId": { "type": "string" },
+        "date": { "type": "string", "format": "date-time" },
+        "type": { "type": "string", "enum": ["purchase", "return", "payment"] },
+        "refNo": { "type": "string" },
+        "totalAmount": { "type": "number" },
+        "paidAmount": { "type": "number" },
+        "dueAmount": { "type": "number" },
+        "paymentMethod": { "type": "string" },
+        "notes": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["supplierId", "date", "type", "totalAmount"]
+    },
+    "Purchase": {
+      "title": "Purchase",
+      "description": "Manual purchase records",
+      "type": "object",
+      "properties": {
+        "supplierId": { "type": "string" },
+        "supplierName": { "type": "string" },
+        "date": { "type": "string" },
+        "refNo": { "type": "string" },
+        "totalAmount": { "type": "number" },
+        "paidAmount": { "type": "number" },
+        "dueAmount": { "type": "number" },
+        "paymentMethod": { "type": "string" },
+        "notes": { "type": "string" },
+        "invoicePhoto": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["supplierId", "supplierName", "date", "refNo", "totalAmount", "paidAmount", "dueAmount", "paymentMethod", "createdAt"]
+    },
+    "Department": {
+      "title": "Department",
+      "description": "Company departments list",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" }
+      },
+      "required": ["name"]
+    }
+  },
+  "firestore": {
+    "/departments/{departmentId}": {
+      "schema": "Department",
+      "description": "Departments registry"
+    },
+    "/purchases/{purchaseId}": {
+      "schema": "Purchase",
+      "description": "Historical purchases registry"
+    },
+    "/suppliers/{supplierId}": {
+      "schema": "Supplier",
+      "description": "Supplier accounts registry"
+    },
+    "/supplierTransactions/{transactionId}": {
+      "schema": "SupplierTransaction",
+      "description": "Transaction log entries for suppliers"
+    },
+    "/transactions/{transactionId}": {
+      "schema": "Transaction",
+      "description": "Sales and expense records"
+    },
+    "/employees/{employeeId}": {
+      "schema": "Employee",
+      "description": "Staff member records"
+    },
+    "/categories/{categoryId}": {
+      "schema": "Category",
+      "description": "Master list of categories"
+    },
+    "/banks/{bankId}": {
+      "schema": "Bank",
+      "description": "Bank and account balances"
+    },
+    "/users/{userId}": {
+      "schema": "UserProfile",
+      "description": "User profiles and roles"
+    }
+  }
+}

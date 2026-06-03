@@ -26,24 +26,9 @@ import {
   Moon
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
-import { 
-  auth, 
-  db, 
-  OperationType, 
-  handleFirestoreError,
-  onAuthStateChanged,
-  signOut,
-  User as FirebaseUser,
-  doc,
-  getDoc,
-  setDoc,
-  onSnapshot,
-  collection,
-  query,
-  where,
-  getDocs,
-  deleteDoc
-} from "@/src/lib/supabase";
+import { auth, db, OperationType, handleFirestoreError } from "@/src/lib/firebase";
+import { onAuthStateChanged, signOut, User as FirebaseUser } from "firebase/auth";
+import { doc, getDoc, setDoc, onSnapshot, collection, query, where, getDocs, deleteDoc } from "firebase/firestore";
 import { UserProfile, UserRole, RolePermission } from "@/src/types";
 import { useLanguage } from "./contexts/LanguageContext";
 
@@ -147,7 +132,6 @@ export default function App() {
   const { language, setLanguage, t, formatDate } = useLanguage();
   const [activeView, setActiveView] = useState<View>("dashboard");
   const [salesEditDate, setSalesEditDate] = useState<string>("");
-  const [lastSavedSalesDate, setLastSavedSalesDate] = useState<string>("");
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
 
   const [darkMode, setDarkMode] = useState<boolean>(() => {
@@ -876,10 +860,6 @@ export default function App() {
                   role={profile.role} 
                   editDate={salesEditDate} 
                   onClearEditDate={() => setSalesEditDate("")} 
-                  onSaveSuccess={(recordedDate) => {
-                    setLastSavedSalesDate(recordedDate || "");
-                    setActiveView("salesList");
-                  }}
                 />
               )}
               {activeView === "salesList" && (
@@ -890,7 +870,6 @@ export default function App() {
                     setSalesEditDate(date);
                     setActiveView("newSale");
                   }} 
-                  lastSavedSalesDate={lastSavedSalesDate}
                 />
               )}
               {activeView === "newEmployee" && (

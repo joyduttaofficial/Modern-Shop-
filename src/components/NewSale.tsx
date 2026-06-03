@@ -1,19 +1,7 @@
 import React, { useState, useEffect } from "react";
-import { 
-  db, 
-  OperationType, 
-  handleFirestoreError,
-  User,
-  collection,
-  onSnapshot,
-  query,
-  orderBy,
-  doc,
-  getDocs,
-  writeBatch,
-  setDoc,
-  deleteDoc
-} from "@/src/lib/supabase";
+import { User } from "firebase/auth";
+import { collection, onSnapshot, query, orderBy, doc, getDocs, writeBatch, setDoc, deleteDoc } from "firebase/firestore";
+import { db, OperationType, handleFirestoreError } from "@/src/lib/firebase";
 import { Transaction, UserRole, Employee } from "@/src/types";
 import { cn, formatCurrency } from "@/src/lib/utils";
 import { Calendar, UserCircle, Save, CheckCircle, Loader2, Home, ChevronRight, ShoppingCart, Printer, FileText } from "lucide-react";
@@ -26,14 +14,12 @@ export default function NewSale({
   user, 
   role, 
   editDate, 
-  onClearEditDate,
-  onSaveSuccess
+  onClearEditDate 
 }: { 
   user: User; 
   role: UserRole; 
   editDate?: string; 
   onClearEditDate?: () => void; 
-  onSaveSuccess?: (recordedDate?: string) => void;
 }) {
   const { language, t, formatCurrency, formatDate, formatNumber, translateValue } = useLanguage();
   const [employees, setEmployees] = useState<Employee[]>([]);
@@ -139,11 +125,9 @@ export default function NewSale({
       if (!selectedDate) return;
       setLoadingSales(true);
       try {
-        // Parse "YYYY-MM-DD" strictly as local calendar date
-        const [year, month, day] = selectedDate.split("-").map(Number);
-        const localDate = new Date(year, month - 1, day);
-        const start = startOfDay(localDate);
-        const end = endOfDay(localDate);
+        // Get start and end range for the chosen date to query Firestore safely
+        const start = startOfDay(new Date(selectedDate));
+        const end = endOfDay(new Date(selectedDate));
 
         const q = query(
           collection(db, "transactions")
@@ -220,10 +204,6 @@ export default function NewSale({
 
     try {
       const batch = writeBatch(db);
-      const [year, month, day] = selectedDate.split("-").map(Number);
-      const localDate = new Date(year, month - 1, day);
-      const isoDateString = localDate.toISOString();
-      const currentTimestamp = new Date().toISOString();
 
       for (const emp of employees) {
         if (!emp.id) continue;
@@ -237,14 +217,13 @@ export default function NewSale({
             const txRef = doc(db, "transactions", existingTxId);
             batch.update(txRef, {
               amount: currentAmount,
-              date: isoDateString,
-              updatedAt: currentTimestamp
+              date: new Date(selectedDate).toISOString()
             });
           } else {
             // Create new transaction doc reference
             const newTxRef = doc(collection(db, "transactions"));
             const newTx: Transaction = {
-              date: isoDateString,
+              date: new Date(selectedDate).toISOString(),
               type: "income",
               category: "Employee Sales",
               amount: currentAmount,
@@ -252,9 +231,7 @@ export default function NewSale({
               notes: `Daily Sales for ${emp.name}`,
               createdBy: user.uid,
               employeeId: emp.id,
-              subCategory: emp.name,
-              createdAt: currentTimestamp,
-              updatedAt: currentTimestamp
+              subCategory: emp.name
             };
             batch.set(newTxRef, newTx);
           }
@@ -272,22 +249,19 @@ export default function NewSale({
           const txRef = doc(db, "transactions", wholesaleTxId);
           batch.update(txRef, {
             amount: currentWholesale,
-            date: isoDateString,
-            updatedAt: currentTimestamp
+            date: new Date(selectedDate).toISOString()
           });
         } else {
           const newTxRef = doc(collection(db, "transactions"));
           const newTx: Transaction = {
-            date: isoDateString,
+            date: new Date(selectedDate).toISOString(),
             type: "income",
             category: "Wholesale Sales",
             amount: currentWholesale,
             paymentMethod: "Cash",
             notes: `Wholesale Sales for ${selectedDate}`,
             createdBy: user.uid,
-            subCategory: "Wholesale",
-            createdAt: currentTimestamp,
-            updatedAt: currentTimestamp
+            subCategory: "Wholesale"
           };
           batch.set(newTxRef, newTx);
         }
@@ -303,22 +277,19 @@ export default function NewSale({
           const txRef = doc(db, "transactions", depositTxId);
           batch.update(txRef, {
             amount: currentDeposit,
-            date: isoDateString,
-            updatedAt: currentTimestamp
+            date: new Date(selectedDate).toISOString()
           });
         } else {
           const newTxRef = doc(collection(db, "transactions"));
           const newTx: Transaction = {
-            date: isoDateString,
+            date: new Date(selectedDate).toISOString(),
             type: "income",
             category: "Total Deposit",
             amount: currentDeposit,
             paymentMethod: "Cash",
             notes: `Total Deposit for ${selectedDate}`,
             createdBy: user.uid,
-            subCategory: "Deposit",
-            createdAt: currentTimestamp,
-            updatedAt: currentTimestamp
+            subCategory: "Deposit"
           };
           batch.set(newTxRef, newTx);
         }
@@ -331,12 +302,7 @@ export default function NewSale({
 
       // Refresh mapping by manually querying again (triggered via slight state refresh or fake delay)
       setSuccess(true);
-      setTimeout(() => {
-        setSuccess(false);
-        if (onSaveSuccess) {
-          onSaveSuccess(selectedDate);
-        }
-      }, 1500);
+      setTimeout(() => setSuccess(false), 4000);
     } catch (error) {
       handleFirestoreError(error, OperationType.UPDATE, "transactions");
     } finally {
@@ -500,30 +466,6 @@ export default function NewSale({
     }));
   };
 
-  const getQuickDates = () => {
-    const dates = [];
-    for (let i = 0; i < 5; i++) {
-      const d = new Date();
-      d.setDate(d.getDate() - i);
-      const isToday = i === 0;
-      const isYesterday = i === 1;
-      let label = "";
-      if (isToday) {
-        label = t("Today");
-      } else if (isYesterday) {
-        label = t("Yesterday");
-      } else {
-        label = format(d, "EEE, dd MMM");
-      }
-      dates.push({
-        label,
-        value: format(d, "yyyy-MM-dd"),
-        day: format(d, "EEEE"),
-      });
-    }
-    return dates;
-  };
-
   const totalSale = (Object.values(salesAmounts) as string[]).reduce<number>((acc, curr) => acc + (parseFloat(curr) || 0), 0);
   const grandTotal = totalSale + (parseFloat(wholesaleAmount) || 0) - (parseFloat(depositAmount) || 0);
 
@@ -592,39 +534,6 @@ export default function NewSale({
               >
                 <option value={dayName}>{language === "bn" ? translateValue(dayName) : dayName}</option>
               </select>
-            </div>
-          </div>
-
-          {/* Quick Date Select Shortcuts panel */}
-          <div className="space-y-3 bg-slate-50/50 p-4 rounded-3xl border border-slate-100 shadow-sm">
-            <label className="text-[10px] font-black text-slate-400 uppercase tracking-wider pl-1 block">
-              ⚡ {t("Quick Switch (Last 5 Days)")}
-            </label>
-            <div className="flex flex-wrap gap-2">
-              {getQuickDates().map((item) => {
-                const isActive = selectedDate === item.value;
-                return (
-                  <button
-                    key={item.value}
-                    type="button"
-                    onClick={() => setSelectedDate(item.value)}
-                    className={cn(
-                      "px-4 py-2.5 rounded-2xl font-bold text-xs transition-all border outline-none cursor-pointer flex items-center gap-1.5 active:scale-95",
-                      isActive 
-                        ? "bg-[#2D7BBF] text-white border-transparent shadow shadow-blue-105" 
-                        : "bg-white border-slate-200/60 hover:bg-slate-50 hover:border-slate-300 text-slate-600"
-                    )}
-                  >
-                    <span>{item.label}</span>
-                    <span className={cn(
-                      "text-[9px] opacity-75 font-medium uppercase",
-                      isActive ? "text-blue-100" : "text-slate-400"
-                    )}>
-                      ({language === "bn" ? translateValue(item.day.slice(0, 3) + "day") : item.day.slice(0, 3)})
-                    </span>
-                  </button>
-                );
-              })}
             </div>
           </div>
 

@@ -371,6 +371,7 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const setLanguage = (lang: Language) => {
     localStorage.setItem("selected_language", lang);
     setLanguageState(lang);
+    window.location.reload();
   };
 
   // Main UI translation function
@@ -457,6 +458,81 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       return String(dateStr);
     }
   };
+
+  // Automatic global DOM translation helper to support 100% translations in all non-adapted views
+  useEffect(() => {
+    if (language !== "bn") return;
+
+    const translateNode = (node: Node) => {
+      if (node.nodeType === Node.TEXT_NODE) {
+        const parent = node.parentNode as HTMLElement;
+        if (parent) {
+          const tagName = parent.tagName?.toUpperCase();
+          if (["SCRIPT", "STYLE", "INPUT", "TEXTAREA", "NOSCRIPT"].includes(tagName)) {
+            return;
+          }
+          if (parent.isContentEditable) {
+            return;
+          }
+        }
+
+        const text = node.nodeValue?.trim();
+        if (text && dictionary[text]) {
+          node.nodeValue = dictionary[text];
+        } else if (text) {
+          // Handle numbers specifically
+          if (/^\d+(\.\d+)?$/.test(text)) {
+            node.nodeValue = text.replace(/[0-9]/g, (digit) => NUMBN[parseInt(digit, 10)]);
+            return;
+          }
+
+          let translated = text;
+          let changed = false;
+          for (const [eng, bn] of Object.entries(dictionary)) {
+            if (eng.length > 3 && translated.includes(eng)) {
+              translated = translated.split(eng).join(bn);
+              changed = true;
+            }
+          }
+          if (changed) {
+            node.nodeValue = translated;
+          }
+        }
+      } else if (node.nodeType === Node.ELEMENT_NODE) {
+        const el = node as HTMLElement;
+        if (el.tagName === "INPUT" || el.tagName === "TEXTAREA") {
+          const placeholder = el.getAttribute("placeholder");
+          if (placeholder && dictionary[placeholder]) {
+            el.setAttribute("placeholder", dictionary[placeholder]);
+          }
+        }
+        const title = el.getAttribute("title");
+        if (title && dictionary[title]) {
+          el.setAttribute("title", dictionary[title]);
+        }
+        node.childNodes.forEach(translateNode);
+      }
+    };
+
+    translateNode(document.body);
+
+    const observer = new MutationObserver((mutations) => {
+      mutations.forEach((mutation) => {
+        mutation.addedNodes.forEach((node) => {
+          translateNode(node);
+        });
+      });
+    });
+
+    observer.observe(document.body, {
+      childList: true,
+      subtree: true
+    });
+
+    return () => {
+      observer.disconnect();
+    };
+  }, [language]);
 
   return (
     <LanguageContext.Provider value={{ language, setLanguage, t, translateValue, formatNumber, formatDate, formatCurrency }}>

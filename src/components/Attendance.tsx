@@ -35,7 +35,7 @@ import {
   TrendingUp,
   UserCircle
 } from "lucide-react";
-import { format, startOfMonth, endOfMonth, eachDayOfInterval, isSameDay, startOfToday, addDays, subDays, parseISO } from "date-fns";
+import { format, startOfMonth, endOfMonth, eachDayOfInterval, isSameDay, startOfToday, addDays, subDays, parseISO, startOfDay, endOfDay } from "date-fns";
 import { motion, AnimatePresence } from "motion/react";
 
 const STATUS_CONFIG: Record<AttendanceStatus, { label: string; icon: any; color: string; bg: string; dot: string }> = {
@@ -78,19 +78,35 @@ export default function AttendancePage({
   const [modalNotes, setModalNotes] = useState("");
   
   // List view specific states
-  const [listTab, setListTab] = useState<"matrix" | "logs" | "lunch">("matrix");
+  const [listTab, setListTab] = useState<"matrix" | "logs" | "lunch" | "days">("matrix");
   const [selectedMonth, setSelectedMonth] = useState<string>(format(new Date(), "yyyy-MM")); // e.g. "2026-05"
+  const [filterType, setFilterType] = useState<"month" | "range">("month");
+  const [startDate, setStartDate] = useState<string>(format(startOfMonth(new Date()), "yyyy-MM-dd"));
+  const [endDate, setEndDate] = useState<string>(format(new Date(), "yyyy-MM-dd"));
 
   useEffect(() => {
     // Determine the month bounds based on view selection context
     let rangeDate = selectedDate;
+    let queryStart: Date;
+    let queryEnd: Date;
+
     if (mode === "list") {
-      try {
-        const [year, month] = selectedMonth.split("-").map(Number);
-        rangeDate = new Date(year, month - 1, 1);
-      } catch {
-        rangeDate = new Date();
+      if (filterType === "month") {
+        try {
+          const [year, month] = selectedMonth.split("-").map(Number);
+          rangeDate = new Date(year, month - 1, 1);
+        } catch {
+          rangeDate = new Date();
+        }
+        queryStart = startOfMonth(rangeDate);
+        queryEnd = endOfMonth(rangeDate);
+      } else {
+        queryStart = startOfDay(new Date(startDate));
+        queryEnd = endOfDay(new Date(endDate));
       }
+    } else {
+      queryStart = startOfDay(selectedDate);
+      queryEnd = endOfDay(selectedDate);
     }
 
     const unsubEmps = onSnapshot(query(collection(db, "employees"), where("status", "==", "active")), (snap) => {
@@ -114,14 +130,11 @@ export default function AttendancePage({
     }, (error) => handleFirestoreError(error, OperationType.LIST, "settings"));
 
     // Fetch attendance for the selected date's / month's range
-    const start = startOfMonth(rangeDate);
-    const end = endOfMonth(rangeDate);
-    
     const unsubAttendance = onSnapshot(
       query(
         collection(db, "attendance"), 
-        where("date", ">=", start.toISOString()),
-        where("date", "<=", end.toISOString())
+        where("date", ">=", queryStart.toISOString()),
+        where("date", "<=", queryEnd.toISOString())
       ), 
       (snap) => {
         setAttendance(snap.docs.map(d => ({ id: d.id, ...d.data() } as Attendance)));
@@ -131,7 +144,7 @@ export default function AttendancePage({
     );
 
     return () => { unsubEmps(); unsubSettings(); unsubAttendance(); };
-  }, [selectedDate, selectedMonth, mode]);
+  }, [selectedDate, selectedMonth, mode, filterType, startDate, endDate]);
 
   const getAttendanceForDay = (empId: string, date: Date) => {
     return attendance.find(a => 
@@ -384,8 +397,8 @@ export default function AttendancePage({
 
   const listMonthDate = getRangeDateContext();
   const daysInMonth = eachDayOfInterval({
-    start: startOfMonth(listMonthDate),
-    end: endOfMonth(listMonthDate)
+    start: filterType === "month" ? startOfMonth(listMonthDate) : startOfDay(new Date(startDate)),
+    end: filterType === "month" ? endOfMonth(listMonthDate) : endOfDay(new Date(endDate))
   });
 
   // Filter out any entries that don't belong to active employees (remove test or orphan data logs)
@@ -967,26 +980,71 @@ export default function AttendancePage({
         </div>
 
         {/* Filters Panel */}
-        <div className="flex flex-wrap items-center gap-3 bg-white p-2 rounded-[20px] shadow-xs border border-gray-100">
-          <div className="flex items-center gap-1.5 px-3 text-gray-400">
-            <Filter className="w-3.5 h-3.5 text-gray-400" />
-            <span className="text-[10px] font-black uppercase tracking-wider">Select Month:</span>
+        <div className="flex flex-wrap items-center gap-3 bg-white dark:bg-zinc-900 p-2 rounded-[24px] shadow-xs border border-gray-100 dark:border-zinc-805/80 transition-colors">
+          <div className="flex bg-slate-100 dark:bg-zinc-850 p-1 rounded-xl">
+            <button
+              onClick={() => setFilterType("month")}
+              style={{ minWidth: "70px" }}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all border-none cursor-pointer ${
+                filterType === "month" 
+                  ? "bg-white dark:bg-zinc-900 text-slate-900 dark:text-white shadow-xs font-extrabold" 
+                  : "text-slate-450 hover:text-slate-700 dark:text-neutral-400 dark:hover:text-white bg-transparent"
+              }`}
+            >
+              Month
+            </button>
+            <button
+              onClick={() => setFilterType("range")}
+              style={{ minWidth: "100px" }}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all border-none cursor-pointer ${
+                filterType === "range" 
+                  ? "bg-white dark:bg-zinc-900 text-slate-900 dark:text-white shadow-xs font-extrabold" 
+                  : "text-slate-450 hover:text-slate-700 dark:text-neutral-400 dark:hover:text-white bg-transparent"
+              }`}
+            >
+              Date-to-Date
+            </button>
           </div>
-          <select
-            value={selectedMonth}
-            onChange={e => setSelectedMonth(e.target.value)}
-            className="pr-8 pl-1 py-1.5 bg-transparent border-none focus:ring-0 font-bold text-xs text-gray-950 outline-none cursor-pointer"
-          >
-            {generateMonthsDropdown().map(m => (
-              <option key={m.value} value={m.value}>{m.label}</option>
-            ))}
-          </select>
 
-          <div className="h-6 w-[1px] bg-gray-150 hidden md:block" />
+          {filterType === "month" ? (
+            <div className="flex items-center gap-1.5">
+              <div className="flex items-center gap-1 px-1.5 text-gray-400">
+                <Filter className="w-3 h-3 text-gray-400" />
+                <span className="text-[9px] font-black uppercase tracking-wider">Month:</span>
+              </div>
+              <select
+                value={selectedMonth}
+                onChange={e => setSelectedMonth(e.target.value)}
+                className="pr-8 pl-1 py-1.5 bg-transparent border-none focus:ring-0 font-bold text-xs text-gray-950 dark:text-white outline-none cursor-pointer"
+              >
+                {generateMonthsDropdown().map(m => (
+                  <option key={m.value} value={m.value} className="dark:bg-zinc-900">{m.label}</option>
+                ))}
+              </select>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2">
+              <input
+                type="date"
+                value={startDate}
+                onChange={e => setStartDate(e.target.value)}
+                className="px-2.5 py-1.5 bg-slate-50 dark:bg-zinc-950 border border-slate-150 dark:border-zinc-850 rounded-xl font-bold text-xs text-gray-950 dark:text-white focus:ring-1 focus:ring-rose-100 outline-none cursor-pointer"
+              />
+              <span className="text-gray-400 text-xs font-bold">to</span>
+              <input
+                type="date"
+                value={endDate}
+                onChange={e => setEndDate(e.target.value)}
+                className="px-2.5 py-1.5 bg-slate-50 dark:bg-zinc-950 border border-slate-150 dark:border-zinc-850 rounded-xl font-bold text-xs text-gray-950 dark:text-white focus:ring-1 focus:ring-rose-100 outline-none cursor-pointer"
+              />
+            </div>
+          )}
+
+          <div className="h-6 w-[1px] bg-gray-150 dark:bg-zinc-800 hidden md:block" />
 
           <button 
             onClick={downloadCSV}
-            className="flex items-center gap-1.5 px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-[14px] font-bold text-xs transition-colors active:scale-95 cursor-pointer"
+            className="flex items-center gap-1.5 px-4 py-2 bg-slate-900 hover:bg-slate-800 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-white rounded-[14px] font-bold text-xs border-none transition-colors active:scale-95 cursor-pointer"
           >
             <Download className="w-3.5 h-3.5" />
             Export CSV
@@ -1073,6 +1131,15 @@ export default function AttendancePage({
               )}
             >
               Lunch Overtime Report ({validAttendance.filter(r => getLunchDurationMinutes(r.lunchOut, r.lunchIn) > lunchDurationLimit).length} breaches)
+            </button>
+            <button 
+              onClick={() => setListTab("days")}
+              className={cn(
+                "px-4 py-2 rounded-lg text-xs font-bold tracking-tight transition-all cursor-pointer",
+                listTab === "days" ? "bg-white text-slate-950 shadow-xs" : "text-gray-500 hover:text-slate-950"
+              )}
+            >
+              Day-wise Summary
             </button>
           </div>
 
@@ -1253,7 +1320,7 @@ export default function AttendancePage({
               </tbody>
             </table>
           </div>
-        ) : (
+        ) : listTab === "lunch" ? (
           /* LUNCH OVERTIME REPORT */
           <div className="space-y-4 font-sans">
             <div className="p-4 bg-amber-50/70 border border-amber-100 rounded-2xl text-[11px] font-bold uppercase text-amber-900 tracking-wider flex items-center gap-2">
@@ -1324,7 +1391,7 @@ export default function AttendancePage({
                           <td className="px-6 py-4 text-right">
                             <button
                               onClick={() => handleDeleteAttendanceLog(record.id!, targetEmp?.name || "staff", record.date)}
-                              className="p-2 hover:bg-red-50 text-gray-400 hover:text-red-650 rounded-xl transition-all border border-transparent hover:border-red-100 inline-flex items-center justify-center cursor-pointer"
+                              className="p-2 hover:bg-red-50 text-gray-450 hover:text-red-650 rounded-xl transition-all border border-transparent hover:border-red-100 inline-flex items-center justify-center cursor-pointer"
                               title="Delete Attendance Log"
                             >
                               <Trash2 className="w-4 h-4" />
@@ -1336,6 +1403,138 @@ export default function AttendancePage({
                   })()}
                 </tbody>
               </table>
+            </div>
+          </div>
+        ) : (
+          /* "days" tab: DAY-WISE SUMMARY REPORT */
+          <div className="space-y-6">
+            <div className="border-b border-gray-100 dark:border-zinc-800 pb-3">
+              <h4 className="text-sm font-black text-gray-900 dark:text-neutral-100 uppercase tracking-wide">Daily Operations Attendance Ledger</h4>
+              <p className="text-[11px] text-gray-450 dark:text-gray-400 uppercase tracking-widest mt-0.5">Click any day from the left pane to drill down and review individual logs on the right side</p>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              {/* Left Column: List of Days */}
+              <div className="space-y-3 max-h-[580px] overflow-y-auto pr-2">
+                {(() => {
+                  const daysInOrder = [...daysInMonth].sort((a, b) => b.getTime() - a.getTime());
+                  
+                  if (daysInOrder.length === 0) {
+                    return (
+                      <div className="p-8 text-center text-gray-450 italic text-xs font-semibold">
+                        No days found in selected range.
+                      </div>
+                    );
+                  }
+
+                  return daysInOrder.map(day => {
+                    const dateString = day.toISOString().split("T")[0];
+                    const dailyRecords = attendance.filter(a => a.date && a.date.startsWith(dateString));
+                    
+                    const countPresent = dailyRecords.filter(r => r.status === "present" || r.status === "late" || r.status === "half-day").length;
+                    const countLate = dailyRecords.filter(r => r.status === "late").length;
+                    const countAbsent = dailyRecords.filter(r => r.status === "absent").length;
+                    const countLeave = dailyRecords.filter(r => r.status === "leave").length;
+                    const countHoliday = dailyRecords.filter(r => r.status === "holiday").length;
+                    
+                    const totalEmployees = employees.length;
+                    const workedCount = countPresent;
+                    const rate = totalEmployees > 0 ? Math.round((workedCount / totalEmployees) * 100) : 0;
+                    const isSelected = selectedDate.toISOString().split("T")[0] === dateString;
+
+                    return (
+                      <div 
+                        key={dateString}
+                        className={cn(
+                          "p-4 rounded-2xl border transition-colors cursor-pointer group flex flex-col gap-2.5",
+                          isSelected 
+                            ? "bg-slate-55 dark:bg-zinc-850/60 border-[#D12765]" 
+                            : "bg-gray-50/50 dark:bg-zinc-950/40 border-gray-100 dark:border-zinc-800 hover:border-slate-350 dark:hover:border-zinc-700"
+                        )}
+                        onClick={() => {
+                          setSelectedDate(day);
+                        }}
+                      >
+                        <div className="flex justify-between items-start gap-2">
+                          <div>
+                            <h5 className="font-extrabold text-sm text-slate-900 dark:text-neutral-100">{format(day, "EEEE, d MMMM yyyy")}</h5>
+                            <span className="text-[10px] font-bold text-slate-450 uppercase tracking-wider">{rate}% Presence Rate</span>
+                          </div>
+                          <span className={`px-2.5 py-1 rounded-lg text-[9px] font-black uppercase tracking-wider ${
+                            rate >= 80 ? "bg-emerald-50 text-emerald-600 dark:bg-emerald-950/20" : "bg-rose-50 text-red-650 dark:bg-rose-950/20"
+                          }`}>
+                            {workedCount} / {totalEmployees} Present
+                          </span>
+                        </div>
+
+                        <div className="flex flex-wrap gap-1.5 text-[9px] font-bold">
+                          <span className="px-2 py-0.5 rounded-md bg-emerald-50 dark:bg-emerald-950/20 text-emerald-600">Present: {countPresent - countLate}</span>
+                          {countLate > 0 && <span className="px-2 py-0.5 rounded-md bg-amber-50 dark:bg-amber-950/20 text-amber-600">Late: {countLate}</span>}
+                          {countAbsent > 0 && <span className="px-2 py-0.5 rounded-md bg-red-50 dark:bg-red-950/20 text-red-650">Absent: {countAbsent}</span>}
+                          {countLeave > 0 && <span className="px-2 py-0.5 rounded-md bg-indigo-50 dark:bg-indigo-950/20 text-indigo-600">Leave: {countLeave}</span>}
+                          {countHoliday > 0 && <span className="px-2 py-0.5 rounded-md bg-purple-50 dark:bg-purple-950/20 text-purple-600">Holiday: {countHoliday}</span>}
+                        </div>
+                      </div>
+                    );
+                  });
+                })()}
+              </div>
+
+              {/* Right Column: Focus Day Drilldown details */}
+              <div className="space-y-4">
+                <div className="bg-slate-950 text-white p-5 rounded-[24px] border border-slate-900 shadow-xl relative overflow-hidden">
+                  <div className="absolute -right-10 -top-10 w-40 h-40 bg-rose-500/10 rounded-full blur-2xl pointer-events-none" />
+                  <h4 className="text-xs font-black tracking-widest text-[#D12765] uppercase mb-1">Focus Date Drilldown</h4>
+                  <h3 className="text-lg font-black">{format(selectedDate, "EEEE, d MMM yyyy")}</h3>
+                  <p className="text-[10px] text-gray-400 font-medium uppercase mt-0.5">Logs ledger for active personnel on this specific date</p>
+                </div>
+
+                <div className="bg-white dark:bg-zinc-900 p-5 rounded-[24px] border border-gray-100 dark:border-zinc-850 shadow-sm max-h-[460px] overflow-y-auto space-y-2.5">
+                  {(() => {
+                    const focusDateStr = selectedDate.toISOString().split("T")[0];
+                    const dayAttendance = attendance.filter(a => a.date && a.date.startsWith(focusDateStr));
+
+                    return employees.map(emp => {
+                      const rec = dayAttendance.find(a => a.employeeId === emp.id);
+                      
+                      return (
+                        <div key={emp.id} className="flex items-center justify-between p-3 rounded-xl hover:bg-slate-50/55 dark:hover:bg-zinc-850/40 transition-colors border border-slate-50 dark:border-zinc-850">
+                          <div>
+                            <span className="font-extrabold text-xs text-gray-900 dark:text-neutral-100 block">{emp.name}</span>
+                            <span className="text-[8px] font-bold text-gray-450 dark:text-neutral-350 uppercase tracking-widest">{emp.role}</span>
+                          </div>
+
+                          <div className="flex items-center gap-3">
+                            {rec ? (
+                              <div className="text-right">
+                                <span className={`px-2.5 py-0.5 rounded text-[9px] font-extrabold uppercase tracking-wide inline-block ${
+                                  rec.status === "present" ? "bg-emerald-50 text-emerald-600 dark:bg-emerald-950/10" :
+                                  rec.status === "late" ? "bg-amber-50 text-amber-600 dark:bg-amber-950/10" :
+                                  rec.status === "half-day" ? "bg-yellow-50 text-yellow-600 dark:bg-yellow-950/10" :
+                                  rec.status === "leave" ? "bg-indigo-50 text-indigo-600 dark:bg-indigo-950/10" :
+                                  rec.status === "holiday" ? "bg-purple-50 text-purple-600 dark:bg-purple-950/10" :
+                                  "bg-red-50 text-red-600 dark:bg-red-950/10"
+                                }`}>
+                                  {rec.status.toUpperCase()}
+                                </span>
+                                {(rec.checkIn || rec.checkOut) && (
+                                  <span className="block text-[8px] font-mono text-gray-400 font-bold mt-0.5">
+                                    {rec.checkIn || "--:--"} - {rec.checkOut || "--:--"}
+                                  </span>
+                                )}
+                              </div>
+                            ) : (
+                              <span className="px-2 py-0.5 rounded bg-gray-100 dark:bg-zinc-800 text-gray-400/80 text-[9px] font-black uppercase tracking-wide">
+                                UNMARKED
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    });
+                  })()}
+                </div>
+              </div>
             </div>
           </div>
         )}

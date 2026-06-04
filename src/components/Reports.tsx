@@ -2111,13 +2111,22 @@ function AttendanceReport({ employees, attendance, companyName, companyAddress, 
   globalLedgerTotals: any;
 }) {
   const [selectedMonth, setSelectedMonth] = useState(format(new Date(), "yyyy-MM"));
+  const [filterType, setFilterType] = useState<"month" | "range">("month");
+  const [startDate, setStartDate] = useState(format(startOfMonth(new Date()), "yyyy-MM-dd"));
+  const [endDate, setEndDate] = useState(format(new Date(), "yyyy-MM-dd"));
   const [aiAnalysis, setAiAnalysis] = useState<string>("");
   const [isAiLoading, setIsAiLoading] = useState<boolean>(false);
   const [aiError, setAiError] = useState<string>("");
 
   const filteredAttendance = attendance.filter(a => {
     try {
-      return a.date && a.date.startsWith(selectedMonth);
+      if (!a.date) return false;
+      if (filterType === "month") {
+        return a.date.startsWith(selectedMonth);
+      } else {
+        const dateStr = a.date.split("T")[0];
+        return dateStr >= startDate && dateStr <= endDate;
+      }
     } catch {
       return false;
     }
@@ -2238,7 +2247,8 @@ function AttendanceReport({ employees, attendance, companyName, companyAddress, 
     doc.setTextColor(203, 213, 225);
     doc.text(`${companyName.toUpperCase()} • ${companyAddress}`, 14, 23);
     doc.text(`Email: ${companyEmail} • Phone: ${companyPhone}`, 14, 27);
-    doc.text(`Audit Period: Month of ${selectedMonth}`, 14, 31);
+    const auditPeriodText = filterType === "month" ? `Month of ${selectedMonth}` : `Range from ${startDate} to ${endDate}`;
+    doc.text(`Audit Period: ${auditPeriodText}`, 14, 31);
 
     doc.setFillColor(14, 165, 233); // sky blue line
     doc.rect(0, 38, 210, 2, "F");
@@ -2341,7 +2351,8 @@ function AttendanceReport({ employees, attendance, companyName, companyAddress, 
       doc.text("AUTHORIZED REPRESENTATIVE", pageWidth - 14, postSummaryY + 19, { align: "right" });
     }
 
-    doc.save(`Attendance_Audit_Report_${selectedMonth}.pdf`);
+    const docSuffix = filterType === "month" ? selectedMonth : `${startDate}_to_${endDate}`;
+    doc.save(`Attendance_Audit_Report_${docSuffix}.pdf`);
   };
 
   const handleAskGemini = async () => {
@@ -2436,13 +2447,57 @@ function AttendanceReport({ employees, attendance, companyName, companyAddress, 
           </div>
         </div>
 
-        <div className="flex flex-col sm:flex-row items-center gap-3 w-full md:w-auto">
-          <input 
-            type="month" 
-            value={selectedMonth}
-            onChange={(e) => setSelectedMonth(e.target.value)}
-            className="px-4 py-2.5 bg-slate-50 dark:bg-zinc-950 border border-slate-200 dark:border-zinc-800 rounded-xl font-bold text-sm text-gray-950 dark:text-white focus:ring-2 focus:ring-rose-100 outline-none cursor-pointer w-full md:w-auto"
-          />
+        <div className="flex flex-wrap items-center gap-3 w-full md:w-auto">
+          <div className="flex bg-slate-100 dark:bg-zinc-950 p-1 rounded-xl">
+            <button
+              onClick={() => setFilterType("month")}
+              style={{ minWidth: "70px" }}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all border-none cursor-pointer ${
+                filterType === "month" 
+                  ? "bg-white dark:bg-zinc-900 text-slate-900 dark:text-white shadow-xs font-extrabold" 
+                  : "text-slate-450 hover:text-slate-700 dark:text-neutral-400 dark:hover:text-white bg-transparent"
+              }`}
+            >
+              Month
+            </button>
+            <button
+              onClick={() => setFilterType("range")}
+              style={{ minWidth: "100px" }}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all border-none cursor-pointer ${
+                filterType === "range" 
+                  ? "bg-white dark:bg-zinc-900 text-slate-900 dark:text-white shadow-xs font-extrabold" 
+                  : "text-slate-450 hover:text-slate-700 dark:text-neutral-400 dark:hover:text-white bg-transparent"
+              }`}
+            >
+              Date-to-Date
+            </button>
+          </div>
+
+          {filterType === "month" ? (
+            <input 
+              type="month" 
+              value={selectedMonth}
+              onChange={(e) => setSelectedMonth(e.target.value)}
+              className="px-3 py-2 bg-slate-50 dark:bg-zinc-950 border border-slate-205 dark:border-zinc-800 rounded-xl font-bold text-xs text-gray-950 dark:text-white focus:ring-1 focus:ring-rose-100 outline-none cursor-pointer w-full sm:w-auto"
+            />
+          ) : (
+            <div className="flex items-center gap-1.5 w-full sm:w-auto">
+              <input 
+                type="date" 
+                value={startDate}
+                onChange={(e) => setStartDate(e.target.value)}
+                className="px-3 py-2 bg-slate-50 dark:bg-zinc-950 border border-slate-205 dark:border-zinc-800 rounded-xl font-bold text-xs text-gray-950 dark:text-white focus:ring-1 focus:ring-rose-100 outline-none cursor-pointer w-full sm:w-auto"
+              />
+              <span className="text-gray-400 text-xs font-semibold">to</span>
+              <input 
+                type="date" 
+                value={endDate}
+                onChange={(e) => setEndDate(e.target.value)}
+                className="px-3 py-2 bg-slate-50 dark:bg-zinc-950 border border-slate-205 dark:border-zinc-800 rounded-xl font-bold text-xs text-gray-950 dark:text-white focus:ring-1 focus:ring-rose-100 outline-none cursor-pointer w-full sm:w-auto"
+              />
+            </div>
+          )}
+
           <button
             id="download-attendance-pdf-btn"
             onClick={downloadAttendanceReportPDF}
@@ -2566,6 +2621,107 @@ function AttendanceReport({ employees, attendance, companyName, companyAddress, 
               </div>
             ))}
           </div>
+        </div>
+      </div>
+
+      {/* Day-by-Day Operations Audit Ledger */}
+      <div className="bg-white dark:bg-zinc-900 p-6 sm:p-8 rounded-[32px] border border-slate-100 dark:border-zinc-800/50 shadow-sm space-y-6">
+        <div>
+          <h4 className="text-sm font-black text-slate-900 dark:text-neutral-100 uppercase tracking-wider mb-1">Day-by-Day Operations Audit Ledger</h4>
+          <p className="text-[11px] text-slate-400 font-semibold mb-6 uppercase">Chronological breakdown of presence, lateness count, and daily staffing occupancy</p>
+        </div>
+
+        <div className="overflow-x-auto">
+          <table className="w-full text-left border-collapse min-w-[700px] text-xs">
+            <thead>
+              <tr className="border-b border-slate-100 dark:border-zinc-850 bg-slate-50/50 dark:bg-zinc-950/20">
+                <th className="px-4 py-3 font-black text-[10px] uppercase tracking-wider text-slate-400">Date</th>
+                <th className="px-4 py-3 font-black text-[10px] uppercase tracking-wider text-slate-400 text-center">Present / Active</th>
+                <th className="px-4 py-3 font-black text-[10px] uppercase tracking-wider text-slate-400 text-center">Late Arrivals</th>
+                <th className="px-4 py-3 font-black text-[10px] uppercase tracking-wider text-slate-400 text-center">Absences</th>
+                <th className="px-4 py-3 font-black text-[10px] uppercase tracking-wider text-slate-400 text-center">On Leave</th>
+                <th className="px-4 py-3 font-black text-[10px] uppercase tracking-wider text-slate-400 text-center">Holidays</th>
+                <th className="px-4 py-3 font-black text-[10px] uppercase tracking-wider text-slate-400 text-right">Occupancy Rate</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-50 dark:divide-zinc-850/50">
+              {(() => {
+                // Calculate days list dynamically
+                const listDays: Date[] = [];
+                try {
+                  const startObj = filterType === "month" 
+                    ? startOfMonth(new Date(selectedMonth + "-02")) 
+                    : startOfDay(new Date(startDate));
+                  const endObj = filterType === "month" 
+                    ? endOfMonth(new Date(selectedMonth + "-02")) 
+                    : endOfDay(new Date(endDate));
+                  
+                  let current = new Date(startObj);
+                  while (current <= endObj) {
+                    listDays.push(new Date(current));
+                    current.setDate(current.getDate() + 1);
+                  }
+                  listDays.sort((a,b) => b.getTime() - a.getTime()); // Latest first
+                } catch (e) {
+                  console.error(e);
+                }
+
+                if (listDays.length === 0) {
+                  return (
+                    <tr>
+                      <td colSpan={7} className="py-8 text-center text-gray-400 italic font-semibold animate-pulse">
+                        No operations days found in specified bounds.
+                      </td>
+                    </tr>
+                  );
+                }
+
+                return listDays.map(day => {
+                  const dayString = day.toISOString().split("T")[0];
+                  const records = filteredAttendance.filter(a => a.date && a.date.startsWith(dayString));
+                  
+                  const countPresent = records.filter(r => r.status === "present" || r.status === "late" || r.status === "half-day").length;
+                  const countLate = records.filter(r => r.status === "late").length;
+                  const countAbsent = records.filter(r => r.status === "absent").length;
+                  const countLeave = records.filter(r => r.status === "leave").length;
+                  const countHoliday = records.filter(r => r.status === "holiday").length;
+                  
+                  const total = employees.length;
+                  const occRate = total > 0 ? Math.round((countPresent / total) * 100) : 0;
+
+                  return (
+                    <tr key={dayString} className="hover:bg-slate-50/50 dark:hover:bg-zinc-850/20 transition-colors">
+                      <td className="px-4 py-3 font-bold text-slate-805 dark:text-neutral-200">
+                        {format(day, "EEEE, dd MMM yyyy")}
+                      </td>
+                      <td className="px-4 py-3 font-extrabold text-center text-emerald-650 dark:text-emerald-450 font-mono">
+                        {countPresent - countLate}
+                      </td>
+                      <td className="px-4 py-3 font-semibold text-center text-amber-600 dark:text-amber-450 font-mono">
+                        {countLate}
+                      </td>
+                      <td className="px-4 py-3 font-semibold text-center text-red-650 font-mono">
+                        {countAbsent}
+                      </td>
+                      <td className="px-4 py-3 font-semibold text-center text-indigo-500 font-mono">
+                        {countLeave}
+                      </td>
+                      <td className="px-4 py-3 font-semibold text-center text-purple-500 font-mono">
+                        {countHoliday}
+                      </td>
+                      <td className="px-4 py-3 font-black text-right font-mono">
+                        <span className={`inline-block px-1.5 py-0.5 rounded ${
+                          occRate >= 75 ? "text-emerald-600 bg-emerald-50 dark:bg-emerald-950/20" : "text-rose-600 bg-rose-50 dark:bg-rose-950/20"
+                        }`}>
+                          {occRate}%
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                });
+              })()}
+            </tbody>
+          </table>
         </div>
       </div>
 

@@ -221,13 +221,7 @@ export default function App() {
     };
   }, []);
 
-  const [expandedMenus, setExpandedMenus] = useState<Record<string, boolean>>({
-    sales: true,
-    employees: true,
-    attendance: true,
-    suppliers: true,
-    purchases: true
-  });
+  const [expandedMenus, setExpandedMenus] = useState<Record<string, boolean>>({});
   const [user, setUser] = useState<FirebaseUser | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [customRoles, setCustomRoles] = useState<RolePermission[]>([]);
@@ -383,6 +377,115 @@ export default function App() {
     };
   }, []);
 
+  const navItems = [
+    { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
+    { id: "transactions", label: "Transactions", icon: ReceiptIndianRupee },
+    { 
+      id: "sales", 
+      label: "Sales Hub", 
+      icon: ShoppingCart, 
+      children: [
+        { id: "newSale", label: "New Sale Entry" },
+        { id: "salesList", label: "Sales List / Ledger" }
+      ]
+    },
+    { 
+      id: "suppliers", 
+      label: "Suppliers", 
+      icon: UserPlus, 
+      children: [
+        { id: "newSupplier", label: "New Supplier Info" },
+        { id: "suppliersList", label: "Suppliers Ledger" }
+      ]
+    },
+    { 
+      id: "purchases", 
+      label: "Purchase Book", 
+      icon: CreditCard, 
+      children: [
+        { id: "newPurchase", label: "New Procurement" },
+        { id: "purchaseList", label: "Bills & Purchase List" }
+      ]
+    },
+    { 
+      id: "employees", 
+      label: "Employees", 
+      icon: Users, 
+      children: [
+        { id: "newEmployee", label: "Add New Employee" },
+        { id: "employeesList", label: "Registered Staff" },
+        { id: "salaryEntry", label: "Disburse Salary" },
+        { id: "salarySheet", label: "Monthly Ledger" }
+      ]
+    },
+    { 
+      id: "attendance", 
+      label: "Attendance", 
+      icon: ShieldCheck, 
+      children: [
+        { id: "addAttendance", label: "Daily Input" },
+        { id: "attendanceList", label: "Attendance Book" }
+      ]
+    },
+    { id: "reports", label: "Reports & PDFs", icon: FileText },
+    { 
+      id: "users", 
+      label: "Users", 
+      icon: Users, 
+      children: [
+        { id: "newUser", label: "New User" },
+        { id: "usersList", label: "Users List" },
+        { id: "rolesList", label: "Roles List" }
+      ]
+    },
+    { id: "settings", label: "Settings Pane", icon: SettingsIcon },
+  ];
+
+  const hasAccessToView = (viewId: string) => {
+    if (!profile) return false;
+    
+    // Admins always have full, unrestricted access to all menus
+    if (profile.role === "admin") return true;
+
+    // Strict Admin-only views - Settings, Users and Salary entry/sheets are strictly locked to admin role
+    const absoluteAdminOnly = ["settings", "newUser", "usersList", "rolesList", "newEmployee", "salaryEntry", "salarySheet"];
+    if (absoluteAdminOnly.includes(viewId)) {
+      return false;
+    }
+
+    // Direct match check on user's assigned role from custom roles collection first
+    const matchedRole = customRoles.find(r => r.id === profile.role);
+    if (matchedRole) {
+      return matchedRole.allowedMenus.includes(viewId);
+    }
+
+    // Default built-in fallback permissions if no custom roles are matched
+    if (profile.role === "accountant") {
+      const restrictedForAccountant = ["newUser", "usersList", "rolesList", "settings"];
+      return !restrictedForAccountant.includes(viewId);
+    }
+
+    if (profile.role === "sales") {
+      const allowedForSales = ["dashboard", "sales", "newSale", "salesList", "transactions", "profileView"];
+      return allowedForSales.includes(viewId);
+    }
+
+    return false;
+  };
+
+  useEffect(() => {
+    // Automatically close other menus and expand only the active view's parent folder
+    const parent = navItems.find(item => 
+      "children" in item && Array.isArray((item as any).children) && 
+      (item as any).children.some((child: any) => child.id === activeView)
+    );
+    if (parent) {
+      setExpandedMenus({ [parent.id]: true });
+    } else {
+      setExpandedMenus({});
+    }
+  }, [activeView]);
+
   const handleLogout = () => signOut(auth);
 
   if (loading && !quotaExceeded) {
@@ -406,101 +509,6 @@ export default function App() {
   if (!user || !profile) {
     return <Login />;
   }
-
-  const navItems = [
-    { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
-    { 
-      id: "sales", 
-      label: "Sales Hub", 
-      icon: ShoppingCart, 
-      children: [
-        { id: "newSale", label: "New Sale Entry" },
-        { id: "salesList", label: "Sales List / Ledger" }
-      ]
-    },
-    { id: "transactions", label: "Transactions", icon: ReceiptIndianRupee },
-    { 
-      id: "employees", 
-      label: "Employees", 
-      icon: Users, 
-      children: [
-        { id: "newEmployee", label: "Add New Employee" },
-        { id: "employeesList", label: "Registered Staff" },
-        { id: "salaryEntry", label: "Disburse Salary" },
-        { id: "salarySheet", label: "Monthly Ledger" }
-      ]
-    },
-    { 
-      id: "attendance", 
-      label: "Attendance", 
-      icon: ShieldCheck, 
-      children: [
-        { id: "addAttendance", label: "Daily Input" },
-        { id: "attendanceList", label: "Attendance Book" }
-      ]
-    },
-    { 
-      id: "suppliers", 
-      label: "Suppliers", 
-      icon: UserPlus, 
-      children: [
-        { id: "newSupplier", label: "New Supplier Info" },
-        { id: "suppliersList", label: "Suppliers Ledger" }
-      ]
-    },
-    { 
-      id: "purchases", 
-      label: "Purchase Book", 
-      icon: ShoppingCart, 
-      children: [
-        { id: "newPurchase", label: "New Procurement" },
-        { id: "purchaseList", label: "Bills & Purchase List" }
-      ]
-    },
-    { id: "reports", label: "Reports & PDFs", icon: FileText },
-    { 
-      id: "users", 
-      label: "Users", 
-      icon: Users, 
-      children: [
-        { id: "newUser", label: "New User" },
-        { id: "usersList", label: "Users List" },
-        { id: "rolesList", label: "Roles List" }
-      ]
-    },
-    { id: "settings", label: "Settings Pane", icon: SettingsIcon },
-  ];
-
-  const hasAccessToView = (viewId: string) => {
-    if (!profile) return false;
-    
-    // Admins always have full, unrestricted access to all menus
-    if (profile.role === "admin") return true;
-
-    // Direct match check on user's assigned role from custom roles collection first
-    const matchedRole = customRoles.find(r => r.id === profile.role);
-    if (matchedRole) {
-      return matchedRole.allowedMenus.includes(viewId);
-    }
-
-    // Default built-in fallback permissions if no custom roles are matched
-    const adminOnlyViews = ["newEmployee", "salaryEntry", "salarySheet"];
-    if (adminOnlyViews.includes(viewId) && profile.role !== "admin") {
-      return false;
-    }
-
-    if (profile.role === "accountant") {
-      const restrictedForAccountant = ["newUser", "usersList", "rolesList", "settings"];
-      return !restrictedForAccountant.includes(viewId);
-    }
-
-    if (profile.role === "sales") {
-      const allowedForSales = ["dashboard", "sales", "newSale", "salesList", "transactions", "profileView"];
-      return allowedForSales.includes(viewId);
-    }
-
-    return false;
-  };
 
   const filteredNavItems = navItems.map(item => {
     if ("children" in item && Array.isArray((item as any).children)) {
@@ -622,7 +630,10 @@ export default function App() {
                   <div key={item.id} className="space-y-0.5">
                     <button
                       onClick={() => {
-                        setExpandedMenus(prev => ({ ...prev, [item.id]: !prev[item.id] }));
+                        setExpandedMenus(prev => {
+                          const wasExpanded = !!prev[item.id];
+                          return wasExpanded ? {} : { [item.id]: true };
+                        });
                       }}
                       className={cn(
                         "w-full flex items-center justify-between px-3.5 py-3 rounded-xl transition-all group text-left cursor-pointer",
@@ -678,6 +689,7 @@ export default function App() {
                   key={item.id}
                   onClick={() => {
                     setActiveView(item.id as View);
+                    setExpandedMenus({});
                     if (window.innerWidth < 1024) setIsSidebarOpen(false);
                   }}
                   className={cn(
@@ -712,6 +724,7 @@ export default function App() {
             <button 
               onClick={() => {
                 setActiveView("profileView");
+                setExpandedMenus({});
                 if (window.innerWidth < 1024) setIsSidebarOpen(false);
               }}
               className="w-full flex items-center gap-3 px-2.5 py-2 px-1 rounded-2xl hover:bg-slate-50 border border-transparent hover:border-slate-150/50 transition-all text-left group cursor-pointer"

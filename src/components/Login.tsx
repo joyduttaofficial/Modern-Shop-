@@ -166,31 +166,38 @@ export default function Login() {
       <div className="flex-1 flex flex-col justify-center px-6 py-12 md:px-16 lg:px-24 bg-white relative">
         
         {/* Decorative background ambient light */}
-        <div className="absolute top-0 left-0 w-80 h-80 bg-slate-100 rounded-full blur-3xl -z-10 opacity-60" />
+        <div className="absolute top-0 left-0 w-80 h-80 bg-slate-105 rounded-full blur-3xl -z-10 opacity-60" />
         <div className="absolute bottom-0 right-0 w-80 h-80 bg-indigo-50/40 rounded-full blur-3xl -z-10 opacity-60" />
 
-        <div className="mx-auto w-full max-w-md">
+        <div className="mx-auto w-full max-w-sm">
           
           {/* Brand/Logo Header */}
-          <div className="flex items-center gap-3 mb-10">
-            {companyLogoUrl ? (
-              <img 
-                src={companyLogoUrl} 
-                alt="Logo" 
-                className="w-12 h-12 rounded-2xl object-contain border border-slate-100 shadow-md bg-white shrink-0" 
-                referrerPolicy="no-referrer"
-                onError={(e) => {
-                  (e.target as HTMLImageElement).src = `https://api.dicebear.com/7.x/identicon/svg?seed=${encodeURIComponent(companyName)}`;
-                }}
+          <div className="flex items-center gap-3 mb-12">
+            <div className="relative">
+              <motion.div 
+                animate={{ scale: [1, 1.05, 1] }}
+                transition={{ repeat: Infinity, duration: 3, ease: "easeInOut" }}
+                className="absolute -inset-1 bg-gradient-to-tr from-slate-100 to-indigo-50 rounded-2xl opacity-40 blur-xs"
               />
-            ) : (
-              <div className="w-12 h-12 bg-slate-950 rounded-2xl flex items-center justify-center shadow-lg shadow-slate-950/20">
-                <LayoutDashboard className="w-6 h-6 text-white" />
+              <div className="relative w-14 h-14 rounded-2xl bg-white p-2.5 border border-slate-100 shadow-sm flex items-center justify-center shrink-0">
+                {companyLogoUrl ? (
+                  <img 
+                    src={companyLogoUrl} 
+                    alt="Logo" 
+                    className="w-full h-full object-contain" 
+                    referrerPolicy="no-referrer"
+                    onError={(e) => {
+                      (e.target as HTMLImageElement).src = `https://api.dicebear.com/7.x/identicon/svg?seed=${encodeURIComponent(companyName)}`;
+                    }}
+                  />
+                ) : (
+                  <LayoutDashboard className="w-7 h-7 text-slate-950" />
+                )}
               </div>
-            )}
+            </div>
             <div>
-              <span className="text-xl font-black tracking-tight text-slate-900 block leading-none">{companyName}</span>
-              <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mt-1 block">{companyTagline}</span>
+              <span className="text-xl font-black tracking-tight text-slate-900 block leading-tight">{companyName}</span>
+              <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest block">{companyTagline}</span>
             </div>
           </div>
 
@@ -199,9 +206,6 @@ export default function Login() {
             <h2 className="text-2xl font-black text-slate-900 tracking-tight">
               Welcome Back
             </h2>
-            <p className="text-slate-500 font-medium text-sm mt-1">
-              Sign in with your email or username to access your workspace and ledger registers.
-            </p>
           </div>
 
           {/* Errors and Success messages */}
@@ -236,7 +240,7 @@ export default function Login() {
             
             {/* User ID or Email */}
             <div>
-              <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 font-medium">User ID (Username) or Email *</label>
+              <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 font-semibold">User ID (Username) or Email *</label>
               <div className="relative">
                 <span className="absolute left-4 top-3.5 text-slate-400">
                   <Mail className="w-4.5 h-4.5" />
@@ -246,8 +250,8 @@ export default function Login() {
                   required
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  placeholder="e.g. johndoe or user@company.com"
-                  className="w-full pl-11 pr-4 py-3.5 bg-slate-50 border border-slate-200 focus:border-slate-800 focus:bg-white rounded-xl font-medium outline-none transition-all text-sm"
+                  placeholder="e.g. johndoe"
+                  className="w-full pl-11 pr-4 py-3.5 bg-slate-50 border border-slate-200 focus:border-slate-850 focus:bg-white rounded-xl font-medium outline-none transition-all text-sm"
                 />
               </div>
             </div>
@@ -255,7 +259,7 @@ export default function Login() {
             {/* Password */}
             <div>
               <div className="flex justify-between items-center mb-2">
-                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider font-medium">Password *</label>
+                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider font-semibold">Password *</label>
                 <button
                   type="button"
                   onClick={() => {
@@ -276,7 +280,7 @@ export default function Login() {
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="••••••••"
-                  className="w-full pl-11 pr-11 py-3.5 bg-slate-50 border border-slate-200 focus:border-slate-800 focus:bg-white rounded-xl font-medium outline-none transition-all text-sm"
+                  className="w-full pl-11 pr-11 py-3.5 bg-slate-50 border border-slate-200 focus:border-slate-850 focus:bg-white rounded-xl font-medium outline-none transition-all text-sm"
                 />
                 <button
                   type="button"
@@ -308,75 +312,79 @@ export default function Login() {
             </button>
           </form>
 
-          {/* Quick Demo Assist */}
-          <div className="mt-10 pt-6 border-t border-slate-100 text-center">
-            <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest block mb-2">Workspace Guidelines</span>
-            <p className="text-[11px] text-slate-500 font-medium leading-relaxed max-w-xs mx-auto">
-              Only authorized personnel can access the system. Contact your workspace Administrator if you do not have credential parameters assigned yet.
-            </p>
-          </div>
-
         </div>
       </div>
 
       {/* RIGHT COLUMN: MAJESTIC ACCENT PANEL */}
-      <div className="hidden lg:flex flex-1 bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-950 relative overflow-hidden flex-col justify-between p-16">
+      <div className="hidden lg:flex flex-1 bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-950 relative overflow-hidden flex-col justify-center items-center p-16">
         
         {/* Ambient Grid overlay and glowing graphic lights */}
         <div className="absolute inset-0 bg-[linear-gradient(to_right,#0f172a_1px,transparent_1px),linear-gradient(to_bottom,#0f172a_1px,transparent_1px)] bg-[size:4rem_4rem] [mask-image:radial-gradient(ellipse_60%_50%_at_50%_0%,#000_70%,transparent_100%)] opacity-30" />
         <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-indigo-500/15 rounded-full blur-3xl" />
         <div className="absolute bottom-1/4 right-1/4 w-96 h-96 bg-slate-500/10 rounded-full blur-3xl" />
 
-        {/* Small branding badge */}
-        <div>
-          <span className="px-3.5 py-1.5 bg-white/10 text-white backdrop-blur-md rounded-full text-[10px] font-black uppercase tracking-widest border border-white/10">
-            ENTERPRISE SYSTEM v1.3.4
-          </span>
-        </div>
-
-        {/* Dynamic Highlight Content */}
-        <div className="max-w-md relative">
-          <h3 className="text-4xl font-black text-white tracking-tight leading-tight mb-4">
-            Manage your shop accounts & stock streams in one gorgeous system.
-          </h3>
-          <p className="text-slate-400 text-sm leading-relaxed font-medium mb-10">
-            Automate transactions registers, sales/returns ledger book, precise physical stock books, payroll disbursement, staff rosters, and dynamic menu-level security permissions.
-          </p>
-
-          {/* Grid highlights */}
-          <div className="grid grid-cols-2 gap-4">
-            <div className="p-4 bg-white/5 border border-white/5 rounded-2xl backdrop-blur-sm">
-              <TrendingUp className="w-5 h-5 text-indigo-400 mb-2" />
-              <h4 className="text-white text-xs font-bold uppercase tracking-wider leading-tight mb-1">Double Entry Ledger</h4>
-              <p className="text-[11px] text-slate-500 font-medium leading-normal">Track incomes and expenses synchronously with beautiful interactive graphs.</p>
-            </div>
-
-            <div className="p-4 bg-white/5 border border-white/5 rounded-2xl backdrop-blur-sm">
-              <Users2 className="w-5 h-5 text-indigo-400 mb-2" />
-              <h4 className="text-white text-xs font-bold uppercase tracking-wider leading-tight mb-1">Role Architect</h4>
-              <p className="text-[11px] text-slate-500 font-medium leading-normal">Control exactly which menus are visible to sales, procurement or clerks.</p>
-            </div>
-
-            <div className="p-4 bg-white/5 border border-white/5 rounded-2xl backdrop-blur-sm">
-              <LineChart className="w-5 h-5 text-indigo-400 mb-2" />
-              <h4 className="text-white text-xs font-bold uppercase tracking-wider leading-tight mb-1">POS & procurement</h4>
-              <p className="text-[11px] text-slate-500 font-medium leading-normal">Save complete customer invoices or record wholesale purchase ledger details.</p>
-            </div>
-
-            <div className="p-4 bg-white/5 border border-white/5 rounded-2xl backdrop-blur-sm">
-              <CalendarCheck className="w-5 h-5 text-indigo-400 mb-2" />
-              <h4 className="text-white text-xs font-bold uppercase tracking-wider leading-tight mb-1">Staff Payroll</h4>
-              <p className="text-[11px] text-slate-500 font-medium leading-normal">Monitor attendance status and disburse advance/salary sheets monthly.</p>
+        {/* Dynamic Highlight Content (Centered with majestic animation) */}
+        <motion.div
+          initial={{ opacity: 0, scale: 0.9 }}
+          animate={{ opacity: 1, scale: 1 }}
+          transition={{ duration: 0.8 }}
+          className="relative flex flex-col items-center justify-center text-center p-12 bg-white/5 border border-white/10 rounded-3xl backdrop-blur-md shadow-2xl max-w-sm w-full"
+        >
+          {/* White rounded container for the logo */}
+          <div className="relative mb-6">
+            {/* Dynamic outer animated rings */}
+            <motion.div 
+              animate={{ rotate: 360 }}
+              transition={{ repeat: Infinity, duration: 24, ease: "linear" }}
+              className="absolute -inset-4 rounded-full border border-dashed border-white/20"
+            />
+            <motion.div 
+              animate={{ scale: [1, 1.08, 1] }}
+              transition={{ repeat: Infinity, duration: 4, ease: "easeInOut" }}
+              className="absolute -inset-1.5 bg-gradient-to-tr from-indigo-500 to-sky-400 rounded-full opacity-40 blur-sm"
+            />
+            
+            <div className="relative w-28 h-28 rounded-full bg-white p-4 shadow-xl border border-white/25 flex items-center justify-center overflow-hidden">
+              {companyLogoUrl ? (
+                <motion.img 
+                  src={companyLogoUrl} 
+                  alt="Company Logo" 
+                  className="w-full h-full object-contain" 
+                  referrerPolicy="no-referrer"
+                  initial={{ scale: 0.8 }}
+                  animate={{ scale: 1 }}
+                  transition={{ type: "spring", stiffness: 100 }}
+                  onError={(e) => {
+                    (e.target as HTMLImageElement).src = `https://api.dicebear.com/7.x/identicon/svg?seed=${encodeURIComponent(companyName)}`;
+                  }}
+                />
+              ) : (
+                <LayoutDashboard className="w-12 h-12 text-slate-900" />
+              )}
             </div>
           </div>
-        </div>
 
-        {/* Footer Credit */}
-        <div>
-          <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest leading-none">
-            © 2026 {companyName}. {showPoweredBy ? companyPoweredBy : "Licensed Workspace."}
-          </p>
-        </div>
+          <motion.h4
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.3 }}
+            className="text-white text-2xl font-black tracking-tight"
+          >
+            {companyName}
+          </motion.h4>
+          <span className="text-indigo-200 text-xs font-bold uppercase tracking-widest mt-1 block">
+            {companyTagline}
+          </span>
+          
+          <div className="mt-8 pt-6 border-t border-white/10 w-full text-center">
+            <span className="text-[10px] text-slate-400 uppercase font-black tracking-widest block mb-1">
+              Authenticating System
+            </span>
+            <p className="text-[11px] text-slate-300 font-semibold truncate max-w-xs mx-auto">
+              {showPoweredBy ? companyPoweredBy : "Secure Connection"}
+            </p>
+          </div>
+        </motion.div>
 
       </div>
 

@@ -3,7 +3,7 @@ import { User } from "firebase/auth";
 import { collection, onSnapshot, addDoc, deleteDoc, doc, query, orderBy, increment, where, getDocs } from "firebase/firestore";
 import { db, OperationType, handleFirestoreError, updateDoc } from "@/src/lib/firebase";
 import { Supplier, Bank, UserRole, Transaction, SupplierTransaction } from "@/src/types";
-import { cn, formatCurrency } from "@/src/lib/utils";
+import { cn, formatCurrency, computeDynamicPurchases } from "@/src/lib/utils";
 import { 
   Plus, Search, Eye, Trash2, Calendar, FileText, Image, ClipboardList, Wallet, Landmark, X, ChevronDown, Check, Download, Printer, RotateCcw
 } from "lucide-react";
@@ -443,7 +443,9 @@ export default function Purchase({
     }
   };
 
-  const filteredPurchases = purchases.filter((p) => {
+  const dynamicPurchases = computeDynamicPurchases(purchases, supplierTransactions, suppliers);
+
+  const filteredPurchases = dynamicPurchases.filter((p) => {
     const text = (p.supplierName + p.refNo + (p.notes || "")).toLowerCase();
     return text.includes(searchTerm.toLowerCase());
   });

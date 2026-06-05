@@ -72,7 +72,7 @@ export default function Suppliers({
 
   // Selected Profile state
   const [selectedSupplier, setSelectedSupplier] = useState<Supplier | null>(null);
-  const [profileTab, setProfileTab] = useState<"purchases" | "payments">("purchases");
+  const [profileTab, setProfileTab] = useState<"purchases" | "payments" | "returns">("purchases");
 
   // Dynamic Modals States
   const [activeModal, setActiveModal] = useState<"payDue" | "payReturn" | "addPurchase" | "addReturn" | null>(null);
@@ -1002,8 +1002,26 @@ export default function Suppliers({
 
                 <div className="flex flex-wrap items-center gap-2">
                   <button
+                    onClick={() => openModal("addPurchase", selectedSupplier)}
+                    className="bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold py-2 px-3.5 rounded-xl flex items-center gap-1.5 transition-colors shadow-xs cursor-pointer"
+                  >
+                    <Plus className="w-4 h-4" /> Log Purchase
+                  </button>
+                  <button
+                    onClick={() => openModal("addReturn", selectedSupplier)}
+                    className="bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold py-2 px-3.5 rounded-xl flex items-center gap-1.5 transition-colors shadow-xs cursor-pointer"
+                  >
+                    <ArrowDownRight className="w-4 h-4" /> Record Return
+                  </button>
+                  <button
+                    onClick={() => openModal("payDue", selectedSupplier)}
+                    className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold py-2 px-3.5 rounded-xl flex items-center gap-1.5 transition-colors shadow-xs cursor-pointer"
+                  >
+                    <Wallet className="w-4 h-4" /> Pay Outstanding
+                  </button>
+                  <button
                     onClick={() => setViewState("list")}
-                    className="bg-slate-200 hover:bg-slate-300 text-gray-700 text-xs font-bold py-2.5 px-4 rounded-lg transition-colors"
+                    className="bg-slate-200 hover:bg-slate-300 text-gray-700 text-xs font-bold py-2 px-3.5 rounded-xl transition-colors cursor-pointer"
                   >
                     Back to List
                   </button>
@@ -1055,7 +1073,7 @@ export default function Suppliers({
                     profileTab === "purchases" ? "text-blue-600 border-b-2 border-blue-600" : "text-gray-400 hover:text-gray-600"
                   )}
                 >
-                  Purchases & Returns Historical Ledger
+                  Purchases Historical Ledger
                 </button>
                 <button
                   onClick={() => setProfileTab("payments")}
@@ -1065,6 +1083,15 @@ export default function Suppliers({
                   )}
                 >
                   Payment Outflow Logs
+                </button>
+                <button
+                  onClick={() => setProfileTab("returns")}
+                  className={cn(
+                    "pb-3 text-sm font-semibold transition-all relative",
+                    profileTab === "returns" ? "text-blue-600 border-b-2 border-blue-600" : "text-gray-400 hover:text-gray-600"
+                  )}
+                >
+                  Product Returns History
                 </button>
               </div>
 
@@ -1085,22 +1112,19 @@ export default function Suppliers({
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-100 text-xs text-gray-700">
-                      {transactions.filter(t => t.supplierId === selectedSupplier.id && (t.type === "purchase" || t.type === "return")).length === 0 ? (
+                      {transactions.filter(t => t.supplierId === selectedSupplier.id && t.type === "purchase").length === 0 ? (
                         <tr>
                           <td colSpan={8} className="p-6 text-center text-gray-400 font-medium font-medium">No purchase bills logged yet.</td>
                         </tr>
                       ) : (
                         transactions
-                          .filter(t => t.supplierId === selectedSupplier.id && (t.type === "purchase" || t.type === "return"))
+                          .filter(t => t.supplierId === selectedSupplier.id && t.type === "purchase")
                           .map((t) => (
                             <tr key={t.id} className="hover:bg-slate-50">
                               <td className="p-3 font-semibold text-gray-500">{t.date}</td>
                               <td className="p-3 font-bold font-mono text-gray-800">{t.refNo}</td>
                               <td className="p-3 uppercase">
-                                <span className={cn(
-                                  "px-2 py-0.5 rounded text-[10px] font-extrabold",
-                                  t.type === "purchase" ? "bg-blue-100 text-blue-700" : "bg-yellow-100 text-yellow-700"
-                                )}>
+                                <span className="px-2 py-0.5 rounded text-[10px] font-extrabold bg-blue-100 text-blue-700">
                                   {t.type}
                                 </span>
                               </td>
@@ -1120,6 +1144,66 @@ export default function Suppliers({
                                   <button
                                     onClick={() => setTxToDelete({ id: t.id!, tx: t })}
                                     title="Delete Transaction Record"
+                                    className="p-1 text-red-600 hover:text-red-800 hover:bg-red-50 rounded-lg transition-colors"
+                                  >
+                                    <Trash2 className="w-4 h-4" />
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                          ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              {profileTab === "returns" && (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse">
+                    <thead>
+                      <tr className="bg-slate-50 text-gray-600 uppercase text-[10px] font-bold tracking-wider border-b border-gray-200">
+                        <th className="p-3">Return Date</th>
+                        <th className="p-3">Return Ref No</th>
+                        <th className="p-3">Type</th>
+                        <th className="p-3 text-right">Return Value (৳)</th>
+                        <th className="p-3">Adjustment / Method</th>
+                        <th className="p-3">Status/Notes</th>
+                        <th className="p-4 text-center">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100 text-xs text-gray-700">
+                      {transactions.filter(t => t.supplierId === selectedSupplier.id && t.type === "return").length === 0 ? (
+                        <tr>
+                          <td colSpan={7} className="p-6 text-center text-gray-400 font-medium">No product returns recorded for this supplier.</td>
+                        </tr>
+                      ) : (
+                        transactions
+                          .filter(t => t.supplierId === selectedSupplier.id && t.type === "return")
+                          .map((t) => (
+                            <tr key={t.id} className="hover:bg-slate-50">
+                              <td className="p-3 font-semibold text-gray-500">{t.date}</td>
+                              <td className="p-3 font-bold font-mono text-gray-800">{t.refNo}</td>
+                              <td className="p-3 uppercase">
+                                <span className="bg-yellow-100 text-yellow-700 px-2 py-0.5 rounded text-[10px] font-extrabold">
+                                  {t.type}
+                                </span>
+                              </td>
+                              <td className="p-3 text-right font-bold text-amber-600">{formatCurrency(t.totalAmount)}</td>
+                              <td className="p-3 font-bold text-gray-600">{t.paymentMethod || "Due Adjusted"}</td>
+                              <td className="p-3 text-gray-500 italic max-w-xs truncate">{t.notes || "—"}</td>
+                              <td className="p-3 text-center">
+                                <div className="flex items-center justify-center gap-2">
+                                  <button
+                                    onClick={() => setInvoiceTransaction(t)}
+                                    title="View Return Voucher"
+                                    className="p-1 text-blue-600 hover:text-blue-800 hover:bg-blue-50 rounded-lg transition-colors"
+                                  >
+                                    <Receipt className="w-4 h-4" />
+                                  </button>
+                                  <button
+                                    onClick={() => setTxToDelete({ id: t.id!, tx: t })}
+                                    title="Delete Return Record"
                                     className="p-1 text-red-600 hover:text-red-800 hover:bg-red-50 rounded-lg transition-colors"
                                   >
                                     <Trash2 className="w-4 h-4" />

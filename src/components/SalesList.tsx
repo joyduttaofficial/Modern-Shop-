@@ -267,7 +267,7 @@ export default function SalesList({ user, role, onEditSales }: SalesListProps) {
   const aggregateEmployeeSales = sortedFilteredGroups.reduce((acc, curr) => acc + curr.totalEmployeeSales, 0);
   const aggregateWholesaleSales = sortedFilteredGroups.reduce((acc, curr) => acc + curr.totalWholesaleSales, 0);
   const aggregateDeposits = sortedFilteredGroups.reduce((acc, curr) => acc + curr.totalDeposit, 0);
-  const cumulativeGrandTotal = aggregateEmployeeSales + aggregateWholesaleSales - aggregateDeposits;
+  const cumulativeGrandTotal = aggregateEmployeeSales + aggregateWholesaleSales;
 
   // Export CSV summary of daily grouped records
   const exportGroupedCSV = () => {

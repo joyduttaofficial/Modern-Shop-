@@ -119,3 +119,20 @@ export interface SupplierTransaction {
   notes?: string;
   createdAt: string;
 }
+
+export interface PurchaseModel {
+  id?: string;
+  supplierId: string;
+  supplierName: string;
+  date: string;
+  refNo: string;
+  totalAmount: number;
+  paidAmount: number;
+  dueAmount: number;
+  writtenReturn?: number;
+  paymentMethod: string;
+  notes?: string;
+  invoicePhoto?: string; // base64 representation
+  createdAt: string;
+}
+

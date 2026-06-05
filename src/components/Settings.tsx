@@ -4,7 +4,7 @@ import { collection, onSnapshot, addDoc, deleteDoc, doc, query, orderBy, setDoc,
 import { db, OperationType, handleFirestoreError, updateDoc } from "@/src/lib/firebase";
 import { Category, Bank, TransactionType, UserRole, UserProfile } from "@/src/types";
 import { cn } from "@/src/lib/utils";
-import { Plus, Trash2, Landmark, Tag, Briefcase, PlusCircle, LayoutGrid, Users, ShieldAlert, Archive, Download, FileText, Database, RefreshCw, CheckCircle2 } from "lucide-react";
+import { Plus, Trash2, Landmark, Tag, Briefcase, PlusCircle, LayoutGrid, Users, ShieldAlert, Archive, Download, FileText, Database, RefreshCw, CheckCircle2, Upload, Image } from "lucide-react";
 import { format } from "date-fns";
 import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
@@ -108,6 +108,69 @@ export default function Settings({ user, role }: { user: User; role: UserRole })
   const [showPoweredBy, setShowPoweredBy] = useState(true);
   const [isUpdatingBranding, setIsUpdatingBranding] = useState(false);
   const [brandingSuccess, setBrandingSuccess] = useState(false);
+
+  // Logo file upload states and handlers
+  const [dragActive, setDragActive] = useState(false);
+
+  const handleDrag = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.type === "dragenter" || e.type === "dragover") {
+      setDragActive(true);
+    } else if (e.type === "dragleave") {
+      setDragActive(false);
+    }
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragActive(false);
+
+    const file = e.dataTransfer.files?.[0];
+    if (!file) return;
+
+    if (!file.type.startsWith("image/")) {
+      alert("Please upload a valid image file (PNG, JPG, SVG, WEBP).");
+      return;
+    }
+
+    if (file.size > 800 * 1024) {
+      alert("Please upload a smaller image file (under 800 KB) for the logo to ensure high performance and sync stability.");
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      if (event.target?.result) {
+        setCompanyLogoUrl(event.target.result as string);
+      }
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleLogoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (!file.type.startsWith("image/")) {
+      alert("Please upload a valid image file (PNG, JPG, SVG, WEBP).");
+      return;
+    }
+
+    if (file.size > 800 * 1024) {
+      alert("Please upload a smaller image file (under 800 KB) for the logo to ensure high performance and sync stability.");
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      if (event.target?.result) {
+        setCompanyLogoUrl(event.target.result as string);
+      }
+    };
+    reader.readAsDataURL(file);
+  };
 
   // Departments & Employee ID Rule State
   const [departmentsList, setDepartmentsList] = useState<{ id?: string; name: string }[]>([]);
@@ -739,14 +802,56 @@ export default function Settings({ user, role }: { user: User; role: UserRole })
               </div>
 
               <div>
-                <label className="text-xs font-bold text-gray-400 uppercase tracking-wider pl-1 font-medium">Custom Logo Image URL</label>
-                <input 
-                  value={companyLogoUrl}
-                  onChange={e => setCompanyLogoUrl(e.target.value)}
-                  placeholder="e.g. https://domain.com/logo.png"
-                  className="w-full px-4 py-3 bg-gray-50 rounded-xl border-none focus:ring-2 focus:ring-gray-200 mt-1 font-mono text-xs outline-none text-slate-600"
-                />
-                <p className="text-[10px] text-gray-400 pl-1 mt-1 leading-relaxed">Provide any publicly hosted secure image URL to override standard visual system dashboards, invoices and PDFs.</p>
+                <label className="text-xs font-bold text-gray-400 uppercase tracking-wider pl-1 font-medium">Shop Brand Logo</label>
+                
+                <div 
+                  onDragEnter={handleDrag}
+                  onDragOver={handleDrag}
+                  onDragLeave={handleDrag}
+                  onDrop={handleDrop}
+                  className={cn(
+                    "mt-1 p-5 border-2 border-dashed rounded-2xl flex flex-col items-center justify-center transition-all relative group cursor-pointer text-center",
+                    dragActive ? "border-blue-500 bg-blue-50/50" : "border-gray-200 bg-gray-50/50 hover:border-gray-300 hover:bg-gray-55"
+                  )}
+                >
+                  <input
+                    type="file"
+                    id="logoUploadInput"
+                    accept="image/*"
+                    onChange={handleLogoUpload}
+                    className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
+                  />
+                  {companyLogoUrl ? (
+                    <div className="flex flex-col items-center">
+                      <img 
+                        src={companyLogoUrl} 
+                        alt="Uploaded logo preview" 
+                        className="w-16 h-16 object-contain rounded-xl bg-white border border-gray-100 p-1 shadow-xs mb-3"
+                        referrerPolicy="no-referrer"
+                      />
+                      <p className="text-xs font-bold text-gray-700">Logo Uploaded Successfully</p>
+                      <button 
+                        type="button"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          setCompanyLogoUrl("");
+                        }}
+                        className="text-red-500 hover:text-red-700 text-[11px] font-bold mt-2 transition-colors inline-flex items-center gap-1 bg-red-50 hover:bg-red-100 px-2.5 py-1 rounded-lg"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" /> Remove Image
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="flex flex-col items-center">
+                      <div className="p-3 bg-white rounded-full border border-gray-100 shadow-xs text-gray-400 mb-2 group-hover:scale-110 transition-transform duration-200">
+                        <Upload className="w-5 h-5" />
+                      </div>
+                      <p className="text-xs font-semibold text-gray-700">Drag & drop your logo here, or <span className="text-blue-600 font-bold underline">browse</span></p>
+                      <p className="text-[10px] text-gray-400 mt-1">Supports PNG, JPG, WEBP, SVG (Max 800 KB)</p>
+                    </div>
+                  )}
+                </div>
               </div>
 
               <div className="grid grid-cols-2 gap-4">

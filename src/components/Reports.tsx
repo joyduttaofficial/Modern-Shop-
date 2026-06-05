@@ -3,7 +3,7 @@ import { User } from "firebase/auth";
 import { collection, query, where, getDocs, orderBy, doc, onSnapshot } from "firebase/firestore";
 import { db, OperationType, handleFirestoreError } from "@/src/lib/firebase";
 import { Transaction, UserRole, Bank, Employee, Supplier, SupplierTransaction } from "@/src/types";
-import { cn } from "@/src/lib/utils";
+import { cn, computeDynamicPurchases } from "@/src/lib/utils";
 import { format, startOfDay, endOfDay, subDays, isWithinInterval, isBefore, startOfMonth, endOfMonth, eachMonthOfInterval, startOfYear, parseISO } from "date-fns";
 import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
@@ -143,6 +143,11 @@ export default function Reports({ user, role }: { user: User; role: UserRole }) 
   const [selectedDate, setSelectedDate] = useState(format(new Date(), "yyyy-MM-dd"));
   const [loading, setLoading] = useState(true);
   
+  const exportersRef = React.useRef<Record<string, () => void>>({});
+  const registerExporter = (tab: ReportTab, exportFn: () => void) => {
+    exportersRef.current[tab] = exportFn;
+  };
+  
   // Date range filters used on various tabs
   const [csvStartDate, setCsvStartDate] = useState(format(subDays(new Date(), 30), "yyyy-MM-dd"));
   const [csvEndDate, setCsvEndDate] = useState(format(new Date(), "yyyy-MM-dd"));
@@ -196,7 +201,7 @@ export default function Reports({ user, role }: { user: User; role: UserRole }) 
       }
     });
 
-    const totalSales = empSales + wsSales - deposits;
+    const totalSales = empSales + wsSales;
     const totalPurchase = purchases.reduce((sum, p) => sum + p.totalAmount, 0);
     const totalPayment = cashPay + bankPay;
     const totalBankDeposit = bankDeps + transactions.filter(tx => tx.type === "income" && tx.paymentMethod !== "Cash" && tx.category !== "Opening Balance").reduce((sum, tx) => sum + tx.amount, 0);
@@ -270,7 +275,6 @@ export default function Reports({ user, role }: { user: User; role: UserRole }) 
       tx.type === "income" && 
       (tx.category === "Employee Sales" || 
        tx.category === "Wholesale Sales" || 
-       tx.category === "Total Deposit" ||
        tx.category.toLowerCase().includes("sale") || 
        tx.category === "Product Sales" ||
        tx.category === "Retail Sales")
@@ -278,21 +282,22 @@ export default function Reports({ user, role }: { user: User; role: UserRole }) 
 
     let totalEmployeeSales = 0;
     let totalWholesaleSales = 0;
-    let totalDeposit = 0;
 
     salesListTxsForDay.forEach(tx => {
       if (tx.category === "Employee Sales") {
         totalEmployeeSales += tx.amount;
       } else if (tx.category === "Wholesale Sales" || tx.category.toLowerCase().includes("wholesale")) {
         totalWholesaleSales += tx.amount;
-      } else if (tx.category === "Total Deposit" || tx.category.toLowerCase() === "deposit") {
-        totalDeposit += tx.amount;
       } else {
         totalEmployeeSales += tx.amount;
       }
     });
 
-    const todaySales = totalEmployeeSales + totalWholesaleSales - totalDeposit;
+    const todaySales = totalEmployeeSales + totalWholesaleSales;
+
+    const totalDepositAmt = todayTxs
+      .filter(tx => tx.type === "income" && (tx.category === "Total Deposit" || tx.category.toLowerCase() === "deposit"))
+      .reduce((sum, tx) => sum + tx.amount, 0);
 
     const otherIncome = todayTxs
       .filter(tx => {
@@ -301,10 +306,10 @@ export default function Reports({ user, role }: { user: User; role: UserRole }) 
             tx.category !== "Opening Balance" &&
             tx.category !== "Previous Cash" &&
             tx.category !== "Bank Deposit" &&
+            tx.category !== "Total Deposit" &&
             !(
               tx.category === "Employee Sales" || 
               tx.category === "Wholesale Sales" || 
-              tx.category === "Total Deposit" ||
               tx.category.toLowerCase().includes("sale") || 
               tx.category === "Product Sales" ||
               tx.category === "Retail Sales"
@@ -340,7 +345,7 @@ export default function Reports({ user, role }: { user: User; role: UserRole }) 
       .reduce((sum, tx) => sum + tx.amount, 0);
 
     const totalIncome = todaySales + otherIncome;
-    const totalExpense = bankExpenses + generalExpenses;
+    const totalExpense = bankExpenses + generalExpenses + totalDepositAmt;
     const netCash = openingBalance + totalIncome - totalExpense;
 
     setDayStats({
@@ -350,10 +355,67 @@ export default function Reports({ user, role }: { user: User; role: UserRole }) 
       bankExpenses,
       generalExpenses,
       totalIncome,
-      totalExpense,
+      totalExpense: totalExpense, // holds total expenses and deposits
       netCash
     });
   }, [selectedDate, transactions]);
+
+  const exportDailyCSV = React.useCallback(() => {
+    let csvContent = "";
+    const bom = "\uFEFF";
+    
+    const dayStart = startOfDay(new Date(selectedDate));
+    const dayEnd = endOfDay(new Date(selectedDate));
+    const todayTxs = transactions.filter(tx => {
+      try {
+        return isWithinInterval(new Date(tx.date), { start: dayStart, end: dayEnd });
+      } catch (e) {
+        return false;
+      }
+    });
+
+    if (language === "bn") {
+      csvContent = bom + "তারিখ,লেনদেনের ধরন,ক্যাটাগরি,সাব-ক্যাটাগরি,পরিমাণ (টাকা),পদ্ধতি,মন্তব্য\n";
+      csvContent += `"${formatDate(selectedDate)}","আয়","প্রারম্ভিক ব্যালেন্স","","${formatNumber(dayStats.openingBalance)}","ক্যাশ","প্রারম্ভিক নগদ তহবিল"\n`;
+      csvContent += `"${formatDate(selectedDate)}","আয়","আজকের মোট বিক্রয়","","${formatNumber(dayStats.todaySales)}","ক্যাশ","মোট পণ্য বিক্রয়"\n`;
+      
+      todayTxs.forEach(tx => {
+        if (tx.category === "Opening Balance" || tx.category === "Previous Cash" || 
+            tx.category === "Employee Sales" || tx.category === "Wholesale Sales" || 
+            tx.category === "Total Deposit" || tx.category.toLowerCase().includes("sale") || 
+            tx.category === "Product Sales" || tx.category === "Retail Sales") {
+          return;
+        }
+        csvContent += `"${formatDate(tx.date)}","${translateValue(tx.type)}","${translateValue(tx.category)}","${tx.subCategory ? translateValue(tx.subCategory) : ""}","${formatNumber(tx.amount)}","${translateValue(tx.paymentMethod)}","${(tx.notes || "").replace(/"/g, '""')}"\n`;
+      });
+      csvContent += `\n"সর্বমোট ব্যালেন্স","","","","${formatNumber(dayStats.netCash)}","",""\n`;
+    } else {
+      csvContent = "Date,Type,Category,Sub-Category,Amount (BDT),Payment Method,Notes\n";
+      csvContent += `"${selectedDate}","income","Opening Balance","","${dayStats.openingBalance}","Cash","Calculated Opening Balance"\n`;
+      csvContent += `"${selectedDate}","income","Combined Corporate Sales","","${dayStats.todaySales}","Cash","Today's Product Sales"\n`;
+      
+      todayTxs.forEach(tx => {
+        if (tx.category === "Opening Balance" || tx.category === "Previous Cash" || 
+            tx.category === "Employee Sales" || tx.category === "Wholesale Sales" || 
+            tx.category === "Total Deposit" || tx.category.toLowerCase().includes("sale") || 
+            tx.category === "Product Sales" || tx.category === "Retail Sales") {
+          return;
+        }
+        csvContent += `"${tx.date.split("T")[0]}","${tx.type}","${tx.category}","${tx.subCategory || ""}","${tx.amount}","${tx.paymentMethod}","${(tx.notes || "").replace(/"/g, '""')}"\n`;
+      });
+      csvContent += `\n"Total Cash Balance","","","","${dayStats.netCash}","",""\n`;
+    }
+
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = `Shop_Daily_Statement_${selectedDate}.csv`;
+    link.click();
+  }, [selectedDate, dayStats, transactions, language]);
+
+  React.useEffect(() => {
+    exportersRef.current["daily"] = exportDailyCSV;
+  }, [exportDailyCSV]);
 
   const exportToCSV = (type: ReportTab) => {
     let csvContent = "";
@@ -525,7 +587,7 @@ export default function Reports({ user, role }: { user: User; role: UserRole }) 
       if (tx.type === "expense") {
         return tx.category !== "Bank Credit";
       }
-      if (tx.type === "income" && tx.category === "Bank Deposit") {
+      if (tx.type === "income" && (tx.category === "Bank Deposit" || tx.category === "Total Deposit" || tx.category.toLowerCase() === "deposit")) {
         return true;
       }
       return false;
@@ -565,6 +627,8 @@ export default function Reports({ user, role }: { user: User; role: UserRole }) 
           let nameStr = tx.category;
           if (tx.category === "Bank Deposit" && tx.paymentMethod) {
             nameStr = `Bank Deposit (${tx.paymentMethod})`;
+          } else if (tx.category === "Total Deposit") {
+            nameStr = "Daily Cash Deposit to Bank";
           } else {
             if (tx.employeeId) {
               nameStr += ` - ${empMap.get(tx.employeeId) || "Staff"}`;
@@ -652,7 +716,14 @@ export default function Reports({ user, role }: { user: User; role: UserRole }) 
           
           <button 
             type="button"
-            onClick={() => exportToCSV(activeTab)}
+            onClick={() => {
+              const localExporter = exportersRef.current[activeTab];
+              if (localExporter) {
+                localExporter();
+              } else {
+                exportToCSV(activeTab);
+              }
+            }}
             className="flex items-center justify-center gap-2 px-5 py-3 bg-slate-900 text-white rounded-xl font-bold text-xs uppercase tracking-wider hover:bg-slate-800 transition-all shadow-sm active:scale-97 cursor-pointer border border-transparent"
           >
             <Download className="w-4 h-4" /> 
@@ -788,13 +859,21 @@ export default function Reports({ user, role }: { user: User; role: UserRole }) 
                       if (tx.type === "expense") {
                         return tx.category !== "Bank Credit";
                       }
-                      return tx.type === "income" && tx.category === "Bank Deposit";
+                      return tx.type === "income" && (tx.category === "Bank Deposit" || tx.category === "Total Deposit" || tx.category.toLowerCase() === "deposit");
                     })
                     .map(tx => (
                       <div key={tx.id} className="flex justify-between p-4 hover:bg-slate-50/50 transition-all">
                         <div>
-                          <span className="font-semibold">{tx.category === "Bank Deposit" && tx.paymentMethod ? `Bank Deposit (${tx.paymentMethod})` : tx.category}</span>
-                          {tx.category !== "Bank Deposit" && tx.paymentMethod !== "Cash" && (
+                          <span className="font-semibold">
+                            {tx.category === "Bank Deposit" && tx.paymentMethod 
+                              ? `Bank Deposit (${tx.paymentMethod})` 
+                              : tx.category === "Total Deposit" 
+                              ? "Daily Cash Deposit to Bank" 
+                              : tx.category === "deposit" || tx.category.toLowerCase() === "deposit"
+                              ? "Daily Cash Deposit to Bank"
+                              : tx.category}
+                          </span>
+                          {tx.category !== "Bank Deposit" && tx.category !== "Total Deposit" && tx.category.toLowerCase() !== "deposit" && tx.paymentMethod !== "Cash" && (
                             <span className="inline-block ml-1.5 px-1 bg-blue-50 text-blue-600 font-bold border border-blue-100 text-[9px] uppercase rounded">Bank</span>
                           )}
                           {tx.employeeId && (
@@ -837,19 +916,19 @@ export default function Reports({ user, role }: { user: User; role: UserRole }) 
       )}
 
       {activeTab === "bank" && (
-        <BankStatementReport banks={banks} transactions={transactions} companyName={companyName} companyAddress={companyAddress} companyPhone={companyPhone} companyEmail={companyEmail} formatCurrency={formatCurrency} globalLedgerTotals={globalLedgerTotals} />
+        <BankStatementReport banks={banks} transactions={transactions} companyName={companyName} companyAddress={companyAddress} companyPhone={companyPhone} companyEmail={companyEmail} formatCurrency={formatCurrency} globalLedgerTotals={globalLedgerTotals} onRegisterExporter={(exportFn) => registerExporter("bank", exportFn)} />
       )}
 
       {activeTab === "salary" && (
-        <SalaryFilterWiseReport employees={employees} transactions={transactions} companyName={companyName} companyAddress={companyAddress} companyPhone={companyPhone} companyEmail={companyEmail} formatCurrency={formatCurrency} globalLedgerTotals={globalLedgerTotals} />
+        <SalaryFilterWiseReport employees={employees} transactions={transactions} companyName={companyName} companyAddress={companyAddress} companyPhone={companyPhone} companyEmail={companyEmail} formatCurrency={formatCurrency} globalLedgerTotals={globalLedgerTotals} onRegisterExporter={(exportFn) => registerExporter("salary", exportFn)} />
       )}
 
       {activeTab === "supplier" && (
-        <SupplierPaymentsReport suppliers={suppliers} supplierTransactions={supplierTransactions} companyName={companyName} companyAddress={companyAddress} companyPhone={companyPhone} companyEmail={companyEmail} formatCurrency={formatCurrency} globalLedgerTotals={globalLedgerTotals} />
+        <SupplierPaymentsReport suppliers={suppliers} supplierTransactions={supplierTransactions} companyName={companyName} companyAddress={companyAddress} companyPhone={companyPhone} companyEmail={companyEmail} formatCurrency={formatCurrency} globalLedgerTotals={globalLedgerTotals} onRegisterExporter={(exportFn) => registerExporter("supplier", exportFn)} />
       )}
 
       {activeTab === "purchase" && (
-        <PurchaseReportSection suppliers={suppliers} purchases={purchases} companyName={companyName} companyAddress={companyAddress} companyPhone={companyPhone} companyEmail={companyEmail} formatCurrency={formatCurrency} globalLedgerTotals={globalLedgerTotals} />
+        <PurchaseReportSection suppliers={suppliers} purchases={purchases} supplierTransactions={supplierTransactions} companyName={companyName} companyAddress={companyAddress} companyPhone={companyPhone} companyEmail={companyEmail} formatCurrency={formatCurrency} globalLedgerTotals={globalLedgerTotals} onRegisterExporter={(exportFn) => registerExporter("purchase", exportFn)} />
       )}
 
       {activeTab === "attendance" && (
@@ -862,6 +941,7 @@ export default function Reports({ user, role }: { user: User; role: UserRole }) 
           companyEmail={companyEmail}
           formatCurrency={formatCurrency}
           globalLedgerTotals={globalLedgerTotals}
+          onRegisterExporter={(exportFn) => registerExporter("attendance", exportFn)}
         />
       )}
 
@@ -874,6 +954,7 @@ export default function Reports({ user, role }: { user: User; role: UserRole }) 
           companyEmail={companyEmail}
           formatCurrency={formatCurrency}
           globalLedgerTotals={globalLedgerTotals}
+          onRegisterExporter={(exportFn) => registerExporter("transactions", exportFn)}
         />
       )}
     </div>
@@ -883,7 +964,7 @@ export default function Reports({ user, role }: { user: User; role: UserRole }) 
 /* ==========================================================================
    NEW TAB 1: BANK STATEMENT REPORT WITH INDIVIDUAL RECONCILIATIONS
    ========================================================================== */
-function BankStatementReport({ banks, transactions, companyName, companyAddress, companyPhone, companyEmail, formatCurrency, globalLedgerTotals }: {
+function BankStatementReport({ banks, transactions, companyName, companyAddress, companyPhone, companyEmail, formatCurrency, globalLedgerTotals, onRegisterExporter }: {
   banks: Bank[];
   transactions: Transaction[];
   companyName: string;
@@ -892,6 +973,7 @@ function BankStatementReport({ banks, transactions, companyName, companyAddress,
   companyEmail: string;
   formatCurrency: (val: number) => string;
   globalLedgerTotals: any;
+  onRegisterExporter?: (exportFn: () => void) => void;
 }) {
   const [selectedBankName, setSelectedBankName] = useState("all");
   const [startDate, setStartDate] = useState(format(startOfMonth(new Date()), "yyyy-MM-dd"));
@@ -900,7 +982,9 @@ function BankStatementReport({ banks, transactions, companyName, companyAddress,
 
   const filtered = transactions.filter(tx => {
     // 1. Match payment method (Bank)
-    if (selectedBankName !== "all") {
+    if (selectedBankName === "all") {
+      if (tx.paymentMethod === "Cash" || tx.paymentMethod === "cash" || !tx.paymentMethod) return false;
+    } else {
       if (tx.paymentMethod !== selectedBankName) return false;
     }
     // 2. Filter Date Range
@@ -929,6 +1013,26 @@ function BankStatementReport({ banks, transactions, companyName, companyAddress,
       runningBalance: currentAccumulated
     };
   });
+
+  const exportBankCSV = React.useCallback(() => {
+    let csvContent = "Datetime,Bank Account,Category,Inflow (CR),Outflow (DR),Running Balance,Notes\n";
+    ledgerRows.forEach(row => {
+      const inflow = row.type === "income" ? row.amount : 0;
+      const outflow = row.type === "expense" ? row.amount : 0;
+      csvContent += `"${row.date}","${row.paymentMethod}","${row.category}${row.subCategory ? ` (${row.subCategory})` : ""}","${inflow}","${outflow}","${row.runningBalance}","${(row.notes || "").replace(/"/g, '""')}"\n`;
+    });
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = `Bank_Statement_${selectedBankName}_${startDate}_to_${endDate}.csv`;
+    link.click();
+  }, [ledgerRows, selectedBankName, startDate, endDate]);
+
+  useEffect(() => {
+    if (onRegisterExporter) {
+      onRegisterExporter(exportBankCSV);
+    }
+  }, [exportBankCSV, onRegisterExporter]);
 
   // Current balance of selected bank (if explicit bank chosen, fallback to total sum)
   const currentBankObj = banks.find(b => b.name === selectedBankName);
@@ -1066,7 +1170,7 @@ function BankStatementReport({ banks, transactions, companyName, companyAddress,
               onChange={(e) => setSelectedBankName(e.target.value)}
               className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold text-xs"
             >
-              <option value="all">All Channels / Cash & Banks</option>
+              <option value="all">All Bank / Digital Accounts (Excludes Cash)</option>
               <option value="Cash">Cash Ledger</option>
               {banks.map(bank => (
                 <option key={bank.id} value={bank.name}>{bank.name}</option>
@@ -1212,7 +1316,7 @@ function BankStatementReport({ banks, transactions, companyName, companyAddress,
 /* ==========================================================================
    UPDATED TAB 2: PROPER EMPlOYEE FILTER-WISE SALARY REPORT
    ========================================================================== */
-function SalaryFilterWiseReport({ employees, transactions, companyName, companyAddress, companyPhone, companyEmail, formatCurrency, globalLedgerTotals }: {
+function SalaryFilterWiseReport({ employees, transactions, companyName, companyAddress, companyPhone, companyEmail, formatCurrency, globalLedgerTotals, onRegisterExporter }: {
   employees: Employee[];
   transactions: Transaction[];
   companyName: string;
@@ -1221,6 +1325,7 @@ function SalaryFilterWiseReport({ employees, transactions, companyName, companyA
   companyEmail: string;
   formatCurrency: (val: number) => string;
   globalLedgerTotals: any;
+  onRegisterExporter?: (exportFn: () => void) => void;
 }) {
   const [selectedEmpId, setSelectedEmpId] = useState("all");
   const [targetYear, setTargetYear] = useState(new Date().getFullYear().toString());
@@ -1246,6 +1351,30 @@ function SalaryFilterWiseReport({ employees, transactions, companyName, companyA
   const totalAdvancePayout = filteredTxs
     .filter(tx => tx.category === "Salary Advance" || tx.category === "Staff Advance")
     .reduce((sum, tx) => sum + tx.amount, 0);
+
+  const exportSalaryCSV = React.useCallback(() => {
+    let csvContent = "Disbursement Date,Employee Name,Ledger Account,Method,Amount Paid (BDT),Reference Note\n";
+    filteredTxs.forEach(tx => {
+      const empName = employees.find(e => e.id === tx.employeeId)?.name || "Unknown";
+      const dt = tx.date ? tx.date.split("T")[0] : "";
+      csvContent += `"${dt}","${empName}","${tx.category}","${tx.paymentMethod}",${tx.amount},"${(tx.notes || "").replace(/"/g, '""')}"\n`;
+    });
+    
+    csvContent += `\n"Total Salary Paid","","","",${totalSalaryPayout},""\n`;
+    csvContent += `"Total Advances Paid","","","",${totalAdvancePayout},""\n`;
+
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = `Salary_Report_${selectedEmpId}_Year_${targetYear}.csv`;
+    link.click();
+  }, [filteredTxs, employees, selectedEmpId, targetYear, totalSalaryPayout, totalAdvancePayout]);
+
+  useEffect(() => {
+    if (onRegisterExporter) {
+      onRegisterExporter(exportSalaryCSV);
+    }
+  }, [exportSalaryCSV, onRegisterExporter]);
 
   // Selected Employee Basic Reference
   const empTarget = employees.find(e => e.id === selectedEmpId);
@@ -1482,7 +1611,7 @@ function SalaryFilterWiseReport({ employees, transactions, companyName, companyA
 /* ==========================================================================
    NEW TAB 3: SUPPLIER PAYMENTS & LEDGER REPORT (TAB: supplier)
    ========================================================================== */
-function SupplierPaymentsReport({ suppliers, supplierTransactions, companyName, companyAddress, companyPhone, companyEmail, formatCurrency, globalLedgerTotals }: {
+function SupplierPaymentsReport({ suppliers, supplierTransactions, companyName, companyAddress, companyPhone, companyEmail, formatCurrency, globalLedgerTotals, onRegisterExporter }: {
   suppliers: Supplier[];
   supplierTransactions: SupplierTransaction[];
   companyName: string;
@@ -1491,6 +1620,7 @@ function SupplierPaymentsReport({ suppliers, supplierTransactions, companyName, 
   companyEmail: string;
   formatCurrency: (val: number) => string;
   globalLedgerTotals: any;
+  onRegisterExporter?: (exportFn: () => void) => void;
 }) {
   const [selectedSupId, setSelectedSupId] = useState("all");
   const [startDate, setStartDate] = useState(format(subDays(new Date(), 30), "yyyy-MM-dd"));
@@ -1509,6 +1639,28 @@ function SupplierPaymentsReport({ suppliers, supplierTransactions, companyName, 
   const totalOutstandingDue = selectedSupObj
     ? (selectedSupObj.purchaseDue || 0)
     : suppliers.reduce((sum, s) => sum + (s.purchaseDue || 0), 0);
+
+  const exportSupplierCSV = React.useCallback(() => {
+    let csvContent = "Invoice Date,Supplier Name,Transaction Type,Invoice/Ref No,Gross Cost (BDT),Paid Portion (BDT),Remaining Balance Due,Method,Notes\n";
+    filteredSTxs.forEach(tx => {
+      const supName = suppliers.find(s => s.id === tx.supplierId)?.name || "Unknown";
+      csvContent += `"${tx.date}","${supName}","${tx.type.toUpperCase()}","${tx.refNo}",${tx.totalAmount},${tx.paidAmount || 0},${tx.dueAmount || 0},"${tx.paymentMethod || "Cash"}","${(tx.notes || "").replace(/"/g, '""')}"\n`;
+    });
+    
+    csvContent += `\n"Total Outstanding Due Across Filter/Account","","","","","","",${totalOutstandingDue},""\n`;
+
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = `Supplier_Ledger_${selectedSupId}_${startDate}_to_${endDate}.csv`;
+    link.click();
+  }, [filteredSTxs, suppliers, selectedSupId, startDate, endDate, totalOutstandingDue]);
+
+  useEffect(() => {
+    if (onRegisterExporter) {
+      onRegisterExporter(exportSupplierCSV);
+    }
+  }, [exportSupplierCSV, onRegisterExporter]);
 
   const totalPurchasesOverall = selectedSupObj
     ? (selectedSupObj.totalAmount || 0)
@@ -1806,22 +1958,26 @@ function SupplierPaymentsReport({ suppliers, supplierTransactions, companyName, 
 /* ==========================================================================
    NEW TAB 4: PURCHASE ORDERS SUMMARY AUDIT (TAB: purchase)
    ========================================================================== */
-function PurchaseReportSection({ suppliers, purchases, companyName, companyAddress, companyPhone, companyEmail, formatCurrency, globalLedgerTotals }: {
+function PurchaseReportSection({ suppliers, purchases, supplierTransactions, companyName, companyAddress, companyPhone, companyEmail, formatCurrency, globalLedgerTotals, onRegisterExporter }: {
   suppliers: Supplier[];
   purchases: PurchaseModel[];
+  supplierTransactions: SupplierTransaction[];
   companyName: string;
   companyAddress: string;
   companyPhone: string;
   companyEmail: string;
   formatCurrency: (val: number) => string;
   globalLedgerTotals: any;
+  onRegisterExporter?: (exportFn: () => void) => void;
 }) {
   const [selectedSupId, setSelectedSupId] = useState("all");
   const [startDate, setStartDate] = useState(format(subDays(new Date(), 30), "yyyy-MM-dd"));
   const [endDate, setEndDate] = useState(format(new Date(), "yyyy-MM-dd"));
   const [paymentStatus, setPaymentStatus] = useState("all");
 
-  const filteredPurchases = purchases.filter(p => {
+  const dynamicPurchases = computeDynamicPurchases(purchases as any, supplierTransactions, suppliers);
+
+  const filteredPurchases = dynamicPurchases.filter(p => {
     if (selectedSupId !== "all" && p.supplierId !== selectedSupId) return false;
     if (p.date < startDate || p.date > endDate) return false;
     
@@ -1835,7 +1991,29 @@ function PurchaseReportSection({ suppliers, purchases, companyName, companyAddre
   // Calculations
   const totalPurchaseAmt = filteredPurchases.reduce((sum, p) => sum + p.totalAmount, 0);
   const totalPaidAmt = filteredPurchases.reduce((sum, p) => sum + p.paidAmount, 0);
-  const totalOutstandingDue = filteredPurchases.reduce((sum, p) => sum + p.dueAmount, 0);
+  const totalDueAmt = filteredPurchases.reduce((sum, p) => sum + p.dueAmount, 0);
+
+  const exportPurchaseCSV = React.useCallback(() => {
+    let csvContent = "Invoice Date,Invoice No,Supplier Target,Gross Cost,Paid Amount,Remaining Due,Method,Invoice Remarks\n";
+    filteredPurchases.forEach(p => {
+      csvContent += `"${p.date}","${p.refNo}","${p.supplierName}",${p.totalAmount},${p.paidAmount},${p.dueAmount},"${p.paymentMethod}","${(p.notes || "").replace(/"/g, '""')}"\n`;
+    });
+    
+    csvContent += `\n"Total Purchases Cost","","",${totalPurchaseAmt},${totalPaidAmt},${totalDueAmt},"",""\n`;
+
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = `Purchase_Report_Status_${paymentStatus}_${startDate}_to_${endDate}.csv`;
+    link.click();
+  }, [filteredPurchases, paymentStatus, startDate, endDate, totalPurchaseAmt, totalPaidAmt, totalDueAmt]);
+
+  useEffect(() => {
+    if (onRegisterExporter) {
+      onRegisterExporter(exportPurchaseCSV);
+    }
+  }, [exportPurchaseCSV, onRegisterExporter]);
+  const totalOutstandingDue = totalDueAmt;
 
   const downloadPurchaseReportPDF = () => {
     const doc = new jsPDF("p", "mm", "a4");
@@ -2015,7 +2193,7 @@ function PurchaseReportSection({ suppliers, purchases, companyName, companyAddre
 
         <div className="bg-green-50 border border-green-100 p-6 rounded-3xl flex items-center justify-between">
           <div>
-            <p className="text-[10px] font-extrabold text-green-800 uppercase tracking-widest mb-1">Settled Cash paid</p>
+            <p className="text-[10px] font-extrabold text-green-800 uppercase tracking-widest mb-1">Settled Paid Amount</p>
             <p className="text-2xl font-black text-green-950">{formatCurrency(totalPaidAmt)}</p>
           </div>
           <div className="w-11 h-11 bg-green-100 text-green-600 rounded-full flex items-center justify-center">
@@ -2043,7 +2221,7 @@ function PurchaseReportSection({ suppliers, purchases, companyName, companyAddre
               <th className="px-6 py-4 text-[10px] font-extrabold text-slate-500 uppercase tracking-widest border-b border-gray-100 font-mono">Invoice Number</th>
               <th className="px-6 py-4 text-[10px] font-extrabold text-slate-500 uppercase tracking-widest border-b border-gray-100">Supplier Name</th>
               <th className="px-6 py-4 text-[10px] font-extrabold text-slate-500 uppercase tracking-widest border-b border-gray-100 text-right">Invoice Total</th>
-              <th className="px-6 py-4 text-[10px] font-extrabold text-slate-500 uppercase tracking-widest border-b border-gray-100 text-right">Cash Paid</th>
+              <th id="purchase-th-paid-amount" className="px-6 py-4 text-[10px] font-extrabold text-slate-500 uppercase tracking-widest border-b border-gray-100 text-right">Paid Amount</th>
               <th className="px-6 py-4 text-[10px] font-extrabold text-slate-500 uppercase tracking-widest border-b border-gray-100 text-right">Due Balance</th>
               <th className="px-6 py-4 text-[10px] font-extrabold text-slate-500 uppercase tracking-widest border-b border-gray-100 text-right">Return (Auto)</th>
               <th className="px-6 py-4 text-[10px] font-extrabold text-slate-500 uppercase tracking-widest border-b border-gray-100">Method</th>
@@ -2064,7 +2242,7 @@ function PurchaseReportSection({ suppliers, purchases, companyName, companyAddre
                 <td className="px-6 py-4 whitespace-nowrap text-right font-black">
                   {formatCurrency(p.totalAmount)}
                 </td>
-                <td className="px-6 py-4 whitespace-nowrap text-right font-extrabold text-emerald-600">
+                <td id={`purchase-td-paid-amount-${p.id}`} className="px-6 py-4 whitespace-nowrap text-right font-extrabold text-emerald-600">
                   {formatCurrency(p.paidAmount)}
                 </td>
                 <td className={cn(
@@ -2100,7 +2278,7 @@ function PurchaseReportSection({ suppliers, purchases, companyName, companyAddre
 /* ==========================================================================
    ORIGINAL TAB: ATTENDANCE REPORT
    ========================================================================== */
-function AttendanceReport({ employees, attendance, companyName, companyAddress, companyPhone, companyEmail, formatCurrency, globalLedgerTotals }: {
+function AttendanceReport({ employees, attendance, companyName, companyAddress, companyPhone, companyEmail, formatCurrency, globalLedgerTotals, onRegisterExporter }: {
   employees: Employee[];
   attendance: any[];
   companyName: string;
@@ -2109,6 +2287,7 @@ function AttendanceReport({ employees, attendance, companyName, companyAddress, 
   companyEmail: string;
   formatCurrency: (val: number) => string;
   globalLedgerTotals: any;
+  onRegisterExporter?: (exportFn: () => void) => void;
 }) {
   const [selectedMonth, setSelectedMonth] = useState(format(new Date(), "yyyy-MM"));
   const [filterType, setFilterType] = useState<"month" | "range">("month");
@@ -2153,6 +2332,44 @@ function AttendanceReport({ employees, attendance, companyName, companyAddress, 
     const standardInMins = 540; // 09:00 AM standard
     return Math.max(0, checkInMins - standardInMins);
   };
+
+  const exportAttendanceCSV = React.useCallback(() => {
+    let csvContent = "Date,Employee Name,Role,Status,Clock In,Lunch Out,Lunch In,Store Late Minutes,Lunch Overtime Minutes\n";
+    filteredAttendance.forEach(a => {
+      const emp = employees.find(e => e.id === a.employeeId);
+      const name = emp?.name || "Unknown";
+      const role = emp?.role || "N/A";
+      const dt = a.date ? a.date.split("T")[0] : "";
+      
+      const lateMins = getStoreLatenessMinutes(a.checkIn);
+      let lunchOvertimeMins = 0;
+      if (a.lunchOut) {
+        if (!a.lunchIn) {
+          lunchOvertimeMins = 240;
+        } else {
+          const duration = getLunchDurationMinutes(a.lunchOut, a.lunchIn);
+          if (duration > 60) {
+            lunchOvertimeMins = duration - 60;
+          }
+        }
+      }
+
+      csvContent += `"${dt}","${name}","${role}","${(a.status || "").toUpperCase()}","${a.checkIn || ""}","${a.lunchOut || ""}","${a.lunchIn || ""}",${lateMins},${lunchOvertimeMins}\n`;
+    });
+
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    const rangeName = filterType === "month" ? selectedMonth : `${startDate}_to_${endDate}`;
+    link.download = `Attendance_Report_${rangeName}.csv`;
+    link.click();
+  }, [filteredAttendance, filterType, selectedMonth, startDate, endDate, employees]);
+
+  useEffect(() => {
+    if (onRegisterExporter) {
+      onRegisterExporter(exportAttendanceCSV);
+    }
+  }, [exportAttendanceCSV, onRegisterExporter]);
 
   // Compile stats per employee for the selected month
   const employeePerformance = employees.map(emp => {
@@ -2804,7 +3021,7 @@ function AttendanceReport({ employees, attendance, companyName, companyAddress, 
 /* ==========================================================================
    ORIGINAL TAB: GENERAL TRANSACTION HISTORY REPORT
    ========================================================================== */
-function TransactionsReport({ transactions, companyName, companyAddress, companyPhone, companyEmail, formatCurrency, globalLedgerTotals }: {
+function TransactionsReport({ transactions, companyName, companyAddress, companyPhone, companyEmail, formatCurrency, globalLedgerTotals, onRegisterExporter }: {
   transactions: Transaction[];
   companyName: string;
   companyAddress: string;
@@ -2812,6 +3029,7 @@ function TransactionsReport({ transactions, companyName, companyAddress, company
   companyEmail: string;
   formatCurrency: (val: number) => string;
   globalLedgerTotals: any;
+  onRegisterExporter?: (exportFn: () => void) => void;
 }) {
   const [dateRange, setDateRange] = useState("month");
   
@@ -2826,6 +3044,29 @@ function TransactionsReport({ transactions, companyName, companyAddress, company
   const categories = Array.from(new Set(filtered.map(tx => tx.category)));
   const incomeTotal = filtered.filter(tx => tx.type === "income").reduce((sum, tx) => sum + tx.amount, 0);
   const expenseTotal = filtered.filter(tx => tx.type === "expense").reduce((sum, tx) => sum + tx.amount, 0);
+
+  const exportTransactionsCSV = React.useCallback(() => {
+    let csvContent = "Date,Category,Sub-Category,Type,Payment Method,Amount (BDT),Notes\n";
+    filtered.forEach(tx => {
+      const dt = tx.date ? tx.date.split("T")[0] : "";
+      csvContent += `"${dt}","${tx.category}","${tx.subCategory || ""}","${tx.type.toUpperCase()}","${tx.paymentMethod}",${tx.amount},"${(tx.notes || "").replace(/"/g, '""')}"\n`;
+    });
+    
+    csvContent += `\n"Total Incomes","","","","",${incomeTotal},""\n`;
+    csvContent += `"Total Expenses","","","","",${expenseTotal},""\n`;
+
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = `Transactions_Analysis_${dateRange}.csv`;
+    link.click();
+  }, [filtered, dateRange, incomeTotal, expenseTotal]);
+
+  useEffect(() => {
+    if (onRegisterExporter) {
+      onRegisterExporter(exportTransactionsCSV);
+    }
+  }, [exportTransactionsCSV, onRegisterExporter]);
 
   const downloadTransactionsReportPDF = () => {
     const doc = new jsPDF("p", "mm", "a4");

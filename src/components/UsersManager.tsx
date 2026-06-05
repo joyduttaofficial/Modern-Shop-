@@ -249,9 +249,13 @@ export default function UsersManager({
         try {
           const userCred = await createUserWithEmailAndPassword(tempAuth, finalEmail, userPassword.trim());
           if (userCred.user) {
+            const authPhotoUrl = (defaultPhoto.startsWith("data:") || defaultPhoto.length > 2000)
+              ? `https://api.dicebear.com/7.x/adventurer/svg?seed=${encodeURIComponent(userDisplayName)}`
+              : defaultPhoto;
+
             await updateProfile(userCred.user, {
               displayName: userDisplayName.trim(),
-              photoURL: defaultPhoto
+              photoURL: authPhotoUrl
             });
             await signOut(tempAuth);
           }
@@ -1018,7 +1022,7 @@ export default function UsersManager({
                         }
                       }
 
-                      const adminOnlyViews = ["newEmployee", "employeesList", "employees", "salaryEntry", "salarySheet"];
+                      const adminOnlyViews = ["newUser", "usersList", "rolesList"];
                       const visibleMenuIds = ALL_MENU_IDS.filter(menuId => {
                         if (adminOnlyViews.includes(menuId) && selectedProfile.role !== "admin") {
                           return false;

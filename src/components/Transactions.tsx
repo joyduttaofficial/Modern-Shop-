@@ -343,9 +343,6 @@ export default function Transactions({ user, role }: { user: User; role: UserRol
   const [filterType, setFilterType] = useState<"all" | "income" | "expense">("all");
 
   const filteredTransactions = transactions.filter(tx => {
-    if (role !== "admin" && (tx.category === "Staff Salary" || tx.category === "Employee Advance")) {
-      return false;
-    }
     const matchesSearch = tx.category.toLowerCase().includes(searchTerm.toLowerCase()) || 
                           (tx.notes && tx.notes.toLowerCase().includes(searchTerm.toLowerCase())) ||
                           (tx.subCategory && tx.subCategory.toLowerCase().includes(searchTerm.toLowerCase()));
@@ -506,9 +503,6 @@ export default function Transactions({ user, role }: { user: User; role: UserRol
                         if (c.name === "Bank Credit") return false;
                         if (c.name === "Loan Deposit") return false;
                         if (c.name === "Loan Credit") return false;
-                        if (role !== "admin" && (c.name === "Staff Salary" || c.name === "Employee Advance")) {
-                          return false;
-                        }
                         return true;
                       })
                       .map(c => (

@@ -212,7 +212,6 @@ export default function SalarySheet({ user, role }: { user: User; role: UserRole
     doc.text("PAYROLL METRICS SUMMARY", 15, 49);
     
     const kpis = [
-      { label: "Active Staff", value: `${activeStaff.length} Employees` },
       { label: "Base Payroll", value: role === "admin" ? `BDT ${totalBasePayroll.toLocaleString()}` : "***" },
       { label: "Paid Salaries", value: role === "admin" ? `BDT ${totalPaidSalary.toLocaleString()}` : "***" },
       { label: "Net Cash Outflow", value: role === "admin" ? `BDT ${netDisbursement.toLocaleString()}` : "***" }
@@ -254,8 +253,8 @@ export default function SalarySheet({ user, role }: { user: User; role: UserRole
       emp.name,
       emp.role + (emp.department ? ` (${emp.department})` : ""),
       role === "admin" ? `BDT ${emp.salary.toLocaleString()}` : "***",
-      `BDT ${emp.salaryPaid.toLocaleString()}`,
-      `BDT ${emp.advanceGiven.toLocaleString()}`,
+      role === "admin" ? `BDT ${emp.salaryPaid.toLocaleString()}` : "***",
+      role === "admin" ? `BDT ${emp.advanceGiven.toLocaleString()}` : "***",
       emp.status.toUpperCase()
     ]);
     
@@ -310,7 +309,7 @@ export default function SalarySheet({ user, role }: { user: User; role: UserRole
           tx.subCategory,
           tx.category === "Staff Salary" ? "Salary Payment" : "Advance Disbursement",
           tx.paymentMethod,
-          `BDT ${tx.amount.toLocaleString()}`,
+          role === "admin" ? `BDT ${tx.amount.toLocaleString()}` : "***",
           tx.notes || "-"
         ]);
         
@@ -356,16 +355,16 @@ export default function SalarySheet({ user, role }: { user: User; role: UserRole
     // CSV headers
     const headers = ["Employee Name", "Role", "Department", "Basic Salary (BDT)", "Paid Amount (BDT)", "Advance Paid (BDT)", "Reconciliation Status"];
     
-    // Create rows
-    const rows = filteredEmployeeBalances.map((emp) => [
-      `"${emp.name.replace(/"/g, '""')}"`,
-      `"${(emp.role || "").replace(/"/g, '""')}"`,
-      `"${(emp.department || "").replace(/"/g, '""')}"`,
-      role === "admin" ? emp.salary : "***",
-      emp.salaryPaid,
-      emp.advanceGiven,
-      emp.status.toUpperCase()
-    ]);
+      // CSV rows
+      const rows = filteredEmployeeBalances.map((emp) => [
+        `"${emp.name.replace(/"/g, '""')}"`,
+        `"${(emp.role || "").replace(/"/g, '""')}"`,
+        `"${(emp.department || "").replace(/"/g, '""')}"`,
+        role === "admin" ? emp.salary : "***",
+        role === "admin" ? emp.salaryPaid : "***",
+        role === "admin" ? emp.advanceGiven : "***",
+        emp.status.toUpperCase()
+      ]);
     
     const csvContent = "data:text/csv;charset=utf-8," 
       + [headers.join(","), ...rows.map(e => e.join(","))].join("\n");
@@ -550,10 +549,14 @@ export default function SalarySheet({ user, role }: { user: User; role: UserRole
                         </span>
                       </td>
                       <td className="px-6 py-4">
-                        <span className="font-mono font-bold text-emerald-600 text-sm">{formatCurrency(emp.salaryPaid)}</span>
+                        <span className="font-mono font-bold text-emerald-600 text-sm">
+                          {role === "admin" ? formatCurrency(emp.salaryPaid) : "***"}
+                        </span>
                       </td>
                       <td className="px-6 py-4">
-                        <span className="font-mono font-bold text-orange-600 text-sm">{formatCurrency(emp.advanceGiven)}</span>
+                        <span className="font-mono font-bold text-orange-600 text-sm">
+                          {role === "admin" ? formatCurrency(emp.advanceGiven) : "***"}
+                        </span>
                       </td>
                       <td className="px-6 py-4">
                         {emp.status === "paid" ? (
@@ -630,7 +633,7 @@ export default function SalarySheet({ user, role }: { user: User; role: UserRole
                         {tx.paymentMethod}
                       </td>
                       <td className="px-6 py-4 font-mono font-bold text-gray-950 text-sm">
-                        {formatCurrency(tx.amount)}
+                        {role === "admin" ? formatCurrency(tx.amount) : "***"}
                       </td>
                       <td className="px-6 py-4 text-xs text-gray-400 max-w-xs truncate" title={tx.notes}>
                         {tx.notes || "-"}
@@ -661,7 +664,7 @@ export default function SalarySheet({ user, role }: { user: User; role: UserRole
             </div>
             <h3 className="text-xl font-bold text-gray-900 mb-2">Delete Payment?</h3>
             <p className="text-sm text-gray-500 mb-6">
-              Are you sure you want to delete this payment of <strong className="text-gray-900">{formatCurrency(payoutToDelete.amount)}</strong> recorded for <strong className="text-gray-900">{payoutToDelete.subCategory}</strong>?
+              Are you sure you want to delete this payment of <strong className="text-gray-900">{role === "admin" ? formatCurrency(payoutToDelete.amount) : "***"}</strong> recorded for <strong className="text-gray-900">{payoutToDelete.subCategory}</strong>?
               <br /><br />
               This will safely credit the amount back to the payment account.
             </p>

@@ -200,7 +200,7 @@ export default function SalaryEntry({ user, role }: { user: User; role: UserRole
                     </div>
                   </td>
                   <td className="px-8 py-6">
-                    <span className="font-mono font-bold text-gray-400">
+                    <span className="font-mono font-bold text-gray-500">
                       {role === "admin" ? formatCurrency(emp.salary) : "***"}
                     </span>
                   </td>

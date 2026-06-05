@@ -266,13 +266,7 @@ export default function Employees({
         joinedDate: editingEmployee?.joinedDate || new Date().toISOString()
       };
 
-      if (role === "admin") {
-        employeeData.salary = salary ? parseFloat(salary) : 0;
-      } else if (editingEmployee) {
-        employeeData.salary = editingEmployee.salary || 0;
-      } else {
-        employeeData.salary = 0;
-      }
+      employeeData.salary = salary ? parseFloat(salary) : 0;
 
       if (editingEmployee?.id) {
         await updateDoc(doc(db, "employees", editingEmployee.id), employeeData);
@@ -401,8 +395,8 @@ export default function Employees({
       ? `<img src="${emp.documents.find(d => d.type.startsWith('image/'))?.data}" class="w-full h-full object-cover" />`
       : `<svg class="w-12 h-12 text-slate-300 mx-auto" fill="currentColor" viewBox="0 0 24 24"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>`;
 
-    const financialHtml = role === "admin" 
-      ? `<div class="mb-8">
+    const financialHtml = 
+      `<div class="mb-8">
           <h3 class="text-base font-extrabold text-slate-900 mb-4 border-b border-slate-100 pb-2">Financial Account Statement</h3>
           <div class="grid grid-cols-3 gap-4">
             <div class="border border-slate-200 p-4 rounded-xl text-center bg-slate-50">
@@ -418,8 +412,7 @@ export default function Employees({
               <p class="text-base font-black text-amber-700 font-mono">${formatCurrJS(stats.totalAdvance)}</p>
             </div>
           </div>
-        </div>`
-      : "";
+        </div>`;
 
     docToWrite.write(`
       <html>
@@ -560,11 +553,10 @@ export default function Employees({
     const tableRows = employees.map((emp, idx) => {
       const stats = getEmployeeStats(emp.id!);
       const joinedStr = emp.joinedDate ? format(new Date(emp.joinedDate), "MMM dd, yyyy") : "N/A";
-      const financialCells = role === "admin" 
-        ? `<td class="px-4 py-3 text-right font-mono font-black text-slate-950">${formatCurrJS(emp.salary || 0)}</td>
-           <td class="px-4 py-3 text-right font-mono text-emerald-700 font-black">${formatCurrJS(stats.totalPaid)}</td>
-           <td class="px-4 py-3 text-right font-mono text-amber-700 font-black">${formatCurrJS(stats.totalAdvance)}</td>`
-        : "";
+      const financialCells = 
+        `<td class="px-4 py-3 text-right font-mono font-black text-slate-950">${formatCurrJS(emp.salary || 0)}</td>
+         <td class="px-4 py-3 text-right font-mono text-emerald-700 font-black">${formatCurrJS(stats.totalPaid)}</td>
+         <td class="px-4 py-3 text-right font-mono text-amber-700 font-black">${formatCurrJS(stats.totalAdvance)}</td>`;
 
       return `
         <tr class="border-b border-slate-200 hover:bg-slate-50 transition-colors text-xs font-semibold text-slate-700">
@@ -589,21 +581,19 @@ export default function Employees({
     const grandTotalPaid = employees.reduce((total, emp) => total + getEmployeeStats(emp.id!).totalPaid, 0);
     const grandTotalAdvance = employees.reduce((total, emp) => total + getEmployeeStats(emp.id!).totalAdvance, 0);
 
-    const financialHeaders = role === "admin" 
-      ? `<th class="px-4 py-3 text-right">Basic Salary</th>
-         <th class="px-4 py-3 text-right">Total Paid</th>
-         <th class="px-4 py-3 text-right">Advance Balance</th>`
-      : "";
+    const financialHeaders = 
+      `<th class="px-4 py-3 text-right">Basic Salary</th>
+       <th class="px-4 py-3 text-right">Total Paid</th>
+       <th class="px-4 py-3 text-right">Advance Balance</th>`;
 
-    const financialTotals = role === "admin" 
-      ? `<tr class="bg-slate-50 border-t-2 border-slate-300 font-extrabold text-xs text-slate-900">
-          <td colspan="7" class="px-4 py-4 text-right uppercase tracking-wider font-extrabold text-slate-500">Totals:</td>
-          <td class="px-4 py-4 text-right font-mono font-black text-slate-950">${formatCurrJS(grandTotalSalary)}</td>
-          <td class="px-4 py-4 text-right font-mono font-black text-green-700">${formatCurrJS(grandTotalPaid)}</td>
-          <td class="px-4 py-4 text-right font-mono font-black text-amber-700">${formatCurrJS(grandTotalAdvance)}</td>
-          <td></td>
-         </tr>`
-      : "";
+    const financialTotals = 
+      `<tr class="bg-slate-50 border-t-2 border-slate-300 font-extrabold text-xs text-slate-900">
+        <td colspan="7" class="px-4 py-4 text-right uppercase tracking-wider font-extrabold text-slate-500">Totals:</td>
+        <td class="px-4 py-4 text-right font-mono font-black text-slate-950">${formatCurrJS(grandTotalSalary)}</td>
+        <td class="px-4 py-4 text-right font-mono font-black text-green-700">${formatCurrJS(grandTotalPaid)}</td>
+        <td class="px-4 py-4 text-right font-mono font-black text-amber-700">${formatCurrJS(grandTotalAdvance)}</td>
+        <td></td>
+       </tr>`;
 
     docToWrite.write(`
       <html>
@@ -802,18 +792,16 @@ export default function Employees({
               />
             </div>
 
-            {role === "admin" && (
-              <div className="space-y-1.5">
-                <label className="text-xs font-bold text-gray-400 uppercase tracking-widest pl-1">Monthly Salary (BDT)</label>
-                <input 
-                  type="number"
-                  placeholder="0.00"
-                  value={salary}
-                  onChange={e => setSalary(e.target.value)}
-                  className="w-full px-4 py-4 bg-gray-50 rounded-2xl border-none focus:ring-2 focus:ring-gray-200 font-medium font-mono"
-                />
-              </div>
-            )}
+            <div className="space-y-1.5">
+              <label className="text-xs font-bold text-gray-400 uppercase tracking-widest pl-1">Monthly Salary (BDT)</label>
+              <input 
+                type="number"
+                placeholder="0.00"
+                value={salary}
+                onChange={e => setSalary(e.target.value)}
+                className="w-full px-4 py-4 bg-gray-50 rounded-2xl border-none focus:ring-2 focus:ring-gray-200 font-medium font-mono"
+              />
+            </div>
 
             <div className="space-y-1.5">
               <label className="text-xs font-bold text-gray-400 uppercase tracking-widest pl-1">Employment Status</label>
@@ -1132,18 +1120,16 @@ export default function Employees({
               />
             </div>
 
-            {role === "admin" && (
-              <div className="space-y-1.5">
-                <label className="text-xs font-bold text-gray-400 uppercase tracking-widest pl-1">Monthly Salary (BDT)</label>
-                <input 
-                  type="number"
-                  placeholder="0.00"
-                  value={salary}
-                  onChange={e => setSalary(e.target.value)}
-                  className="w-full px-4 py-4 bg-gray-50 rounded-2xl border-none focus:ring-2 focus:ring-gray-200 font-medium font-mono"
-                />
-              </div>
-            )}
+            <div className="space-y-1.5">
+              <label className="text-xs font-bold text-gray-400 uppercase tracking-widest pl-1">Monthly Salary (BDT)</label>
+              <input 
+                type="number"
+                placeholder="0.00"
+                value={salary}
+                onChange={e => setSalary(e.target.value)}
+                className="w-full px-4 py-4 bg-gray-50 rounded-2xl border-none focus:ring-2 focus:ring-gray-200 font-medium font-mono"
+              />
+            </div>
 
             <div className="space-y-1.5">
               <label className="text-xs font-bold text-gray-400 uppercase tracking-widest pl-1">Employment Status</label>
@@ -1390,48 +1376,44 @@ export default function Employees({
                 </div>
 
                 <div className="space-y-4 mb-6">
-                  {role === "admin" && (
-                    <>
-                      <div className="flex justify-between items-center px-4 py-3 bg-gray-50 rounded-2xl">
-                        <div className="flex items-center gap-2">
-                          <Wallet className="w-4 h-4 text-gray-400" />
-                          <span className="text-xs font-bold text-gray-500 uppercase tracking-tight">Main Salary</span>
-                        </div>
-                        <span className="font-black text-gray-900">{formatCurrency(emp.salary)}</span>
+                  <div className="flex justify-between items-center px-4 py-3 bg-gray-50 rounded-2xl">
+                    <div className="flex items-center gap-2">
+                      <Wallet className="w-4 h-4 text-gray-400" />
+                      <span className="text-xs font-bold text-gray-500 uppercase tracking-tight">Main Salary</span>
+                    </div>
+                    <span className="font-black text-gray-900">{role === "admin" ? formatCurrency(emp.salary) : "***"}</span>
+                  </div>
+                  
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="p-4 rounded-2xl border border-gray-50 flex flex-col justify-between">
+                      <div>
+                        <p className="text-[10px] items-center font-bold text-gray-400 uppercase tracking-widest mb-1 flex gap-1">
+                          <CreditCard className="w-3 h-3" /> Paid
+                        </p>
+                        <p className="font-black text-green-600">{role === "admin" ? formatCurrency(stats.totalPaid) : "***"}</p>
                       </div>
-                      
-                      <div className="grid grid-cols-2 gap-2">
-                        <div className="p-4 rounded-2xl border border-gray-50 flex flex-col justify-between">
-                          <div>
-                            <p className="text-[10px] items-center font-bold text-gray-400 uppercase tracking-widest mb-1 flex gap-1">
-                              <CreditCard className="w-3 h-3" /> Paid
-                            </p>
-                            <p className="font-black text-green-600">{formatCurrency(stats.totalPaid)}</p>
-                          </div>
-                          <button 
-                            onClick={() => { setQuickPay({ empId: emp.id!, type: "Staff Salary" }); setPayAmount((emp.salary ?? 0).toString()); }}
-                            className="mt-2 text-[10px] font-bold text-blue-600 uppercase hover:underline text-left flex items-center gap-1"
-                          >
-                            <CreditCard className="w-3 h-3" /> Record Salary Payment
-                          </button>
-                        </div>
-                        <div className="p-4 rounded-2xl border border-gray-50 flex flex-col justify-between">
-                          <div>
-                            <p className="text-[10px] items-center font-bold text-gray-400 uppercase tracking-widest mb-1 flex gap-1">
-                              <History className="w-3 h-3" /> Advance
-                            </p>
-                            <p className="font-black text-orange-600">{formatCurrency(stats.totalAdvance)}</p>
-                          </div>
-                          <button 
-                             onClick={() => { setQuickPay({ empId: emp.id!, type: "Employee Advance" }); setPayAmount(""); }}
-                            className="mt-2 text-[10px] font-bold text-orange-600 uppercase hover:underline text-left"
-                          >
-                            Give Adv
-                          </button>
-                        </div>
+                      <button 
+                        onClick={() => { setQuickPay({ empId: emp.id!, type: "Staff Salary" }); setPayAmount(role === "admin" ? (emp.salary ?? 0).toString() : ""); }}
+                        className="mt-2 text-[10px] font-bold text-blue-600 uppercase hover:underline text-left flex items-center gap-1"
+                      >
+                        <CreditCard className="w-3 h-3" /> Record Salary Payment
+                      </button>
+                    </div>
+                    <div className="p-4 rounded-2xl border border-gray-50 flex flex-col justify-between">
+                      <div>
+                        <p className="text-[10px] items-center font-bold text-gray-400 uppercase tracking-widest mb-1 flex gap-1">
+                          <History className="w-3 h-3" /> Advance
+                        </p>
+                        <p className="font-black text-orange-600">{role === "admin" ? formatCurrency(stats.totalAdvance) : "***"}</p>
                       </div>
-                    </>
-                  )}
+                      <button 
+                         onClick={() => { setQuickPay({ empId: emp.id!, type: "Employee Advance" }); setPayAmount(""); }}
+                        className="mt-2 text-[10px] font-bold text-orange-600 uppercase hover:underline text-left"
+                      >
+                        Give Adv
+                      </button>
+                    </div>
+                  </div>
                   <button 
                     onClick={() => setViewingAttendance(emp)}
                     className="w-full mt-2 py-3 bg-indigo-50 text-indigo-600 rounded-xl font-bold text-[10px] uppercase tracking-wider hover:bg-indigo-600 hover:text-white transition-all flex items-center justify-center gap-2"
@@ -1527,32 +1509,30 @@ export default function Employees({
               {/* Content */}
                <div className="flex-1 overflow-y-auto p-8 space-y-8">
                 {/* Stats Grid */}
-                {role === "admin" && (
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm">
-                      <p className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-2 flex items-center gap-2">
-                        <Wallet className="w-4 h-4 text-blue-500" /> Basic Salary
-                      </p>
-                      <p className="text-2xl font-black text-gray-900">{formatCurrency(viewingProfile.salary)}</p>
-                    </div>
-                    <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm">
-                      <p className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-2 flex items-center gap-2">
-                        <CreditCard className="w-4 h-4 text-green-500" /> Total Paid
-                      </p>
-                      <p className="text-2xl font-black text-green-600">{formatCurrency(getEmployeeStats(viewingProfile.id!).totalPaid)}</p>
-                    </div>
-                    <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm">
-                      <p className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-2 flex items-center gap-2">
-                        <History className="w-4 h-4 text-orange-500" /> Advance Balance
-                      </p>
-                      <p className="text-2xl font-black text-orange-600">{formatCurrency(getEmployeeStats(viewingProfile.id!).totalAdvance)}</p>
-                    </div>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm">
+                    <p className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-2 flex items-center gap-2">
+                      <Wallet className="w-4 h-4 text-blue-500" /> Basic Salary
+                    </p>
+                    <p className="text-2xl font-black text-gray-900">{role === "admin" ? formatCurrency(viewingProfile.salary) : "***"}</p>
                   </div>
-                )}
+                  <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm">
+                    <p className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-2 flex items-center gap-2">
+                      <CreditCard className="w-4 h-4 text-green-500" /> Total Paid
+                    </p>
+                    <p className="text-2xl font-black text-green-600">{role === "admin" ? formatCurrency(getEmployeeStats(viewingProfile.id!).totalPaid) : "***"}</p>
+                  </div>
+                  <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm">
+                    <p className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-2 flex items-center gap-2">
+                      <History className="w-4 h-4 text-orange-500" /> Advance Balance
+                    </p>
+                    <p className="text-2xl font-black text-orange-600">{role === "admin" ? formatCurrency(getEmployeeStats(viewingProfile.id!).totalAdvance) : "***"}</p>
+                  </div>
+                </div>
 
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
                   {/* Documents Section */}
-                  <div className={cn("space-y-4", role !== "admin" && "lg:col-span-2")}>
+                  <div className="space-y-4">
                     <h3 className="font-bold text-gray-900 flex items-center gap-2">
                       <FilePlus className="w-5 h-5 text-gray-400" /> 
                       Employee Documents ({viewingProfile.documents?.length || 0})
@@ -1584,33 +1564,31 @@ export default function Employees({
                   </div>
 
                   {/* Recent Transactions */}
-                  {role === "admin" && (
-                    <div className="space-y-4">
-                      <h3 className="font-bold text-gray-900 flex items-center gap-2">
-                        <History className="w-5 h-5 text-gray-400" /> Recent Transactions
-                      </h3>
-                      <div className="space-y-2">
-                        {transactions
-                          .filter(tx => tx.employeeId === viewingProfile.id)
-                          .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
-                          .slice(0, 5)
-                          .map(tx => (
-                            <div key={tx.id} className="bg-white p-4 rounded-2xl flex items-center justify-between border border-gray-50">
-                              <div>
-                                <p className="text-xs font-bold text-gray-900">{tx.category} - {tx.subCategory}</p>
-                                <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">{format(new Date(tx.date), "MMM dd, yyyy")}</p>
-                              </div>
-                              <p className="font-black text-gray-900">-{formatCurrency(tx.amount)}</p>
+                  <div className="space-y-4">
+                    <h3 className="font-bold text-gray-900 flex items-center gap-2">
+                      <History className="w-5 h-5 text-gray-400" /> Recent Transactions
+                    </h3>
+                    <div className="space-y-2">
+                      {transactions
+                        .filter(tx => tx.employeeId === viewingProfile.id)
+                        .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+                        .slice(0, 5)
+                        .map(tx => (
+                          <div key={tx.id} className="bg-white p-4 rounded-2xl flex items-center justify-between border border-gray-50">
+                            <div>
+                              <p className="text-xs font-bold text-gray-900">{tx.category} - {tx.subCategory}</p>
+                              <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">{format(new Date(tx.date), "MMM dd, yyyy")}</p>
                             </div>
-                          ))}
-                        {!transactions.filter(tx => tx.employeeId === viewingProfile.id).length && (
-                          <div className="py-8 text-center bg-gray-100/50 rounded-2xl border-2 border-dashed border-gray-200 text-gray-400 font-medium italic">
-                            No transaction history.
+                            <p className="font-black text-gray-900">-{role === "admin" ? formatCurrency(tx.amount) : "***"}</p>
                           </div>
-                        )}
-                      </div>
+                        ))}
+                      {!transactions.filter(tx => tx.employeeId === viewingProfile.id).length && (
+                        <div className="py-8 text-center bg-gray-100/50 rounded-2xl border-2 border-dashed border-gray-200 text-gray-400 font-medium italic">
+                          No transaction history.
+                        </div>
+                      )}
                     </div>
-                  )}
+                  </div>
 
                   {/* Identification Documents (KYC) Section - takes full width */}
                   <div className="space-y-4 lg:col-span-2 pt-4">

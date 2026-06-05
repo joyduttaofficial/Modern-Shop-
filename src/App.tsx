@@ -447,8 +447,8 @@ export default function App() {
     // Admins always have full, unrestricted access to all menus
     if (profile.role === "admin") return true;
 
-    // Strict Admin-only views - Settings, Users and Salary entry/sheets are strictly locked to admin role
-    const absoluteAdminOnly = ["settings", "newUser", "usersList", "rolesList", "newEmployee", "salaryEntry", "salarySheet"];
+    // Strict Admin-only views - Settings, Users and Roles are strictly locked to admin role
+    const absoluteAdminOnly = ["settings", "newUser", "usersList", "rolesList"];
     if (absoluteAdminOnly.includes(viewId)) {
       return false;
     }

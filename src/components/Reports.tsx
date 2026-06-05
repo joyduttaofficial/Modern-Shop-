@@ -185,7 +185,7 @@ export default function Reports({ user, role }: { user: User; role: UserRole }) 
           deposits += tx.amount;
         } else if (cat === "Bank Deposit") {
           bankDeps += tx.amount;
-        } else {
+        } else if (cat !== "Loan Deposit" && cat !== "Previous Cash" && cat !== "Opening Balance") {
           empSales += tx.amount;
         }
       } else if (tx.type === "expense") {
@@ -267,8 +267,19 @@ export default function Reports({ user, role }: { user: User; role: UserRole }) 
       openingBalance = manualOpening.amount;
     } else {
       openingBalance = transactions
-        .filter(tx => isBefore(new Date(tx.date), dayStart) && tx.paymentMethod === "Cash")
-        .reduce((sum, tx) => sum + (tx.type === "income" ? tx.amount : -tx.amount), 0);
+        .filter(tx => isBefore(new Date(tx.date), dayStart))
+        .reduce((sum, tx) => {
+          if (tx.paymentMethod === "Cash") {
+            return sum + (tx.type === "income" ? tx.amount : -tx.amount);
+          }
+          if (tx.category === "Bank Deposit" && tx.subCategory !== "Account Transfer") {
+            return sum - tx.amount;
+          }
+          if (tx.category === "Bank Credit" && tx.subCategory !== "Account Transfer") {
+            return sum + tx.amount;
+          }
+          return sum;
+        }, 0);
     }
 
     const salesListTxsForDay = todayTxs.filter(tx => 
@@ -317,7 +328,8 @@ export default function Reports({ user, role }: { user: User; role: UserRole }) 
           );
         }
         if (tx.type === "expense" && tx.category === "Bank Credit") {
-          return true;
+          // Ignore Bank Credit if it is part of an Account Transfer, to avoid double-counting with Cash side of transfer
+          return tx.subCategory !== "Account Transfer";
         }
         return false;
       })
@@ -329,7 +341,8 @@ export default function Reports({ user, role }: { user: User; role: UserRole }) 
           return tx.paymentMethod !== "Cash";
         }
         if (tx.type === "income" && tx.category === "Bank Deposit") {
-          return true;
+          // Ignore Bank Deposit if it is part of an Account Transfer, to avoid double-counting with Cash side of transfer
+          return tx.subCategory !== "Account Transfer";
         }
         return false;
       })

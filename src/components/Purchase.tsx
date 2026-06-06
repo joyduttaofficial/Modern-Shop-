@@ -56,6 +56,42 @@ export default function Purchase({
   const [invoicePhoto, setInvoicePhoto] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  // Currency exchange rate states for Indian Supplier configuration
+  const [exchangeRate, setExchangeRate] = useState("70");
+  const [inrTotalAmount, setInrTotalAmount] = useState("");
+  const [inrPaidAmount, setInrPaidAmount] = useState("");
+
+  const selectedSupplierObj = suppliers.find(s => s.id === supplierId);
+  const isIndianSupplier = selectedSupplierObj?.country === "India";
+
+  const handleExchangeRateChange = (rateVal: string) => {
+    setExchangeRate(rateVal);
+    const rateFloat = parseFloat(rateVal) || 0;
+    
+    if (inrTotalAmount) {
+      const computedBDT = rateFloat > 0 ? ((parseFloat(inrTotalAmount) || 0) / rateFloat) * 100 : 0;
+      setTotalAmount(computedBDT > 0 ? computedBDT.toFixed(2) : "");
+    }
+    if (inrPaidAmount) {
+      const computedPaidBDT = rateFloat > 0 ? ((parseFloat(inrPaidAmount) || 0) / rateFloat) * 100 : 0;
+      setPaidAmount(computedPaidBDT > 0 ? computedPaidBDT.toFixed(2) : "");
+    }
+  };
+
+  const handleInrTotalChange = (inrVal: string) => {
+    setInrTotalAmount(inrVal);
+    const rateFloat = parseFloat(exchangeRate) || 0;
+    const computedBDT = rateFloat > 0 ? ((parseFloat(inrVal) || 0) / rateFloat) * 100 : 0;
+    setTotalAmount(computedBDT > 0 ? computedBDT.toFixed(2) : "");
+  };
+
+  const handleInrPaidChange = (inrVal: string) => {
+    setInrPaidAmount(inrVal);
+    const rateFloat = parseFloat(exchangeRate) || 0;
+    const computedBDT = rateFloat > 0 ? ((parseFloat(inrVal) || 0) / rateFloat) * 100 : 0;
+    setPaidAmount(computedBDT > 0 ? computedBDT.toFixed(2) : "");
+  };
+
   // Selected Purchase Modal state (for detail view)
   const [selectedPurchase, setSelectedPurchase] = useState<PurchaseModel | null>(null);
 
@@ -160,6 +196,11 @@ export default function Purchase({
       const netDue = totalVal - paidVal - returnVal;
       const savedDue = Math.max(0, netDue);
 
+      let appendNotes = "";
+      if (isIndianSupplier && parseFloat(exchangeRate) > 0) {
+        appendNotes = ` [Exchange Rate: ₹100 = ৳${exchangeRate} | INR Total: ₹${parseFloat(inrTotalAmount || "0").toFixed(2)} | INR Paid: ₹${parseFloat(inrPaidAmount || "0").toFixed(2)}]`;
+      }
+
       const purchaseData: PurchaseModel = {
         supplierId,
         supplierName: supplierNameStr,
@@ -170,7 +211,7 @@ export default function Purchase({
         dueAmount: savedDue,
         writtenReturn: returnVal,
         paymentMethod,
-        notes: (notes + (returnVal > 0 ? ` (Auto-deducted purchase return: ৳${returnVal.toFixed(2)})` : "")).trim(),
+        notes: (notes + appendNotes + (returnVal > 0 ? ` (Auto-deducted purchase return: ৳${returnVal.toFixed(2)})` : "")).trim(),
         invoicePhoto: invoicePhoto || "",
         createdAt: new Date().toISOString()
       };
@@ -194,7 +235,7 @@ export default function Purchase({
         paidAmount: paidVal,
         dueAmount: netDue,
         paymentMethod,
-        notes: notes.trim() || "Purchase Bill Registered",
+        notes: (notes + appendNotes).trim() || "Purchase Bill Registered",
         createdAt: new Date().toISOString()
       };
       await addDoc(collection(db, "supplierTransactions"), sTx);
@@ -249,6 +290,8 @@ export default function Purchase({
       setNotes("");
       setInvoicePhoto("");
       setRefNo("");
+      setInrTotalAmount("");
+      setInrPaidAmount("");
       setViewState("list");
 
       if (onSuccess) onSuccess();
@@ -568,7 +611,11 @@ export default function Purchase({
                       <select
                         required
                         value={supplierId}
-                        onChange={(e) => setSupplierId(e.target.value)}
+                        onChange={(e) => {
+                          setSupplierId(e.target.value);
+                          setInrTotalAmount("");
+                          setInrPaidAmount("");
+                        }}
                         className="w-full p-3 rounded-2xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm font-medium text-gray-900"
                       >
                         <option value="">Select Supplier...</option>
@@ -642,6 +689,66 @@ export default function Purchase({
 
                   {/* Right Fields */}
                   <div className="space-y-4">
+                    {isIndianSupplier && (
+                      <div className="p-4 bg-amber-50/50 border border-amber-200 rounded-3xl space-y-3 animate-in fade-in slide-in-from-top-4 duration-300">
+                        <div className="flex items-center gap-2 text-amber-900 font-bold text-xs uppercase tracking-wider">
+                          <span className="p-1 px-1.5 bg-amber-100 rounded text-[10px]">INR ⇄ BDT</span>
+                          Indian Supplier Currency Exchange
+                        </div>
+
+                        <div className="grid grid-cols-3 gap-2">
+                          <div className="col-span-1">
+                            <label className="block text-[9px] font-black uppercase text-amber-700 mb-1">Rate (₹100 = ৳)</label>
+                            <input
+                              type="number"
+                              step="0.01"
+                              value={exchangeRate}
+                              onChange={(e) => handleExchangeRateChange(e.target.value)}
+                              placeholder="143"
+                              className="w-full p-2 bg-white rounded-xl border border-amber-200 text-xs font-bold text-amber-900 focus:outline-[#f59e0b]"
+                            />
+                          </div>
+                          <div className="col-span-2">
+                            <label className="block text-[9px] font-black uppercase text-amber-700 mb-1">Gross Purchase (₹ INR)</label>
+                            <input
+                              type="number"
+                              step="0.01"
+                              value={inrTotalAmount}
+                              onChange={(e) => handleInrTotalChange(e.target.value)}
+                              placeholder="₹0.00"
+                              className="w-full p-2 bg-white rounded-xl border border-amber-200 text-xs font-bold text-amber-900 focus:outline-[#f59e0b]"
+                            />
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-3 gap-2">
+                          <div className="col-span-1">
+                          </div>
+                          <div className="col-span-2">
+                            <label className="block text-[9px] font-black uppercase text-amber-700 mb-1">Paid Amount (₹ INR)</label>
+                            <input
+                              type="number"
+                              step="0.01"
+                              value={inrPaidAmount}
+                              onChange={(e) => handleInrPaidChange(e.target.value)}
+                              placeholder="₹0.00"
+                              className="w-full p-2 bg-white rounded-xl border border-amber-200 text-xs font-bold text-[#10b981] focus:outline-[#10b981]"
+                            />
+                          </div>
+                        </div>
+
+                        <div className="text-[10px] text-amber-800 font-bold leading-normal pt-1.5 flex flex-col gap-1 bg-white/70 p-2.5 rounded-xl border border-amber-100/50">
+                          <div className="flex justify-between">
+                            <span>Calculated: ৳{(parseFloat(exchangeRate) > 0 ? ((parseFloat(inrTotalAmount) || 0) / parseFloat(exchangeRate)) * 100 : 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                            <span>Paid: ৳{(parseFloat(exchangeRate) > 0 ? ((parseFloat(inrPaidAmount) || 0) / parseFloat(exchangeRate)) * 100 : 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                          </div>
+                          <span className="text-[9px] text-amber-600 font-medium block border-t border-amber-100 pt-1 mt-0.5 text-center font-mono">
+                            Formula: (INR / Rate) × 100
+                          </span>
+                        </div>
+                      </div>
+                    )}
+
                     <div>
                       <label className="block text-sm font-semibold text-gray-700 mb-1">
                         Total Purchase Amount (৳) <span className="text-red-500">*</span>

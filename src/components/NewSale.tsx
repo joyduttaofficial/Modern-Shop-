@@ -427,7 +427,7 @@ export default function NewSale({
     const wholesaleFloat = parseFloat(wholesaleAmount) || 0;
     doc.text(`BDT ${wholesaleFloat.toFixed(2)}`, pageWidth - 18, finalY + 14, { align: "right" });
 
-    doc.text("Total Deposit (-):", cardX + 4, finalY + 21);
+    doc.text("Due Sales (-):", cardX + 4, finalY + 21);
     const depositFloat = parseFloat(depositAmount) || 0;
     doc.text(`BDT ${depositFloat.toFixed(2)}`, pageWidth - 18, finalY + 21, { align: "right" });
 
@@ -643,17 +643,17 @@ export default function NewSale({
                       </div>
                     </div>
 
-                    {/* Total Deposit */}
+                    {/* Due Sales */}
                     <div className="grid grid-cols-12 items-center p-3">
                       <div className="col-span-8 text-right font-bold text-gray-700 pr-10 text-sm">
-                        {t("Total Deposit")}
+                        {t("Due Sales")}
                       </div>
                       <div className="col-span-4">
                         <div className="relative max-w-xs mx-auto animate-in fade-in duration-200">
                           <input
                             type="number"
                             min="0"
-                            placeholder={language === "bn" ? "মোট জমা পরিমাণ লিখুন" : "Enter total deposit"}
+                            placeholder={language === "bn" ? "বাকি বিক্রয়ের পরিমাণ লিখুন" : "Enter due sales amount"}
                             value={depositAmount}
                             onChange={(e) => setDepositAmount(e.target.value)}
                             disabled={saving || loadingSales}

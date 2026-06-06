@@ -271,7 +271,7 @@ export default function SalesList({ user, role, onEditSales }: SalesListProps) {
 
   // Export CSV summary of daily grouped records
   const exportGroupedCSV = () => {
-    let csvContent = "Date,Day,Staff Sales,Wholesale Sales,Total Deposit,Grand Total,Status\n";
+    let csvContent = "Date,Day,Staff Sales,Wholesale Sales,Due Sales,Grand Total,Status\n";
     sortedFilteredGroups.forEach(g => {
       csvContent += `${g.dateStr},${g.dayName},${g.totalEmployeeSales},${g.totalWholesaleSales},${g.totalDeposit},${g.grandTotal}\n`;
     });
@@ -337,7 +337,7 @@ export default function SalesList({ user, role, onEditSales }: SalesListProps) {
             <PiggyBank className="w-5 h-5" />
           </div>
           <div>
-            <p className="text-[10px] uppercase font-black tracking-widest text-slate-400 mb-0.5">{t("Deposited Cash")}</p>
+            <p className="text-[10px] uppercase font-black tracking-widest text-slate-400 mb-0.5">{t("Due Sales")}</p>
             <h3 className="text-lg font-black text-slate-850 font-mono tracking-tight">{formatCurrency(aggregateDeposits)}</h3>
           </div>
         </div>
@@ -468,7 +468,7 @@ export default function SalesList({ user, role, onEditSales }: SalesListProps) {
                         <span className="font-mono text-gray-900">{formatCurrency(group.totalWholesaleSales)}</span>
                       </div>
                       <div>
-                        <span className="text-[10px] text-gray-400 block font-bold uppercase tracking-wider mb-0.5">Deposit</span>
+                        <span className="text-[10px] text-gray-400 block font-bold uppercase tracking-wider mb-0.5">{t("Due Sales")}</span>
                         <span className="font-mono text-red-500">-{formatCurrency(group.totalDeposit)}</span>
                       </div>
                       <div className="border-t md:border-t-0 md:border-l border-gray-100 pt-2 md:pt-0 md:pl-4">
@@ -589,7 +589,7 @@ export default function SalesList({ user, role, onEditSales }: SalesListProps) {
                                 <span className="font-mono text-gray-900 font-bold">+{formatCurrency(group.totalWholesaleSales)}</span>
                               </div>
                               <div className="flex justify-between pb-2 border-b border-dashed border-gray-100">
-                                <span>Deposit Deductions</span>
+                                <span>{t("Deposit Deductions")}</span>
                                 <span className="font-mono text-red-500 font-bold">-{formatCurrency(group.totalDeposit)}</span>
                               </div>
                               <div className="flex justify-between pt-1 font-bold text-gray-900 text-base">

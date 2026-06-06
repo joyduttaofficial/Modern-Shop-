@@ -641,7 +641,7 @@ export default function Reports({ user, role }: { user: User; role: UserRole }) 
           if (tx.category === "Bank Deposit" && tx.paymentMethod) {
             nameStr = `Bank Deposit (${tx.paymentMethod})`;
           } else if (tx.category === "Total Deposit") {
-            nameStr = "Daily Cash Deposit to Bank";
+            nameStr = language === "bn" ? "বাকি বিক্রয়" : "Due Sales";
           } else {
             if (tx.employeeId) {
               nameStr += ` - ${empMap.get(tx.employeeId) || "Staff"}`;
@@ -881,9 +881,9 @@ export default function Reports({ user, role }: { user: User; role: UserRole }) 
                             {tx.category === "Bank Deposit" && tx.paymentMethod 
                               ? `Bank Deposit (${tx.paymentMethod})` 
                               : tx.category === "Total Deposit" 
-                              ? "Daily Cash Deposit to Bank" 
+                              ? (language === "bn" ? "বাকি বিক্রয়" : "Due Sales")
                               : tx.category === "deposit" || tx.category.toLowerCase() === "deposit"
-                              ? "Daily Cash Deposit to Bank"
+                              ? (language === "bn" ? "বাকি বিক্রয়" : "Due Sales")
                               : tx.category}
                           </span>
                           {tx.category !== "Bank Deposit" && tx.category !== "Total Deposit" && tx.category.toLowerCase() !== "deposit" && tx.paymentMethod !== "Cash" && (

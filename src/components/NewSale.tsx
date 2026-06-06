@@ -14,12 +14,14 @@ export default function NewSale({
   user, 
   role, 
   editDate, 
-  onClearEditDate 
+  onClearEditDate,
+  onSaveSuccess
 }: { 
   user: User; 
   role: UserRole; 
   editDate?: string; 
   onClearEditDate?: () => void; 
+  onSaveSuccess?: () => void;
 }) {
   const { language, t, formatCurrency, formatDate, formatNumber, translateValue } = useLanguage();
   const [employees, setEmployees] = useState<Employee[]>([]);
@@ -302,7 +304,12 @@ export default function NewSale({
 
       // Refresh mapping by manually querying again (triggered via slight state refresh or fake delay)
       setSuccess(true);
-      setTimeout(() => setSuccess(false), 4000);
+      setTimeout(() => {
+        setSuccess(false);
+        if (onSaveSuccess) {
+          onSaveSuccess();
+        }
+      }, 1500);
     } catch (error) {
       handleFirestoreError(error, OperationType.UPDATE, "transactions");
     } finally {
@@ -695,16 +702,24 @@ export default function NewSale({
               <button
                 id="save-sales-btn"
                 type="submit"
-                disabled={saving || loadingSales}
-                className="w-full md:w-1/2 bg-[#D12765] hover:bg-[#B41A50] text-white py-4 font-bold flex items-center justify-center transition-all cursor-pointer active:scale-[0.99] disabled:opacity-50 rounded-xl text-base"
+                disabled={saving || loadingSales || success}
+                className={cn(
+                  "w-full md:w-1/2 py-4 font-bold flex items-center justify-center transition-all cursor-pointer active:scale-[0.99] disabled:opacity-55 rounded-xl text-base text-white",
+                  success ? "bg-emerald-600 hover:bg-emerald-700" : "bg-[#D12765] hover:bg-[#B41A50]"
+                )}
               >
                 {saving ? (
                   <div className="flex items-center gap-2">
                     <Loader2 className="w-5 h-5 animate-spin text-white" />
                     <span>{t("saving...")}</span>
                   </div>
+                ) : success ? (
+                  <div className="flex items-center gap-2 animate-in fade-in zoom-in-95 duration-200">
+                    <CheckCircle className="w-5 h-5 text-white animate-bounce" />
+                    <span>{t("Saved Successfully!")}</span>
+                  </div>
                 ) : (
-                  <span className="text-white">{t("save")}</span>
+                  <span>{t("save")}</span>
                 )}
               </button>
             </div>

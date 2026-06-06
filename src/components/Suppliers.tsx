@@ -340,33 +340,92 @@ export default function Suppliers({
         grossPurchases: 0,
         totalReturns: 0,
         totalPayments: 0,
-        remainingDue: 0
+        remainingDue: 0,
+        openingBalanceINR: 0,
+        totalPurchasesINR: 0,
+        totalReturnsINR: 0,
+        totalPaymentsINR: 0,
+        remainingDueINR: 0
       };
     }
 
+    const isIndian = supplier.country === "India";
     const sTransactions = transactions.filter(t => t.supplierId === supplier.id);
     
-    // Purchases summation (actual invoice totals excluding opening balance)
-    const totalPurchases = sTransactions
-      .filter(t => t.type === "purchase")
-      .reduce((sum, t) => sum + (t.totalAmount || 0), 0);
+    let totalPurchases = 0;
+    let totalPurchasesINR = 0;
 
-    // Returns summation
-    const totalReturns = sTransactions
-      .filter(t => t.type === "return")
-      .reduce((sum, t) => sum + (t.totalAmount || 0), 0);
+    let totalReturns = 0;
+    let totalReturnsINR = 0;
 
-    // Payments summation: Sum of direct payment transactions AND downpayments made at the time of purchase
-    const directPayments = sTransactions
-      .filter(t => t.type === "payment")
-      .reduce((sum, t) => sum + (t.totalAmount || 0), 0);
-    const purchaseDownpayments = sTransactions
-      .filter(t => t.type === "purchase")
-      .reduce((sum, t) => sum + (t.paidAmount || 0), 0);
+    let directPayments = 0;
+    let directPaymentsINR = 0;
+
+    let purchaseDownpayments = 0;
+    let purchaseDownpaymentsINR = 0;
+
+    sTransactions.forEach(t => {
+      const bdtAmount = t.totalAmount || 0;
+      const bdtPaid = t.paidAmount || 0;
+      
+      let rate = 70; // default rate
+      let totalINR = 0;
+      let paidINR = 0;
+
+      if (isIndian) {
+        const notes = t.notes || "";
+        const rateMatch = notes.match(/(?:Rate|Exchange Rate):\s*₹?100\s*=\s*(?:৳|BDT)?\s*([\d.]+)/i);
+        if (rateMatch) {
+          rate = parseFloat(rateMatch[1]) || 70;
+        }
+        
+        const totalMatch = notes.match(/INR Total:\s*₹?\s*([\d.]+)/i);
+        if (totalMatch) {
+          totalINR = parseFloat(totalMatch[1]) || 0;
+        } else {
+          totalINR = rate > 0 ? (bdtAmount * rate) / 100 : 0;
+        }
+
+        const paidMatch = notes.match(/INR Paid:\s*₹?\s*([\d.]+)/i);
+        if (paidMatch) {
+          paidINR = parseFloat(paidMatch[1]) || 0;
+        } else {
+          paidINR = rate > 0 ? (bdtPaid * rate) / 100 : 0;
+        }
+      }
+
+      if (t.type === "purchase") {
+        totalPurchases += bdtAmount;
+        totalPurchasesINR += totalINR;
+        purchaseDownpayments += bdtPaid;
+        purchaseDownpaymentsINR += paidINR;
+      } else if (t.type === "return") {
+        totalReturns += bdtAmount;
+        totalReturnsINR += totalINR;
+      } else if (t.type === "payment") {
+        directPayments += bdtAmount;
+        if (isIndian) {
+          const notes = t.notes || "";
+          const paymentMatch = notes.match(/(?:INR Total|INR Paid):\s*₹?\s*([\d.]+)/i);
+          if (paymentMatch) {
+            directPaymentsINR += parseFloat(paymentMatch[1]) || 0;
+          } else {
+            const rateMatch = notes.match(/(?:Rate|Exchange Rate):\s*₹?100\s*=\s*(?:৳|BDT)?\s*([\d.]+)/i);
+            const currentRate = rateMatch ? (parseFloat(rateMatch[1]) || 70) : 70;
+            directPaymentsINR += currentRate > 0 ? (bdtAmount * currentRate) / 100 : 0;
+          }
+        }
+      }
+    });
+
     const totalPayments = directPayments + purchaseDownpayments;
+    const totalPaymentsINR = directPaymentsINR + purchaseDownpaymentsINR;
 
     const opBal = supplier.openingBalance || 0;
+    const opBalINR = isIndian ? (opBal * 70) / 100 : 0;
+
     const remainingDue = opBal + totalPurchases - totalPayments - totalReturns;
+    const remainingDueINR = opBalINR + totalPurchasesINR - totalPaymentsINR - totalReturnsINR;
 
     return {
       openingBalance: opBal,
@@ -374,7 +433,12 @@ export default function Suppliers({
       grossPurchases: totalPurchases + opBal,
       totalReturns,
       totalPayments,
-      remainingDue
+      remainingDue,
+      openingBalanceINR: opBalINR,
+      totalPurchasesINR,
+      totalReturnsINR,
+      totalPaymentsINR,
+      remainingDueINR
     };
   };
 
@@ -1076,28 +1140,63 @@ export default function Suppliers({
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 mt-6">
                     <div className="p-4 rounded-2xl bg-indigo-50/70 border border-indigo-120 shadow-sm">
                       <p className="text-[10px] uppercase font-extrabold text-indigo-700 tracking-wider">Supplier Opening Balance Amount</p>
-                      <h3 className="text-xl font-black mt-1.5 text-indigo-950">{formatCurrency(finances.openingBalance)}</h3>
-                      <p className="text-[10px] text-gray-500 mt-1">Opening ledger ledger balance</p>
+                      {selectedSupplier.country === "India" ? (
+                        <>
+                          <h3 className="text-lg font-black mt-1.5 text-indigo-950">₹{(finances.openingBalanceINR || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</h3>
+                          <p className="text-[10px] text-indigo-700 font-bold mt-1">Converted: {formatCurrency(finances.openingBalance)}</p>
+                        </>
+                      ) : (
+                        <h3 className="text-xl font-black mt-1.5 text-indigo-950">{formatCurrency(finances.openingBalance)}</h3>
+                      )}
+                      <p className="text-[10px] text-gray-450 mt-1">Opening ledger balance</p>
                     </div>
                     <div className="p-4 rounded-2xl bg-blue-50/70 border border-blue-120 shadow-sm">
                       <p className="text-[10px] uppercase font-extrabold text-blue-700 tracking-wider">Total Purchase Amount</p>
-                      <h3 className="text-xl font-black mt-1.5 text-blue-950">{formatCurrency(finances.totalPurchases)}</h3>
-                      <p className="text-[10px] text-gray-500 mt-1">Excluding opening balance</p>
+                      {selectedSupplier.country === "India" ? (
+                        <>
+                          <h3 className="text-lg font-black mt-1.5 text-blue-950">₹{(finances.totalPurchasesINR || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</h3>
+                          <p className="text-[10px] text-blue-700 font-bold mt-1">Converted: {formatCurrency(finances.totalPurchases)}</p>
+                        </>
+                      ) : (
+                        <h3 className="text-xl font-black mt-1.5 text-blue-950">{formatCurrency(finances.totalPurchases)}</h3>
+                      )}
+                      <p className="text-[10px] text-gray-455 mt-1">Excluding opening balance</p>
                     </div>
                     <div className="p-4 rounded-2xl bg-green-50/70 border border-green-120 shadow-sm">
                       <p className="text-[10px] uppercase font-extrabold text-[#00a65a] tracking-wider">Total Payment Amount</p>
-                      <h3 className="text-xl font-black mt-1.5 text-[#00a65a]">{formatCurrency(finances.totalPayments)}</h3>
-                      <p className="text-[10px] text-gray-500 mt-1">Direct + purchase downpayments</p>
+                      {selectedSupplier.country === "India" ? (
+                        <>
+                          <h3 className="text-lg font-black mt-1.5 text-green-950">₹{(finances.totalPaymentsINR || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</h3>
+                          <p className="text-[10px] text-green-700 font-bold mt-1">Converted: {formatCurrency(finances.totalPayments)}</p>
+                        </>
+                      ) : (
+                        <h3 className="text-xl font-black mt-1.5 text-[#00a65a]">{formatCurrency(finances.totalPayments)}</h3>
+                      )}
+                      <p className="text-[10px] text-gray-455 mt-1">Direct + purchase downpayments</p>
                     </div>
                     <div className="p-4 rounded-2xl bg-yellow-50/70 border border-yellow-120 shadow-sm">
                       <p className="text-[10px] uppercase font-extrabold text-amber-700 tracking-wider">Purchase Return Amount</p>
-                      <h3 className="text-xl font-black mt-1.5 text-amber-950">{formatCurrency(finances.totalReturns)}</h3>
-                      <p className="text-[10px] text-gray-500 mt-1">Items returned or adjusted</p>
+                      {selectedSupplier.country === "India" ? (
+                        <>
+                          <h3 className="text-lg font-black mt-1.5 text-amber-950">₹{(finances.totalReturnsINR || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</h3>
+                          <p className="text-[10px] text-amber-700 font-bold mt-1">Converted: {formatCurrency(finances.totalReturns)}</p>
+                        </>
+                      ) : (
+                        <h3 className="text-xl font-black mt-1.5 text-amber-950">{formatCurrency(finances.totalReturns)}</h3>
+                      )}
+                      <p className="text-[10px] text-gray-455 mt-1">Items returned or adjusted</p>
                     </div>
                     <div className="p-4 rounded-2xl bg-red-50/70 border border-red-120 shadow-sm">
                       <p className="text-[10px] uppercase font-extrabold text-red-650 tracking-wider">Total Due Amount</p>
-                      <h3 className="text-xl font-black mt-1.5 text-red-650">{formatCurrency(finances.remainingDue)}</h3>
-                      <p className="text-[10px] text-gray-500 mt-1">Net pending due to supplier</p>
+                      {selectedSupplier.country === "India" ? (
+                        <>
+                          <h3 className="text-lg font-black mt-1.5 text-red-950">₹{(finances.remainingDueINR || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</h3>
+                          <p className="text-[10px] text-red-700 font-bold mt-1">Converted: {formatCurrency(finances.remainingDue)}</p>
+                        </>
+                      ) : (
+                        <h3 className="text-xl font-black mt-1.5 text-red-650">{formatCurrency(finances.remainingDue)}</h3>
+                      )}
+                      <p className="text-[10px] text-gray-455 mt-1">Net pending due to supplier</p>
                     </div>
                   </div>
                 );
@@ -1622,135 +1721,294 @@ export default function Suppliers({
               {/* Printable Invoice Page Canvas */}
               <div className="p-8 space-y-8 bg-white text-gray-800 print:p-6" id="printable-invoice">
                 {/* Brand Header */}
-                <div className="flex justify-between items-start border-b-2 border-slate-900 pb-6">
-                  <div className="flex items-center gap-4">
-                    {companyLogoUrl ? (
-                      <img 
-                        src={companyLogoUrl} 
-                        alt="Logo" 
-                        className="w-14 h-14 rounded-xl object-contain border border-slate-100 shadow-xs bg-white shrink-0" 
-                        referrerPolicy="no-referrer"
-                        onError={(e) => {
-                          (e.target as HTMLImageElement).src = `https://api.dicebear.com/7.x/identicon/svg?seed=${encodeURIComponent(companyName)}`;
-                        }}
-                      />
-                    ) : (
-                      <div className="w-14 h-14 bg-slate-900 rounded-xl flex items-center justify-center shadow-md shrink-0">
-                        <Receipt className="w-8 h-8 text-white" />
+                {(() => {
+                  const isIndian = selectedSupplier.country === "India";
+                  let exchangeRateVal = 70;
+                  let inrTotalVal = 0;
+                  let inrPaidVal = 0;
+                  let hasExchangeDetails = false;
+
+                  if (isIndian && invoiceTransaction.notes) {
+                    const notesStr = invoiceTransaction.notes;
+                    const rateMatch = notesStr.match(/(?:Rate|Exchange Rate):\s*₹?100\s*=\s*(?:৳|BDT)?\s*([\d.]+)/i);
+                    if (rateMatch) {
+                      exchangeRateVal = parseFloat(rateMatch[1]) || 70;
+                      hasExchangeDetails = true;
+                    }
+                    const totalMatch = notesStr.match(/INR Total:\s*₹?\s*([\d.]+)/i);
+                    if (totalMatch) {
+                      inrTotalVal = parseFloat(totalMatch[1]) || 0;
+                      hasExchangeDetails = true;
+                    }
+                    const paidMatch = notesStr.match(/INR Paid:\s*₹?\s*([\d.]+)/i);
+                    if (paidMatch) {
+                      inrPaidVal = parseFloat(paidMatch[1]) || 0;
+                      hasExchangeDetails = true;
+                    }
+                  }
+
+                  const cleanNotes = invoiceTransaction.notes 
+                    ? invoiceTransaction.notes.replace(/\[Rate:\s*₹?100\s*=.*?\]/, "").trim() 
+                    : "";
+
+                  return (
+                    <>
+                      {/* Top Accent Styling Line */}
+                      <div className="h-1.5 w-full bg-slate-900 rounded-full mb-2 print:h-2"></div>
+
+                      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center border-b border-slate-200 pb-6 gap-4">
+                        <div className="flex items-center gap-4">
+                          {companyLogoUrl ? (
+                            <img 
+                              src={companyLogoUrl} 
+                              alt="Logo" 
+                              className="w-16 h-16 rounded-2xl object-contain border border-slate-200 p-1.5 shadow-xs bg-white shrink-0" 
+                              referrerPolicy="no-referrer"
+                              onError={(e) => {
+                                (e.target as HTMLImageElement).src = `https://api.dicebear.com/7.x/identicon/svg?seed=${encodeURIComponent(companyName)}`;
+                              }}
+                            />
+                          ) : (
+                            <div className="w-16 h-16 bg-slate-900 rounded-2xl flex items-center justify-center shadow-lg shrink-0">
+                              <Receipt className="w-9 h-9 text-indigo-400" />
+                            </div>
+                          )}
+                          <div className="text-left">
+                            <h1 className="text-2xl font-black tracking-tight text-slate-900 uppercase leading-none">{companyName}</h1>
+                            <p className="text-[10px] font-bold text-indigo-600 tracking-widest uppercase mt-2">{companyTagline}</p>
+                            <div className="text-xs text-gray-500 space-y-0.5 mt-1.5 font-sans">
+                              <p className="font-medium text-slate-600">{companyAddress}</p>
+                              <p className="text-[11px] text-gray-400">Phone: {companyPhone} • Email: {companyEmail}</p>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="text-right flex flex-col items-end w-full sm:w-auto border-t sm:border-0 border-slate-100 pt-3 sm:pt-0">
+                          <div className={cn(
+                            "text-[10px] font-extrabold uppercase tracking-widest px-3 py-1 rounded-full inline-block border",
+                            invoiceTransaction.type === "purchase" ? "bg-indigo-50 text-indigo-700 border-indigo-200" :
+                            invoiceTransaction.type === "return" ? "bg-amber-50 text-amber-700 border-amber-200" :
+                            "bg-emerald-50 text-emerald-700 border-emerald-200"
+                          )}>
+                            {invoiceTransaction.type} voucher
+                          </div>
+                          <p className="text-sm font-black text-slate-900 mt-2 font-mono">Invoice #{invoiceTransaction.refNo || "N/A"}</p>
+                          <p className="text-[10px] text-gray-400 font-bold font-mono mt-0.5">Date: {invoiceTransaction.date}</p>
+                        </div>
                       </div>
-                    )}
-                    <div>
-                      <h1 className="text-2xl font-black tracking-tight text-slate-900 uppercase">{companyName}</h1>
-                      <p className="text-xs text-gray-500 font-mono mt-1">{companyTagline} • Contact: {companyPhone}</p>
-                      <p className="text-xs text-gray-400 text-left">Date: {new Date().toLocaleDateString('en-GB')} • Email: {companyEmail}</p>
-                    </div>
-                  </div>
-                  <div className="text-right">
-                    <div className="bg-slate-900 text-white text-[10px] font-black uppercase tracking-widest px-3 py-1 rounded inline-block">
-                      {invoiceTransaction.type} voucher
-                    </div>
-                    <p className="text-xs font-mono font-bold text-slate-700 mt-2">Voucher #{invoiceTransaction.refNo || "N/A"}</p>
-                  </div>
-                </div>
 
-                {/* To & From Information */}
-                <div className="grid grid-cols-2 gap-8 text-xs text-left">
-                  <div>
-                    <p className="text-[10px] uppercase font-bold text-gray-400 tracking-wider">Billed To (Supplier Info)</p>
-                    <div className="mt-2 space-y-1">
-                      <p className="text-sm font-bold text-slate-900">{selectedSupplier.name}</p>
-                      <p className="font-mono text-gray-600">ID/Code: {selectedSupplier.code}</p>
-                      <p className="text-gray-600">{selectedSupplier.mobile || "No Mobile Provided"}</p>
-                      <p className="text-gray-600">{selectedSupplier.email || "No Email Provided"}</p>
-                      <p className="text-gray-500 italic mt-1">{selectedSupplier.address || "No Registered Address"}</p>
-                    </div>
-                  </div>
-                  <div className="text-right">
-                    <p className="text-[10px] uppercase font-bold text-gray-400 tracking-wider">Payment Metadata</p>
-                    <div className="mt-2 space-y-1">
-                      <p className="text-gray-600"><span className="font-semibold text-slate-700">Ref Date:</span> {invoiceTransaction.date}</p>
-                      <p className="text-gray-600"><span className="font-semibold text-slate-700">Channel:</span> {invoiceTransaction.paymentMethod || "Cash"}</p>
-                      <p className="text-gray-600"><span className="font-semibold text-slate-700">Receipt Type:</span> {invoiceTransaction.type.toUpperCase()}</p>
-                      <p className="text-gray-600"><span className="font-semibold text-slate-700">System Stamp:</span> Generated in Cloud Run Container</p>
-                    </div>
-                  </div>
-                </div>
+                      {/* To & From Information */}
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 text-xs text-left">
+                        <div className="p-5 rounded-2xl bg-slate-50 border border-slate-200/60 flex flex-col justify-between">
+                          <div>
+                            <h3 className="text-[9px] uppercase font-bold text-slate-400 tracking-wider flex items-center gap-1.5 mb-2">
+                              <Users className="w-3.5 h-3.5 text-indigo-500" />
+                              Billed To (Supplier Info)
+                            </h3>
+                            <div className="space-y-1">
+                              <div className="flex items-center gap-1.5">
+                                <span className="text-base font-black text-slate-900">{selectedSupplier.name}</span>
+                                <span className="bg-slate-200 text-[9px] font-bold px-2 py-0.5 rounded uppercase tracking-wider text-slate-700">
+                                  {selectedSupplier.country}
+                                </span>
+                              </div>
+                              <p className="text-[11px] font-bold text-indigo-600 font-mono">Supplier Code: {selectedSupplier.code}</p>
+                              <div className="text-gray-600 space-y-0.5 pt-1.5">
+                                {selectedSupplier.mobile && <p>📱 Phone: <span className="font-semibold text-slate-800">{selectedSupplier.mobile}</span></p>}
+                                {selectedSupplier.email && <p>✉️ Email: <span className="font-semibold text-slate-800">{selectedSupplier.email}</span></p>}
+                              </div>
+                            </div>
+                          </div>
+                          <div className="text-gray-500 italic mt-3 bg-white/70 p-2 rounded-xl border border-slate-100 text-[11px]">
+                            📍 {selectedSupplier.address || "No Registered Address"}
+                          </div>
+                        </div>
 
-                {/* Transaction breakdown table */}
-                <div>
-                  <table className="w-full text-left border-collapse border-b border-slate-200">
-                    <thead>
-                      <tr className="bg-slate-100/50 text-slate-800 text-[10px] font-black uppercase tracking-wider border-y border-slate-900">
-                        <th className="p-3">Reference Ref #</th>
-                        <th className="p-3">Item / Statement Description</th>
-                        <th className="p-3 text-right">Unit Rate (৳)</th>
-                        <th className="p-3 text-right">Value Amount (৳)</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-gray-100 text-xs text-left">
-                      <tr>
-                        <td className="p-3 font-mono font-bold text-slate-800">{invoiceTransaction.refNo}</td>
-                        <td className="p-3 text-slate-600">
-                          {invoiceTransaction.type === "purchase" && "Supplied Inventory Stocks & Materials Import Purchases"}
-                          {invoiceTransaction.type === "return" && "Stock Credits Return Voucher for Defective Inventories"}
-                          {invoiceTransaction.type === "payment" && "Acknowledge Settlement payout towards Outstanding Supplier Balance"}
-                        </td>
-                        <td className="p-3 text-right font-mono text-gray-500">{formatCurrency(invoiceTransaction.totalAmount)}</td>
-                        <td className="p-3 text-right font-mono font-bold text-slate-950">{formatCurrency(invoiceTransaction.totalAmount)}</td>
-                      </tr>
-                    </tbody>
-                  </table>
-                </div>
+                        <div className="p-5 rounded-2xl bg-slate-50 border border-slate-200/60 font-mono flex flex-col justify-between space-y-3">
+                          <div>
+                            <h3 className="text-[9px] uppercase font-bold text-slate-400 tracking-wider flex items-center gap-1.5 mb-2.5">
+                              <CreditCard className="w-3.5 h-3.5 text-indigo-500" />
+                              Payment Metadata & Rates
+                            </h3>
+                            <div className="grid grid-cols-2 gap-y-1.5 text-[11px]">
+                              <span className="text-gray-400">Ref Date:</span>
+                              <span className="font-bold text-slate-900 text-right">{invoiceTransaction.date}</span>
 
-                {/* Calculations Summary block */}
-                <div className="flex justify-end pt-4">
-                  <div className="w-64 space-y-2 text-xs text-left">
-                    <div className="flex justify-between font-medium text-gray-500 border-b border-gray-100 pb-2">
-                      <span>Gross Invoice Value:</span>
-                      <span className="font-mono text-slate-800">৳ {invoiceTransaction.totalAmount.toFixed(2)}</span>
-                    </div>
-                    {invoiceTransaction.paidAmount !== undefined && (
-                      <div className="flex justify-between font-medium text-gray-500 border-b border-gray-100 pb-2">
-                        <span>Paid Clearance Amount:</span>
-                        <span className="font-mono text-[#00a65a]">৳ {invoiceTransaction.paidAmount.toFixed(2)}</span>
+                              <span className="text-gray-400">Channel:</span>
+                              <span className="font-bold text-slate-900 text-right">{invoiceTransaction.paymentMethod || "Cash"}</span>
+
+                              <span className="text-gray-400">Receipt Type:</span>
+                              <span className="font-bold text-indigo-600 text-right uppercase">{invoiceTransaction.type}</span>
+
+                              <span className="text-gray-400">Voucher Currency:</span>
+                              <span className="font-bold text-slate-900 text-right">
+                                {isIndian ? `₹ INR (Rate: ${exchangeRateVal})` : "৳ BDT Direct"}
+                              </span>
+                            </div>
+                          </div>
+                          <div className="bg-indigo-500/5 text-[9px] text-slate-500 p-2 rounded-lg border border-indigo-150 text-center uppercase font-black tracking-wide">
+                            🛡️ System Secure Transaction Statement
+                          </div>
+                        </div>
                       </div>
-                    )}
-                    {invoiceTransaction.dueAmount !== undefined && (
-                      <div className="flex justify-between font-medium text-gray-500 border-b border-gray-100 pb-2">
-                        <span>Pending Due Adjustment:</span>
-                        <span className="font-mono text-red-600 font-bold">৳ {invoiceTransaction.dueAmount.toFixed(2)}</span>
-                      </div>
-                    )}
-                    <div className="flex justify-between text-sm font-black text-slate-950 pt-2 border-t-2 border-dashed border-slate-900">
-                      <span>Total Net Settled:</span>
-                      <span className="font-mono">৳ {invoiceTransaction.totalAmount.toFixed(2)}</span>
-                    </div>
-                    {invoiceTransaction.notes && (
-                      <div className="bg-slate-50 p-3 rounded-xl border border-gray-100 text-[11px] text-gray-500 italic mt-4 text-left">
-                        <span className="font-bold text-slate-700 block not-italic uppercase text-[9px] mb-1">Transaction Notes:</span>
-                        {invoiceTransaction.notes}
-                      </div>
-                    )}
-                  </div>
-                </div>
 
-                {/* Signatures footer */}
-                <div className="grid grid-cols-2 gap-8 pt-12 border-t border-dashed border-slate-200 text-center">
-                  <div>
-                    <div className="mx-auto w-32 border-b border-slate-400 h-10"></div>
-                    <p className="text-[10px] text-gray-400 uppercase tracking-widest font-bold mt-2">Authority Signature</p>
-                  </div>
-                  <div>
-                    <div className="mx-auto w-32 border-b border-slate-400 h-10"></div>
-                    <p className="text-[10px] text-gray-400 uppercase tracking-widest font-bold mt-2">Supplier Receiver Stamp</p>
-                  </div>
-                </div>
+                      {/* Foreign Exchange Rates Detail Box */}
+                      {isIndian && hasExchangeDetails && (
+                        <div className="p-5 rounded-2xl bg-amber-50/40 border border-amber-200/70 space-y-4 text-left animate-in fade-in duration-300">
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2 text-amber-900 font-bold text-xs uppercase tracking-wider">
+                              <span className="p-1 px-2 bg-amber-100 rounded-lg text-[10px] font-black border border-amber-300">INR ⇄ BDT</span>
+                              Indian Supplier Currency Conversion Details
+                            </div>
+                            <span className="text-[10px] font-mono font-bold text-amber-700 bg-amber-100/50 p-1 px-2.5 rounded-full border border-amber-200">
+                              Exchange Rate: ₹100 = ৳{exchangeRateVal.toFixed(2)}
+                            </span>
+                          </div>
 
-                {/* Bangladesh declaration stamp footer */}
-                <div className="text-center text-[10px] text-gray-400 pt-8">
-                  <p>Thank you for doing business with Dhaka Accounting Enterprise.</p>
-                  <p className="mt-1">For any queries, contact our support desk: hello@dhaka-accounting.com.bd</p>
-                </div>
+                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                            <div className="bg-white p-3 rounded-xl border border-amber-100 flex flex-col justify-center">
+                              <span className="text-[9px] uppercase font-black text-amber-600 tracking-wider">Gross Purchase (INR)</span>
+                              <span className="text-lg font-black text-amber-950 font-mono mt-1">₹{inrTotalVal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                            </div>
+                            <div className="bg-white p-3 rounded-xl border border-amber-100 flex flex-col justify-center">
+                              <span className="text-[9px] uppercase font-black text-amber-600 tracking-wider">Total Paid Amount (INR)</span>
+                              <span className="text-lg font-black text-emerald-700 font-mono mt-1">₹{inrPaidVal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                            </div>
+                            <div className="bg-white p-3 rounded-xl border border-amber-100 flex flex-col justify-center">
+                              <span className="text-[9px] uppercase font-black text-amber-600 tracking-wider">Remaining Due (INR)</span>
+                              <span className={cn(
+                                "text-lg font-black font-mono mt-1",
+                                (inrTotalVal - inrPaidVal) > 0 ? "text-rose-600" : "text-gray-500"
+                              )}>
+                                ₹{(inrTotalVal - inrPaidVal).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                              </span>
+                            </div>
+                          </div>
+
+                          <p className="text-[9px] text-amber-800 bg-amber-100/25 p-2 rounded-xl text-center font-mono italic">
+                            Formula used: BDT Sum = (INR Sum / Rate) * 100
+                          </p>
+                        </div>
+                      )}
+
+                      {/* Transaction breakdown table */}
+                      <div>
+                        <div className="overflow-hidden rounded-2xl border border-slate-200">
+                          <table className="w-full text-left border-collapse">
+                            <thead>
+                              <tr className="bg-slate-900 border-b border-slate-800 text-white text-[10px] font-black uppercase tracking-wider">
+                                <th className="p-3.5 pl-5">Reference Ref #</th>
+                                <th className="p-3.5">Statement or Item Description</th>
+                                <th className="p-3.5 text-right">Value (INR)</th>
+                                <th className="p-3.5 text-right pr-5">Amount (৳ BDT)</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-150 text-xs text-left bg-white">
+                              <tr className="hover:bg-slate-50/20 transition-colors">
+                                <td className="p-4 pl-5 font-mono font-bold text-slate-800">{invoiceTransaction.refNo}</td>
+                                <td className="p-4">
+                                  <span className="font-bold text-slate-900 block">
+                                    {invoiceTransaction.type === "purchase" && "Supplied Inventory Stocks & Materials Import Purchases"}
+                                    {invoiceTransaction.type === "return" && "Stock Credits Return Voucher for Defective Inventories"}
+                                    {invoiceTransaction.type === "payment" && "Acknowledge Settlement payout towards Outstanding Supplier Balance"}
+                                  </span>
+                                  <span className="text-[10px] text-slate-400 mt-1 block leading-relaxed">
+                                    Approved and verified ledger posting under the general suppliers framework.
+                                  </span>
+                                </td>
+                                <td className="p-4 text-right font-mono">
+                                  {isIndian && hasExchangeDetails ? (
+                                    <span className="bg-amber-50/80 text-amber-800 border border-amber-100 rounded-lg px-2.5 py-1 text-[11px] font-black inline-block">
+                                      ₹{inrTotalVal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                    </span>
+                                  ) : (
+                                    <span className="text-gray-400 font-mono italic">N/A</span>
+                                  )}
+                                </td>
+                                <td className="p-4 text-right font-mono font-black text-slate-950 pr-5 text-sm">
+                                  {formatCurrency(invoiceTransaction.totalAmount)}
+                                </td>
+                              </tr>
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+
+                      {/* Calculations Summary block */}
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-4">
+                        {/* Transaction Notes / Comments */}
+                        <div className="text-left">
+                          {cleanNotes ? (
+                            <div className="bg-slate-50/80 p-4 rounded-2xl border border-slate-200/60 text-xs text-slate-650 h-full flex flex-col justify-start">
+                              <span className="font-extrabold text-slate-800 block uppercase text-[9px] tracking-wider mb-2 flex items-center gap-1.5 border-b border-slate-200 pb-1.5">
+                                📝 Remittance & Remarks Remarks:
+                              </span>
+                              <p className="italic leading-normal whitespace-pre-line">{cleanNotes}</p>
+                            </div>
+                          ) : (
+                            <div className="bg-slate-50/20 p-4 rounded-2xl border border-dashed border-slate-200 text-xs text-gray-400 h-full flex items-center justify-center italic">
+                              No custom remarks recorded on this voucher.
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Totals panel */}
+                        <div className="flex justify-end">
+                          <div className="w-full sm:w-80 space-y-2.5 text-xs text-left p-4 rounded-2xl bg-slate-50 border border-slate-200">
+                            <div className="flex justify-between font-medium text-slate-500 border-b border-slate-150 pb-2">
+                              <span>Gross Invoice Subtotal:</span>
+                              <span className="font-mono text-slate-800 font-bold">{formatCurrency(invoiceTransaction.totalAmount)}</span>
+                            </div>
+                            
+                            {invoiceTransaction.paidAmount !== undefined && (
+                              <div className="flex justify-between font-medium text-slate-500 border-b border-slate-150 pb-2">
+                                <span>Paid Amount:</span>
+                                <span className="font-mono text-emerald-600 font-black">{formatCurrency(invoiceTransaction.paidAmount)}</span>
+                              </div>
+                            )}
+
+                            {invoiceTransaction.dueAmount !== undefined && (
+                              <div className="flex justify-between font-medium text-slate-500 border-b border-slate-150 pb-2">
+                                <span>Adjustment Due:</span>
+                                <span className="font-mono text-rose-600 font-black">
+                                  {formatCurrency(invoiceTransaction.dueAmount)}
+                                </span>
+                              </div>
+                            )}
+
+                            <div className="flex justify-between text-base font-black text-slate-900 pt-2.5 border-t-2 border-dashed border-slate-300">
+                              <span>Net Total Cleared (BDT):</span>
+                              <span className="font-mono text-indigo-650 text-base">{formatCurrency(invoiceTransaction.totalAmount)}</span>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Signatures footer */}
+                      <div className="grid grid-cols-2 gap-8 pt-12 border-t border-dashed border-slate-200 text-center">
+                        <div>
+                          <div className="mx-auto w-36 border-b border-slate-300 h-12 flex items-end justify-center">
+                            <span className="text-[9px] italic text-slate-400 font-mono pb-1">Authorized Representative</span>
+                          </div>
+                          <p className="text-[9px] text-slate-500 uppercase tracking-widest font-black mt-2.5">Authority Stamp & Signature</p>
+                        </div>
+                        <div>
+                          <div className="mx-auto w-36 border-b border-slate-300 h-12 flex items-end justify-center">
+                            <span className="text-[9px] italic text-slate-400 font-mono pb-1">Date Received</span>
+                          </div>
+                          <p className="text-[9px] text-slate-500 uppercase tracking-widest font-black mt-2.5">Supplier Acknowledgment</p>
+                        </div>
+                      </div>
+
+                      {/* Declaration Stamp Footer */}
+                      <div className="text-center text-[10px] text-slate-400 border-t border-slate-100 pt-6 mt-4 space-y-1">
+                        <p className="font-black text-slate-600">Dhaka Ledger Enterprise System • Official Supplier Invoice</p>
+                        <p>Document generated on {new Date().toLocaleDateString('en-GB')} from secure backend services.</p>
+                        <p className="text-[9px] text-slate-350">Registered Corporate Address: {companyAddress} • Email: {companyEmail}</p>
+                      </div>
+                    </>
+                  );
+                })()}
               </div>
 
               {/* Leave and back action */}

@@ -873,6 +873,7 @@ export default function App() {
                   role={profile.role} 
                   editDate={salesEditDate} 
                   onClearEditDate={() => setSalesEditDate("")} 
+                  onSaveSuccess={() => setActiveView("salesList")}
                 />
               )}
               {activeView === "salesList" && (
@@ -883,6 +884,10 @@ export default function App() {
                     setSalesEditDate(date);
                     setActiveView("newSale");
                   }} 
+                  onNavigateToNewSale={() => {
+                    setSalesEditDate(""); // clear edit date to register fresh sale
+                    setActiveView("newSale");
+                  }}
                 />
               )}
               {activeView === "newEmployee" && (

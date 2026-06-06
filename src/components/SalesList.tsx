@@ -25,11 +25,14 @@ import {
 } from "lucide-react";
 import { format, isWithinInterval, startOfDay, endOfDay } from "date-fns";
 import { motion, AnimatePresence } from "motion/react";
+import { jsPDF } from "jspdf";
+import autoTable from "jspdf-autotable";
 
 interface SalesListProps {
   user: User;
   role: UserRole;
   onEditSales?: (date: string) => void;
+  onNavigateToNewSale?: () => void;
 }
 
 interface DailySalesGroup {
@@ -47,12 +50,17 @@ interface DailySalesGroup {
   }[];
 }
 
-export default function SalesList({ user, role, onEditSales }: SalesListProps) {
+export default function SalesList({ user, role, onEditSales, onNavigateToNewSale }: SalesListProps) {
   const { language, t, formatDate, formatNumber, translateValue } = useLanguage();
   const [transactions, setTransactions] = useState<Transaction[]>([]);
 
   // White-label corporate parameters
   const [companyName, setCompanyName] = useState("Modern Shop");
+  const [companyTagline, setCompanyTagline] = useState("Automated POS");
+  const [companyLogoUrl, setCompanyLogoUrl] = useState("");
+  const [companyPhone, setCompanyPhone] = useState("+880 1234 567890");
+  const [companyEmail, setCompanyEmail] = useState("info@modernmanager.com");
+  const [companyAddress, setCompanyAddress] = useState("Dhaka, Bangladesh");
   const [companyPoweredBy, setCompanyPoweredBy] = useState("Powered by ModernManager");
   const [showPoweredBy, setShowPoweredBy] = useState(true);
 
@@ -61,6 +69,11 @@ export default function SalesList({ user, role, onEditSales }: SalesListProps) {
       if (docSnap.exists()) {
         const data = docSnap.data();
         setCompanyName(data.companyName || "Modern Shop");
+        setCompanyTagline(data.companyTagline || "Automated POS");
+        setCompanyLogoUrl(data.companyLogoUrl || "");
+        setCompanyPhone(data.companyPhone || "+880 1234 567890");
+        setCompanyEmail(data.companyEmail || "info@modernmanager.com");
+        setCompanyAddress(data.companyAddress || "Dhaka, Bangladesh");
         setCompanyPoweredBy(data.companyPoweredBy || "Powered by ModernManager");
         setShowPoweredBy(data.showPoweredBy ?? true);
       }
@@ -127,6 +140,311 @@ export default function SalesList({ user, role, onEditSales }: SalesListProps) {
       unsubEmps();
     };
   }, []);
+
+  const downloadTransactionPDF = (tx: Transaction) => {
+    const doc = new jsPDF("p", "mm", "a4");
+    const pageWidth = doc.internal.pageSize.getWidth();
+
+    // 1. Solid modern dark top banner representing corporate premium style
+    doc.setFillColor(15, 23, 42); // slate `#0f172a` primary color
+    doc.rect(0, 0, pageWidth, 42, "F");
+
+    // Left block: Elegant display typography for branding
+    doc.setTextColor(255);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(22);
+    const companyTitleStr = companyName.toUpperCase();
+    doc.text(companyTitleStr, 14, 17);
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(8.5);
+    doc.setTextColor(203, 213, 225); // light-slate color
+    const companyTaglineStr = `${companyTagline} | Phone: ${companyPhone} | Email: ${companyEmail}`;
+    doc.text(companyTaglineStr, 14, 24);
+    doc.text(`Registered Corporate Address: ${companyAddress}`, 14, 29);
+
+    doc.setFontSize(10);
+    doc.setFont("helvetica", "bold");
+    doc.setTextColor(56, 189, 248); // sky accent
+    doc.text("OFFICIAL TRANSACTION INVOICE & VOUCHER", 14, 36);
+
+    // Cyan colored divider line
+    doc.setFillColor(56, 189, 248);
+    doc.rect(0, 42, pageWidth, 1.5, "F");
+
+    // 2. Memo & Info Boxes (Left & Right Split Box)
+    const boxY = 48;
+    doc.setFillColor(248, 250, 252);
+    doc.rect(14, boxY, pageWidth - 28, 24, "F");
+    doc.setDrawColor(226, 232, 240);
+    doc.rect(14, boxY, pageWidth - 28, 24);
+    doc.line(pageWidth / 2, boxY, pageWidth / 2, boxY + 24);
+
+    doc.setFontSize(8.5);
+    doc.setFont("helvetica", "bold");
+    doc.setTextColor(71, 85, 105);
+    doc.text("VOUCHER & RECORD METADATA:", 18, boxY + 6);
+    doc.setFont("helvetica", "normal");
+    doc.text(`Voucher ID: ${tx.id || "POS-LEDGER-VOUCHER"}`, 18, boxY + 12);
+    doc.text(`Category: ${tx.category}`, 18, boxY + 18);
+
+    doc.setFont("helvetica", "bold");
+    doc.text("RESOURCES & SETTLEMENTS:", pageWidth / 2 + 5, boxY + 6);
+    doc.setFont("helvetica", "normal");
+    doc.text(`Transaction Date: ${format(new Date(tx.date), "dd MMM yyyy (EEEE)")}`, pageWidth / 2 + 5, boxY + 12);
+    doc.text(`Payment Gateway / Channel: ${tx.paymentMethod || "Cash"}`, pageWidth / 2 + 5, boxY + 18);
+
+    // 3. Transactions Detail Table
+    const startTableY = boxY + 29;
+    
+    // Construct single row for this transaction
+    const tableRows = [[
+      "1",
+      tx.category,
+      tx.subCategory || "Daily Reconciliation",
+      tx.notes || "Store ledger transaction record",
+      `BDT ${(tx.amount || 0).toFixed(2)}`
+    ]];
+
+    autoTable(doc, {
+      startY: startTableY,
+      head: [["S.No", "Category Class", "Reference Subcategory", "Specific Ledger Description / Note Remarks", "Inflow Amount (BDT)"]],
+      body: tableRows,
+      theme: "grid",
+      headStyles: {
+        fillColor: [15, 23, 42],
+        textColor: [255, 255, 255],
+        fontSize: 8.5,
+        fontStyle: "bold",
+        halign: "left"
+      },
+      bodyStyles: {
+        fontSize: 8,
+        textColor: [51, 65, 85]
+      },
+      columnStyles: {
+        0: { halign: "center", fontStyle: "bold", cellWidth: 12 },
+        1: { fontStyle: "bold", cellWidth: 35 },
+        2: { fontStyle: "bold", cellWidth: 35 },
+        4: { halign: "right", fontStyle: "bold", textColor: [15, 23, 42] }
+      },
+      styles: {
+        font: "helvetica",
+        cellPadding: 4.5
+      }
+    });
+
+    // 4. Summarized Cards
+    const finalY = (doc as any).lastAutoTable.finalY + 8;
+    const cardWidth = 72;
+    const cardX = pageWidth - 14 - cardWidth;
+
+    doc.setDrawColor(226, 232, 240);
+    doc.setFillColor(250, 250, 250);
+    doc.rect(cardX, finalY, cardWidth, 20, "F");
+    doc.rect(cardX, finalY, cardWidth, 20);
+
+    doc.setFontSize(8.5);
+    doc.setFont("helvetica", "normal");
+    doc.setTextColor(115, 115, 115);
+    doc.text("Total Value:", cardX + 4, finalY + 7);
+    doc.text(`BDT ${(tx.amount || 0).toFixed(2)}`, pageWidth - 18, finalY + 7, { align: "right" });
+
+    doc.setFillColor(15, 23, 42); // slate highlight for total
+    doc.rect(cardX, finalY + 11, cardWidth, 9, "F");
+    doc.setTextColor(255);
+    doc.setFont("helvetica", "bold");
+    doc.text("Net Cleared Inflow:", cardX + 4, finalY + 17);
+    doc.text(`BDT ${(tx.amount || 0).toFixed(2)}`, pageWidth - 18, finalY + 17, { align: "right" });
+
+    // 5. Signature areas
+    const sigY = finalY + 36;
+    doc.setDrawColor(200, 200, 200);
+    doc.line(14, sigY, 64, sigY);
+    doc.line(pageWidth - 14 - 50, sigY, pageWidth - 14, sigY);
+
+    doc.setFontSize(7.5);
+    doc.setFont("helvetica", "bold");
+    doc.setTextColor(115, 115, 115);
+    doc.text("PREPARED BY (LEDGER CONTROLLER)", 14, sigY + 4);
+    doc.text("APPROVED BY (AUTHORIZED REPRESENTATIVE)", pageWidth - 14, sigY + 4, { align: "right" });
+
+    // 6. Security stamp Audit message at bottom
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(7);
+    doc.setTextColor(148, 163, 184);
+    doc.text(`Voucher generated securely on ${format(new Date(), "dd/MM/yyyy HH:mm:ss")} from ${companyName} POS database registry.`, 14, sigY + 14);
+    doc.text(`Protected by system-wide AES security protocols. Powered by ${companyPoweredBy}.`, 14, sigY + 18);
+
+    doc.save(`Invoice_Sale_Voucher_${tx.id || "tx"}.pdf`);
+  };
+
+  const downloadDailyReportPDF = (group: DailySalesGroup) => {
+    const doc = new jsPDF("p", "mm", "a4");
+    const pageWidth = doc.internal.pageSize.getWidth();
+
+    // Corp Header banner
+    doc.setFillColor(15, 23, 42); // slate bg
+    doc.rect(0, 0, pageWidth, 42, "F");
+
+    doc.setTextColor(255);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(22);
+    doc.text(companyName.toUpperCase(), 14, 17);
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(8.5);
+    doc.setTextColor(203, 213, 225);
+    const companyTaglineStr = `${companyTagline} | Phone: ${companyPhone} | Email: ${companyEmail}`;
+    doc.text(companyTaglineStr, 14, 24);
+    doc.text(`Registered Corporate Address: ${companyAddress}`, 14, 29);
+
+    doc.setFontSize(10);
+    doc.setFont("helvetica", "bold");
+    doc.setTextColor(244, 63, 94); // rose/crimson accent
+    doc.text("DAILY RECONCILIATION & SALES LEDGER STATEMENT", 14, 36);
+
+    doc.setFillColor(244, 63, 94); // rose divider
+    doc.rect(0, 42, pageWidth, 1.5, "F");
+
+    // Memo Box
+    const boxY = 48;
+    doc.setFillColor(248, 250, 252);
+    doc.rect(14, boxY, pageWidth - 28, 22, "F");
+    doc.setDrawColor(226, 232, 240);
+    doc.rect(14, boxY, pageWidth - 28, 22);
+    doc.line(pageWidth / 2, boxY, pageWidth / 2, boxY + 22);
+
+    doc.setFontSize(8.5);
+    doc.setFont("helvetica", "bold");
+    doc.setTextColor(71, 85, 105);
+    doc.text("LEDGER METADATA:", 18, boxY + 6);
+    doc.setFont("helvetica", "normal");
+    doc.text(`Reference ID: INV-SL-${group.dateStr.replace(/-/g, "")}`, 18, boxY + 12);
+    doc.text(`Total Transactions Synced: ${group.transactions.length}`, 18, boxY + 18);
+
+    doc.setFont("helvetica", "bold");
+    doc.text("STATEMENT DETAILS:", pageWidth / 2 + 5, boxY + 6);
+    doc.setFont("helvetica", "normal");
+    doc.text(`Ledger Date: ${format(new Date(group.dateStr), "dd MMM yyyy (EEEE)")}`, pageWidth / 2 + 5, boxY + 12);
+    doc.text(`Generated By: ${user.email} (${role})`, pageWidth / 2 + 5, boxY + 18);
+
+    // Table of individual items/breakdowns
+    const tableRows: any[] = [];
+    
+    // Add staff breakdown
+    if (group.employeeBreakdown.length > 0) {
+      group.employeeBreakdown.forEach((emp, index) => {
+        const matchingDoc = employees.find(e => e.id === emp.employeeId);
+        const roleStr = matchingDoc?.role || "Sales staff";
+        tableRows.push([
+          (index + 1).toString(),
+          `Staff Counter Sale - ${emp.employeeName}`,
+          roleStr.toUpperCase(),
+          "Cash Inflow Entry",
+          `BDT ${emp.amount.toFixed(2)}`
+        ]);
+      });
+    }
+
+    // Add Wholesale Sales if any
+    if (group.totalWholesaleSales > 0) {
+      tableRows.push([
+        (tableRows.length + 1).toString(),
+        "Wholesale Sales Inflow",
+        "WHOLESALE DIVISION",
+        "Direct Invoice Settlement",
+        `BDT ${group.totalWholesaleSales.toFixed(2)}`
+      ]);
+    }
+
+    // Add Deposits if any
+    if (group.totalDeposit > 0) {
+      tableRows.push([
+        (tableRows.length + 1).toString(),
+        "Deposit Deductions",
+        "TREASURY",
+        "Due Balance adjustments / store credits",
+        `-BDT ${group.totalDeposit.toFixed(2)}`
+      ]);
+    }
+
+    const startTableY = boxY + 28;
+
+    autoTable(doc, {
+      startY: startTableY,
+      head: [["S.No", "Sales Channel / Personnel", "Class Designation", "Payment Memo Remarks", "Volume (BDT)"]],
+      body: tableRows,
+      theme: "grid",
+      headStyles: {
+        fillColor: [15, 23, 42],
+        textColor: [255, 255, 255],
+        fontSize: 8.5,
+        fontStyle: "bold",
+        halign: "left"
+      },
+      bodyStyles: {
+        fontSize: 8,
+        textColor: [51, 65, 85]
+      },
+      columnStyles: {
+        0: { halign: "center", fontStyle: "bold", cellWidth: 12 },
+        4: { halign: "right", fontStyle: "bold", textColor: [15, 23, 42] }
+      },
+      styles: {
+        font: "helvetica",
+        cellPadding: 3.5
+      }
+    });
+
+    // Drawing the summary list card
+    const finalY = (doc as any).lastAutoTable.finalY + 8;
+    const cardWidth = 72;
+    const cardX = pageWidth - 14 - cardWidth;
+
+    doc.setDrawColor(226, 232, 240);
+    doc.setFillColor(250, 250, 250);
+    doc.rect(cardX, finalY, cardWidth, 34, "F");
+    doc.rect(cardX, finalY, cardWidth, 34);
+
+    doc.setFontSize(8.5);
+    doc.setFont("helvetica", "normal");
+    doc.setTextColor(115, 115, 115);
+    doc.text("Summed Staff Sales:", cardX + 4, finalY + 7);
+    doc.text(`BDT ${group.totalEmployeeSales.toFixed(2)}`, pageWidth - 18, finalY + 7, { align: "right" });
+
+    doc.text("Wholesale volume (+):", cardX + 4, finalY + 14);
+    doc.text(`BDT ${group.totalWholesaleSales.toFixed(2)}`, pageWidth - 18, finalY + 14, { align: "right" });
+
+    doc.text("Due Sales (-):", cardX + 4, finalY + 21);
+    doc.text(`BDT ${group.totalDeposit.toFixed(2)}`, pageWidth - 18, finalY + 21, { align: "right" });
+
+    doc.setFillColor(15, 23, 42); // slate highlight for grand total
+    doc.rect(cardX, finalY + 25, cardWidth, 9, "F");
+    doc.setTextColor(255);
+    doc.setFont("helvetica", "bold");
+    doc.text("Grand Net Total:", cardX + 4, finalY + 31);
+    doc.text(`BDT ${group.grandTotal.toFixed(2)}`, pageWidth - 18, finalY + 31, { align: "right" });
+
+    // Signatures
+    const sigY = finalY + 48;
+    doc.setDrawColor(200, 200, 200);
+    doc.line(14, sigY, 64, sigY);
+    doc.line(pageWidth - 14 - 50, sigY, pageWidth - 14, sigY);
+
+    doc.setFontSize(7.5);
+    doc.setFont("helvetica", "bold");
+    doc.setTextColor(115, 115, 115);
+    doc.text("PREPARED BY (LEDGER CONTROLLER)", 14, sigY + 4);
+    doc.text("APPROVED BY (AUTHORIZED SIGNATURE)", pageWidth - 14, sigY + 4, { align: "right" });
+
+    // Audit Info
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(7);
+    doc.setTextColor(148, 163, 184);
+    doc.text(`Invoice generated automatically on ${format(new Date(), "dd/MM/yyyy HH:mm:ss")} from ${companyName} Daily Reconciliation Ledger.`, 14, sigY + 14);
+    doc.save(`Daily_Sales_Statement_${group.dateStr}.pdf`);
+  };
 
   // Soft toggle expand/collapse for a date row
   const toggleExpand = (dateStr: string) => {
@@ -296,6 +614,16 @@ export default function SalesList({ user, role, onEditSales }: SalesListProps) {
           <p className="text-xs font-semibold text-slate-455 uppercase tracking-wider mt-0.5">{t("Audit log of counter sales & store ledger")}</p>
         </div>
         <div className="flex flex-wrap gap-2">
+          {onNavigateToNewSale && (
+            <button
+              id="navigate-to-newsale"
+              onClick={onNavigateToNewSale}
+              className="px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold text-xs uppercase tracking-wider flex items-center justify-center gap-2 transition-all active:scale-[0.98] cursor-pointer shadow-md"
+            >
+              <ShoppingCart className="w-4 h-4 text-blue-100" />
+              {t("New Sale")}
+            </button>
+          )}
           <button
             onClick={exportGroupedCSV}
             disabled={sortedFilteredGroups.length === 0}
@@ -423,6 +751,16 @@ export default function SalesList({ user, role, onEditSales }: SalesListProps) {
             <p className="not-italic text-xs text-gray-500 mt-1 font-medium">
               {t("Create a record in the New Sale tab first.")}
             </p>
+            {onNavigateToNewSale && (
+              <button
+                id="empty-state-navigate"
+                onClick={onNavigateToNewSale}
+                className="mt-4 px-4 py-2.5 bg-blue-50 hover:bg-blue-600 hover:text-white text-blue-700 border border-blue-100 hover:border-transparent rounded-xl font-bold text-xs uppercase tracking-wider inline-flex items-center gap-2 transition-all active:scale-[0.98] cursor-pointer shadow-xs"
+              >
+                <ShoppingCart className="w-4 h-4" />
+                {t("Go to Sell Page")}
+              </button>
+            )}
           </div>
         ) : (
           <div className="space-y-3">
@@ -573,11 +911,81 @@ export default function SalesList({ user, role, onEditSales }: SalesListProps) {
                             )}
                           </div>
 
-                          {/* Full Day Summary Recital panel */}
-                          <div className="bg-white border text-gray-700 border-gray-200/60 p-5 rounded-2xl shadow-sm space-y-3">
-                            <h5 className="font-bold text-gray-900 text-xs uppercase tracking-widest pl-0.5 border-b pb-2">
-                              Daily Reconciliation
+                          {/* Individual Transactions Grid with Download PDF action */}
+                          <div>
+                            <h5 className="text-[11px] font-black text-gray-400 uppercase tracking-widest pl-0.5 mb-3 flex items-center gap-1.5 mt-2">
+                              <CheckCircle2 className="w-3.5 h-3.5 text-blue-500" />
+                              Store Ledger • Individual Transactions
                             </h5>
+                            {group.transactions.length === 0 ? (
+                              <p className="text-xs text-gray-400 italic bg-[#fff] border border-gray-100 rounded-2xl p-4 text-center">
+                                No individual transaction records are synced for this day.
+                              </p>
+                            ) : (
+                              <div className="bg-white border border-gray-100 rounded-2xl divide-y divide-gray-50 shadow-sm overflow-hidden">
+                                {group.transactions.map((tx) => (
+                                  <div 
+                                    key={tx.id || tx.notes} 
+                                    className="flex flex-col sm:flex-row justify-between items-start sm:items-center p-4 hover:bg-slate-50/55 gap-4 transition-all"
+                                  >
+                                    <div className="flex flex-col text-left">
+                                      <div className="flex items-center gap-2">
+                                        <span className={cn(
+                                          "text-[10px] font-extrabold uppercase px-2 py-0.5 rounded border leading-no",
+                                          tx.category === "Employee Sales" ? "bg-emerald-50 text-emerald-700 border-emerald-100" :
+                                          tx.category === "Wholesale Sales" ? "bg-sky-50 text-sky-700 border-sky-100" :
+                                          "bg-rose-50 text-rose-700 border-rose-100"
+                                        )}>
+                                          {tx.category === "Employee Sales" ? "Staff Counter Sale" : tx.category === "Wholesale Sales" ? "Wholesale Inflow" : "Deposit Deduction"}
+                                        </span>
+                                        <span className="text-[10px] font-bold text-gray-400 font-mono">
+                                          Gateway: {tx.paymentMethod || "Cash"}
+                                        </span>
+                                      </div>
+                                      <p className="text-xs text-slate-700 font-bold mt-1.5">
+                                        {tx.notes || "Store ledger transaction record"}
+                                      </p>
+                                      <p className="text-[10px] text-gray-400 font-semibold tracking-wider uppercase mt-0.5">
+                                        Ref Account: {tx.subCategory || "Reconciled Account"}
+                                      </p>
+                                    </div>
+
+                                    <div className="flex items-center justify-between sm:justify-end gap-3 w-full sm:w-auto border-t sm:border-0 border-slate-50 pt-3 sm:pt-0 font-sans">
+                                      <div className="text-right">
+                                        <span className="font-mono text-sm font-black text-slate-800">
+                                          {formatCurrency(tx.amount)}
+                                        </span>
+                                      </div>
+                                      <button
+                                        id={`download-pdf-${tx.id || tx.notes}`}
+                                        onClick={() => downloadTransactionPDF(tx)}
+                                        className="px-3.5 py-2 bg-indigo-50 border border-indigo-100 hover:bg-indigo-600 hover:text-white text-indigo-700 rounded-xl text-[10px] font-black uppercase tracking-wider flex items-center gap-1.5 transition-all shadow-xs cursor-pointer active:scale-95 shrink-0"
+                                        title="Download PDF Invoice for this specific transaction"
+                                      >
+                                        <FileDown className="w-3.5 h-3.5 font-bold" />
+                                        Invoice PDF
+                                      </button>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Full Day Summary Recital panel */}
+                          <div className="bg-white border text-gray-700 border-gray-200/60 p-5 rounded-2xl shadow-sm space-y-4">
+                            <div className="flex justify-between items-center border-b pb-2">
+                              <h5 className="font-bold text-gray-900 text-xs uppercase tracking-widest pl-0.5">
+                                Daily Reconciliation
+                              </h5>
+                              <button
+                                onClick={() => downloadDailyReportPDF(group)}
+                                className="px-3.5 py-1.5 bg-rose-50 border border-rose-100 hover:bg-rose-600 hover:text-white text-rose-700 rounded-xl text-[9px] font-black uppercase tracking-wider flex items-center gap-1.5 transition-all shadow-xs cursor-pointer active:scale-95"
+                              >
+                                <FileDown className="w-3.5 h-3.5" />
+                                Report PDF
+                              </button>
+                            </div>
                             
                             <div className="space-y-2 text-sm font-semibold text-gray-500">
                               <div className="flex justify-between">

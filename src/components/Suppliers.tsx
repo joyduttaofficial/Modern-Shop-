@@ -26,7 +26,7 @@ export default function Suppliers({
   const [transactions, setTransactions] = useState<SupplierTransaction[]>([]);
 
   // Corporate identity parameters
-  const [companyName, setCompanyName] = useState("Modern Shop");
+  const [companyName, setCompanyName] = useState("Modern Pro");
   const [companyTagline, setCompanyTagline] = useState("Automated POS");
   const [companyLogoUrl, setCompanyLogoUrl] = useState("");
   const [companyPhone, setCompanyPhone] = useState("+880 1234 567890");
@@ -37,7 +37,7 @@ export default function Suppliers({
     const unsubBranding = onSnapshot(doc(db, "settings", "company"), (docSnap) => {
       if (docSnap.exists()) {
         const data = docSnap.data();
-        setCompanyName(data.companyName || "Modern Shop");
+        setCompanyName(data.companyName || "Modern Pro");
         setCompanyTagline(data.companyTagline || "Automated POS");
         setCompanyLogoUrl(data.companyLogoUrl || "");
         setCompanyPhone(data.companyPhone || "+880 1234 567890");

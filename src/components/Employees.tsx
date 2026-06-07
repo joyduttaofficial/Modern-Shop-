@@ -52,7 +52,7 @@ export default function Employees({
   const [employeeToDelete, setEmployeeToDelete] = useState<string | null>(null);
 
   // Dynamic Branding
-  const [companyName, setCompanyName] = useState("Modern Shop");
+  const [companyName, setCompanyName] = useState("Modern Pro");
 
   // Quick Pay State
   const [quickPay, setQuickPay] = useState<{ empId: string; type: "Staff Salary" | "Employee Advance" } | null>(null);
@@ -96,7 +96,7 @@ export default function Employees({
 
     const unsubCompany = onSnapshot(doc(db, "settings", "company"), (docSnap) => {
       if (docSnap.exists()) {
-        setCompanyName(docSnap.data().companyName || "Modern Shop");
+        setCompanyName(docSnap.data().companyName || "Modern Pro");
       }
     });
 

@@ -31,6 +31,7 @@ import { onAuthStateChanged, signOut, User as FirebaseUser } from "firebase/auth
 import { doc, getDoc, setDoc, onSnapshot, collection, query, where, getDocs, deleteDoc } from "firebase/firestore";
 import { UserProfile, UserRole, RolePermission } from "@/src/types";
 import { useLanguage } from "./contexts/LanguageContext";
+import defaultLogo from "./assets/images/modern_pro_logo_1780829028289.png";
 
 // Components
 import Dashboard from "./components/Dashboard";
@@ -228,7 +229,7 @@ export default function App() {
   const [loading, setLoading] = useState(true);
 
   // Dynamic Company Branding & Profile States
-  const [companyName, setCompanyName] = useState("Modern Shop");
+  const [companyName, setCompanyName] = useState("Modern Pro");
   const [companyTagline, setCompanyTagline] = useState("Automated POS");
   const [companyLogoUrl, setCompanyLogoUrl] = useState("");
 
@@ -236,7 +237,7 @@ export default function App() {
     const unsubBranding = onSnapshot(doc(db, "settings", "company"), (docSnap) => {
       if (docSnap.exists()) {
         const data = docSnap.data();
-        setCompanyName(data.companyName || "Modern Shop");
+        setCompanyName(data.companyName || "Modern Pro");
         setCompanyTagline(data.companyTagline || "Automated POS");
         setCompanyLogoUrl(data.companyLogoUrl || "");
       }
@@ -539,13 +540,16 @@ export default function App() {
               className="w-8 h-8 rounded-lg object-contain border border-slate-100 shadow-xs bg-white shrink-0" 
               referrerPolicy="no-referrer"
               onError={(e) => {
-                (e.target as HTMLImageElement).src = `https://api.dicebear.com/7.x/identicon/svg?seed=${encodeURIComponent(companyName)}`;
+                (e.target as HTMLImageElement).src = defaultLogo;
               }}
             />
           ) : (
-            <div className="w-8 h-8 bg-slate-900 rounded-lg flex items-center justify-center">
-              <LayoutDashboard className="w-4 h-4 text-white" />
-            </div>
+            <img 
+              src={defaultLogo} 
+              alt="Logo" 
+              className="w-8 h-8 rounded-lg object-contain border border-slate-100 shadow-xs bg-white shrink-0" 
+              referrerPolicy="no-referrer"
+            />
           )}
           <span className="font-extrabold tracking-tight text-slate-900 text-base">{companyName}</span>
         </div>
@@ -603,13 +607,16 @@ export default function App() {
                 className="w-10 h-10 rounded-xl object-contain border border-slate-100 shadow-md bg-white shrink-0" 
                 referrerPolicy="no-referrer"
                 onError={(e) => {
-                  (e.target as HTMLImageElement).src = `https://api.dicebear.com/7.x/identicon/svg?seed=${encodeURIComponent(companyName)}`;
+                  (e.target as HTMLImageElement).src = defaultLogo;
                 }}
               />
             ) : (
-              <div className="w-10 h-10 bg-slate-950 rounded-xl flex items-center justify-center shadow-lg shadow-slate-950/10">
-                <LayoutDashboard className="w-5.5 h-5.5 text-white" />
-              </div>
+              <img 
+                src={defaultLogo} 
+                alt="Logo" 
+                className="w-10 h-10 rounded-xl object-contain border border-slate-100 shadow-md bg-white shrink-0" 
+                referrerPolicy="no-referrer"
+              />
             )}
             <div className="truncate">
               <span className="text-lg font-black tracking-tight text-slate-900 block leading-none truncate">{companyName}</span>

@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import defaultLogo from "../assets/images/modern_pro_logo_1780829028289.png";
 import { auth, db, OperationType, handleFirestoreError } from "@/src/lib/firebase";
 import { onSnapshot, doc } from "firebase/firestore";
 import { 
@@ -32,7 +33,7 @@ export default function Login() {
   const [successMessage, setSuccessMessage] = useState("");
 
   // Branding states
-  const [companyName, setCompanyName] = useState("Modern Shop");
+  const [companyName, setCompanyName] = useState("Modern Pro");
   const [companyTagline, setCompanyTagline] = useState("Automated POS");
   const [companyLogoUrl, setCompanyLogoUrl] = useState("");
   const [companyPoweredBy, setCompanyPoweredBy] = useState("Powered by ModernManager");
@@ -42,7 +43,7 @@ export default function Login() {
     const unsub = onSnapshot(doc(db, "settings", "company"), (docSnap) => {
       if (docSnap.exists()) {
         const data = docSnap.data();
-        setCompanyName(data.companyName || "Modern Shop");
+        setCompanyName(data.companyName || "Modern Pro");
         setCompanyTagline(data.companyTagline || "Automated POS");
         setCompanyLogoUrl(data.companyLogoUrl || "");
         setCompanyPoweredBy(data.companyPoweredBy || "Powered by ModernManager");
@@ -187,11 +188,16 @@ export default function Login() {
                     className="w-full h-full object-contain" 
                     referrerPolicy="no-referrer"
                     onError={(e) => {
-                      (e.target as HTMLImageElement).src = `https://api.dicebear.com/7.x/identicon/svg?seed=${encodeURIComponent(companyName)}`;
+                      (e.target as HTMLImageElement).src = defaultLogo;
                     }}
                   />
                 ) : (
-                  <LayoutDashboard className="w-7 h-7 text-slate-950" />
+                  <img 
+                    src={defaultLogo} 
+                    alt="Logo" 
+                    className="w-full h-full object-contain" 
+                    referrerPolicy="no-referrer"
+                  />
                 )}
               </div>
             </div>
@@ -355,11 +361,19 @@ export default function Login() {
                   animate={{ scale: 1 }}
                   transition={{ type: "spring", stiffness: 100 }}
                   onError={(e) => {
-                    (e.target as HTMLImageElement).src = `https://api.dicebear.com/7.x/identicon/svg?seed=${encodeURIComponent(companyName)}`;
+                    (e.target as HTMLImageElement).src = defaultLogo;
                   }}
                 />
               ) : (
-                <LayoutDashboard className="w-12 h-12 text-slate-900" />
+                <motion.img 
+                  src={defaultLogo} 
+                  alt="Company Logo" 
+                  className="w-full h-full object-contain" 
+                  referrerPolicy="no-referrer"
+                  initial={{ scale: 0.8 }}
+                  animate={{ scale: 1 }}
+                  transition={{ type: "spring", stiffness: 100 }}
+                />
               )}
             </div>
           </div>

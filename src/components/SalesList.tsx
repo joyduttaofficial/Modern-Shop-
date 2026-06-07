@@ -1007,9 +1007,6 @@ export default function SalesList({ user, role, onEditSales, onNavigateToNewSale
                                       <p className="text-xs text-slate-700 font-bold mt-1.5">
                                         {tx.notes || "Store ledger transaction record"}
                                       </p>
-                                      <p className="text-[10px] text-gray-400 font-semibold tracking-wider uppercase mt-0.5">
-                                        Ref Account: {tx.subCategory || "Reconciled Account"}
-                                      </p>
                                     </div>
 
                                     <div className="flex items-center justify-between sm:justify-end gap-3 w-full sm:w-auto border-t sm:border-0 border-slate-50 pt-3 sm:pt-0 font-sans">
@@ -1018,15 +1015,6 @@ export default function SalesList({ user, role, onEditSales, onNavigateToNewSale
                                           {formatCurrency(tx.amount)}
                                         </span>
                                       </div>
-                                      <button
-                                        id={`download-pdf-${tx.id || tx.notes}`}
-                                        onClick={() => downloadTransactionPDF(tx)}
-                                        className="px-3.5 py-2 bg-indigo-50 border border-indigo-100 hover:bg-indigo-600 hover:text-white text-indigo-700 rounded-xl text-[10px] font-black uppercase tracking-wider flex items-center gap-1.5 transition-all shadow-xs cursor-pointer active:scale-95 shrink-0"
-                                        title="Download PDF Invoice for this specific transaction"
-                                      >
-                                        <FileDown className="w-3.5 h-3.5 font-bold" />
-                                        Invoice PDF
-                                      </button>
                                     </div>
                                   </div>
                                 ))}

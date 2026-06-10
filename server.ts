@@ -1,7 +1,7 @@
 import express from "express";
 import path from "path";
 import { createServer as createViteServer } from "vite";
-import { GoogleGenAI } from "@google/genai";
+import { GoogleGenAI, Type } from "@google/genai";
 import dotenv from "dotenv";
 
 dotenv.config();
@@ -140,6 +140,155 @@ Return your response ONLY as highly elegant, beautifully formatted Markdown. Use
   } catch (error: any) {
     console.error("Gemini analysis error:", error);
     res.status(500).json({ error: "Failed to generate AI analysis report." });
+  }
+});
+
+// API route for parsing stock out events
+app.post("/api/gemini/parse-stockout", async (req, res) => {
+  try {
+    const { query, catalog } = req.body;
+    const client = getGeminiClient();
+    if (!client) {
+      return res.status(200).json({
+        explanation: "API Key omitted. Falling back to default match templates.",
+        adjustments: []
+      });
+    }
+
+    const systemInstruction = `You are an expert inventory supervisor and data cleanup engineer.
+Your job is to read messy human-written descriptions about stock reduction, damages, or giveaways, and map them to actual products present in the provided catalog.
+For each item identified in the description text:
+1. Locate the closest matches in the catalog based on matching names and description categories.
+2. Extract the physical adjustment quantity and the catalog Product ID and exact Unit.
+3. Determine the disruption reason (choose only from: 'damage', 'sample', 'internal', 'return', 'adjustment').
+4. Compute the value loss (quantity * product's lastPurchasePrice).
+5. State the confidence level in matching the item (0-100%).
+
+Return the results matching the configured response schema.`;
+
+    const prompt = `Convert the following description into structured inventory adjustments.
+User Description: "${query}"
+
+Available Product Catalog:
+${JSON.stringify(catalog, null, 2)}`;
+
+    const response = await client.models.generateContent({
+      model: "gemini-3.5-flash",
+      contents: prompt,
+      config: {
+        systemInstruction,
+        temperature: 0.1,
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            explanation: {
+              type: Type.STRING,
+              description: "Brief summary narrative of the identified events and how they map to catalog products."
+            },
+            adjustments: {
+              type: Type.ARRAY,
+              description: "Extracted stock adjustments list.",
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  productId: { type: Type.STRING, description: "Match product ID from catalog." },
+                  productName: { type: Type.STRING, description: "Catalog product name matched." },
+                  quantity: { type: Type.NUMBER, description: "Stock-out subtraction amount." },
+                  unit: { type: Type.STRING, description: "Product catalog measurement unit." },
+                  reason: { type: Type.STRING, description: "Disruption reason tag: damage, sample, internal, return, or adjustment." },
+                  valueLoss: { type: Type.NUMBER, description: "Estimated financial loss matching quantity * lastPurchasePrice." },
+                  confidence: { type: Type.INTEGER, description: "Match match certainty (0 - 100 percentage)." }
+                },
+                required: ["productId", "productName", "quantity", "unit", "reason", "valueLoss", "confidence"]
+              }
+            }
+          },
+          required: ["explanation", "adjustments"]
+        }
+      }
+    });
+
+    const parsedJson = JSON.parse(response.text || "{}");
+    res.json(parsedJson);
+  } catch (error: any) {
+    console.error("Parse stockout API error:", error);
+    res.status(500).json({ error: "Failed to parse stock adjustments with AI." });
+  }
+});
+
+// API route for calculating purchase splits / proportions
+app.post("/api/gemini/calculate-purchase-split", async (req, res) => {
+  try {
+    const { prompt } = req.body;
+    const client = getGeminiClient();
+    if (!client) {
+      return res.status(200).json({
+        summary: { baseTotalBdt: 0, overheadsBdt: 0, discountsBdt: 0, grandTotalBdt: 0 },
+        items: []
+      });
+    }
+
+    const systemInstruction = `You are a professional cost accounting analyst and procurement controller.
+Your task is to parse unstructured descriptions of supplier purchase orders/invoices (quantities, base pricing, added cargo/shipping/packing costs, rebates or discounts).
+You must:
+1. Identify all bought items, their quantities, and base unit purchase costs.
+2. Sum the base product costs (exclusive of shipping/concessions).
+3. Identify general overhead costs (e.g. carriage inwards, packing overheads, cargo, shipping fees).
+4. Identify general vendor discounts or rebate adjustments.
+5. Apply the general overhead additions and vendor discounts PROPORTIONALLY to each item based on its subset contribution to the base total value.
+   (For example, if Item A represents 60% of base value, it absorbs 60% of transport charges and receives 60% of the discount split).
+6. Compute the net True Unit Cost for each item (Base unit cost + Allocated Unit Overhead - Allocated Unit Discount).
+7. Compute grand totals.
+
+Return the results matching the configured response schema.`;
+
+    const response = await client.models.generateContent({
+      model: "gemini-3.5-flash",
+      contents: `Calculate proportional splits for: "${prompt}"`,
+      config: {
+        systemInstruction,
+        temperature: 0.1,
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            summary: {
+              type: Type.OBJECT,
+              properties: {
+                baseTotalBdt: { type: Type.NUMBER, description: "Sum total product costs exclusive of extra overheads." },
+                overheadsBdt: { type: Type.NUMBER, description: "Added shipping, packing, freight, custom fees." },
+                discountsBdt: { type: Type.NUMBER, description: "Gross concessions, rebates, vendor rebates subtracted." },
+                grandTotalBdt: { type: Type.NUMBER, description: "Net cost: baseTotalBdt + overheadsBdt - discountsBdt." }
+              },
+              required: ["baseTotalBdt", "overheadsBdt", "discountsBdt", "grandTotalBdt"]
+            },
+            items: {
+              type: Type.ARRAY,
+              description: "Itemised list with proportional cost factors mapped.",
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  itemName: { type: Type.STRING, description: "Target product label." },
+                  quantity: { type: Type.NUMBER, description: "Purchased parcel quantities." },
+                  baseUnitCostBdt: { type: Type.NUMBER, description: "Supplier's invoice list price per unit." },
+                  overheadFractionBdt: { type: Type.NUMBER, description: "Proportional cost division of packaging/freight added per unit." },
+                  calculatedNetUnitCostBdt: { type: Type.NUMBER, description: "Net unit cost: baseUnitCostBdt + allocated overhead per unit - allocated discount per unit." }
+                },
+                required: ["itemName", "quantity", "baseUnitCostBdt", "overheadFractionBdt", "calculatedNetUnitCostBdt"]
+              }
+            }
+          },
+          required: ["summary", "items"]
+        }
+      }
+    });
+
+    const parsedJson = JSON.parse(response.text || "{}");
+    res.json(parsedJson);
+  } catch (error: any) {
+    console.error("Proportion cost calculator API error:", error);
+    res.status(500).json({ error: "Failed to estimate proportional splits with AI." });
   }
 });
 

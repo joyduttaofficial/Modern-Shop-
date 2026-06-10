@@ -120,6 +120,46 @@ export interface SupplierTransaction {
   createdAt: string;
 }
 
+export interface PurchaseItem {
+  productName: string;
+  category: string;
+  subCategory: string;
+  unit: "Yard" | "Meter" | "Roll" | "Piece" | "Pair" | "Dozen";
+  quantity: number;
+  unitPrice: number;
+  totalAmount: number;
+}
+
+export interface Product {
+  id?: string;
+  name: string;
+  category: string;
+  subCategory: string;
+  unit: string;
+  stock: number;
+  lastPurchasePrice: number;
+  totalPurchaseValue: number; // calculated as stock * lastPurchasePrice or similar
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface StockLedgerEntry {
+  id?: string;
+  productId: string;
+  productName: string;
+  date: string;
+  type: "purchase" | "sale" | "return" | "adjustment";
+  refNo: string;
+  quantity: number;
+  unit: string;
+  unitPrice: number;
+  totalAmount: number;
+  supplierId?: string;
+  supplierName?: string;
+  notes?: string;
+  createdAt: string;
+}
+
 export interface PurchaseModel {
   id?: string;
   supplierId: string;
@@ -133,6 +173,7 @@ export interface PurchaseModel {
   paymentMethod: string;
   notes?: string;
   invoicePhoto?: string; // base64 representation
+  items?: PurchaseItem[]; // itemized purchase entries
   createdAt: string;
 }
 

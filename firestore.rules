@@ -61,6 +61,14 @@ service cloud.firestore {
       allow write: if isSignedIn();
     }
 
+    match /products/{productId} {
+      allow write: if isSignedIn();
+    }
+
+    match /stockLedger/{ledgerId} {
+      allow write: if isSignedIn();
+    }
+
     match /departments/{departmentId} {
       allow write: if isSignedIn();
     }

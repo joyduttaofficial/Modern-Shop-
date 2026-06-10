@@ -119,9 +119,47 @@
         "paymentMethod": { "type": "string" },
         "notes": { "type": "string" },
         "invoicePhoto": { "type": "string" },
+        "items": { "type": "array" },
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["supplierId", "supplierName", "date", "refNo", "totalAmount", "paidAmount", "dueAmount", "paymentMethod", "createdAt"]
+    },
+    "Product": {
+      "title": "Product",
+      "description": "Inventory product records",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "category": { "type": "string" },
+        "subCategory": { "type": "string" },
+        "unit": { "type": "string" },
+        "stock": { "type": "number" },
+        "lastPurchasePrice": { "type": "number" },
+        "totalPurchaseValue": { "type": "number" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "stock", "lastPurchasePrice", "totalPurchaseValue"]
+    },
+    "StockLedgerEntry": {
+      "title": "Stock Ledger Entry",
+      "description": "Inventory change log records",
+      "type": "object",
+      "properties": {
+        "productId": { "type": "string" },
+        "productName": { "type": "string" },
+        "date": { "type": "string" },
+        "type": { "type": "string", "enum": ["purchase", "sale", "return", "adjustment"] },
+        "refNo": { "type": "string" },
+        "quantity": { "type": "number" },
+        "unit": { "type": "string" },
+        "unitPrice": { "type": "number" },
+        "totalAmount": { "type": "number" },
+        "supplierId": { "type": "string" },
+        "supplierName": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["productId", "productName", "date", "type", "refNo", "quantity", "unit", "unitPrice", "totalAmount", "createdAt"]
     },
     "Department": {
       "title": "Department",
@@ -134,6 +172,14 @@
     }
   },
   "firestore": {
+    "/products/{productId}": {
+      "schema": "Product",
+      "description": "Inventory product stock balances"
+    },
+    "/stockLedger/{ledgerId}": {
+      "schema": "StockLedgerEntry",
+      "description": "Ledger of stock changes"
+    },
     "/departments/{departmentId}": {
       "schema": "Department",
       "description": "Departments registry"

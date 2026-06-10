@@ -2,7 +2,7 @@ import React, { useState, useEffect } from "react";
 import { User } from "firebase/auth";
 import { collection, query, where, getDocs, orderBy, doc, onSnapshot } from "firebase/firestore";
 import { db, OperationType, handleFirestoreError } from "@/src/lib/firebase";
-import { Transaction, UserRole, Bank, Employee, Supplier, SupplierTransaction } from "@/src/types";
+import { Transaction, UserRole, Bank, Employee, Supplier, SupplierTransaction, Product, StockLedgerEntry } from "@/src/types";
 import { cn, computeDynamicPurchases } from "@/src/lib/utils";
 import { format, startOfDay, endOfDay, subDays, isWithinInterval, isBefore, startOfMonth, endOfMonth, eachMonthOfInterval, startOfYear, parseISO } from "date-fns";
 import { jsPDF } from "jspdf";
@@ -37,7 +37,7 @@ import {
 import { motion, AnimatePresence } from "motion/react";
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, LineChart, Line } from "recharts";
 
-type ReportTab = "daily" | "bank" | "salary" | "supplier" | "purchase" | "attendance" | "transactions";
+type ReportTab = "daily" | "bank" | "salary" | "supplier" | "purchase" | "attendance" | "transactions" | "inventory";
 
 export function addPdfGlobalLedgerSummary(
   doc: jsPDF,
@@ -139,6 +139,8 @@ export default function Reports({ user, role }: { user: User; role: UserRole }) 
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [supplierTransactions, setSupplierTransactions] = useState<SupplierTransaction[]>([]);
   const [purchases, setPurchases] = useState<PurchaseModel[]>([]);
+  const [products, setProducts] = useState<Product[]>([]);
+  const [stockLedger, setStockLedger] = useState<StockLedgerEntry[]>([]);
 
   const [selectedDate, setSelectedDate] = useState(format(new Date(), "yyyy-MM-dd"));
   const [loading, setLoading] = useState(true);
@@ -241,6 +243,12 @@ export default function Reports({ user, role }: { user: User; role: UserRole }) 
 
         const purSnap = await getDocs(query(collection(db, "purchases"), orderBy("date", "desc")));
         setPurchases(purSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as PurchaseModel)));
+
+        const productsSnap = await getDocs(collection(db, "products"));
+        setProducts(productsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Product)));
+
+        const stockLedgerSnap = await getDocs(query(collection(db, "stockLedger"), orderBy("createdAt", "desc")));
+        setStockLedger(stockLedgerSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as StockLedgerEntry)));
       } catch (err) {
         console.error("Error loading resources in reports:", err);
       } finally {
@@ -711,7 +719,7 @@ export default function Reports({ user, role }: { user: User; role: UserRole }) 
         
         <div className="flex flex-col sm:flex-row sm:items-center gap-3 self-start lg:self-center shrink-0">
           <div className="flex bg-slate-100 p-1 rounded-2xl border border-slate-200 shadow-xs max-w-full overflow-x-auto">
-            {(["daily", "bank", "salary", "supplier", "purchase", "attendance", "transactions"] as ReportTab[]).map(tab => (
+            {(["daily", "bank", "salary", "supplier", "purchase", "attendance", "transactions", "inventory"] as ReportTab[]).map(tab => (
               <button 
                 key={tab}
                 onClick={() => setActiveTab(tab)}
@@ -968,6 +976,20 @@ export default function Reports({ user, role }: { user: User; role: UserRole }) 
           formatCurrency={formatCurrency}
           globalLedgerTotals={globalLedgerTotals}
           onRegisterExporter={(exportFn) => registerExporter("transactions", exportFn)}
+        />
+      )}
+
+      {activeTab === "inventory" && (
+        <InventoryReportSection
+          products={products}
+          stockLedger={stockLedger}
+          companyName={companyName}
+          companyAddress={companyAddress}
+          companyPhone={companyPhone}
+          companyEmail={companyEmail}
+          formatCurrency={formatCurrency}
+          globalLedgerTotals={globalLedgerTotals}
+          onRegisterExporter={(exportFn) => registerExporter("inventory", exportFn)}
         />
       )}
     </div>
@@ -3303,6 +3325,464 @@ function TransactionsReport({ transactions, companyName, companyAddress, company
                 </div>
               ))
             }
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ==========================================================================
+   NEW TAB 8: DYNAMIC REAL-TIME INVENTORY AND STOCK MOVEMENTS REPORT
+   ========================================================================== */
+function InventoryReportSection({ products = [], stockLedger = [], companyName, companyAddress, companyPhone, companyEmail, formatCurrency, globalLedgerTotals, onRegisterExporter }: {
+  products: Product[];
+  stockLedger: StockLedgerEntry[];
+  companyName: string;
+  companyAddress: string;
+  companyPhone: string;
+  companyEmail: string;
+  formatCurrency: (val: number) => string;
+  globalLedgerTotals: any;
+  onRegisterExporter?: (exportFn: () => void) => void;
+}) {
+  const [selectedCategory, setSelectedCategory] = useState("all");
+  const [lowStockOnly, setLowStockOnly] = useState(false);
+  const [searchTerm, setSearchTerm] = useState("");
+  
+  // Date filter for movements ledger
+  const [startDate, setStartDate] = useState(format(subDays(new Date(), 30), "yyyy-MM-dd"));
+  const [endDate, setEndDate] = useState(format(new Date(), "yyyy-MM-dd"));
+
+  // Derive unique categories dynamically
+  const categories = React.useMemo(() => {
+    const cats = new Set(products.map(p => p.category).filter(Boolean));
+    return ["all", ...Array.from(cats)];
+  }, [products]);
+
+  // Filtered Products Catalog
+  const filteredProducts = React.useMemo(() => {
+    return products.filter(p => {
+      if (selectedCategory !== "all" && p.category !== selectedCategory) return false;
+      if (lowStockOnly && p.stock > 10) return false; // Threshold of 10 units for low stock alerts
+      if (searchTerm && !p.name.toLowerCase().includes(searchTerm.toLowerCase())) return false;
+      return true;
+    });
+  }, [products, selectedCategory, lowStockOnly, searchTerm]);
+
+  // Filtered Stock Movement Ledger history logs
+  const filteredLedger = React.useMemo(() => {
+    return stockLedger.filter(entry => {
+      // Date bounds filter
+      if (entry.date < startDate || entry.date > endDate) return false;
+      // Filter category if applicable
+      if (selectedCategory !== "all") {
+        const prodMatch = products.find(p => p.id === entry.productId);
+        if (!prodMatch || prodMatch.category !== selectedCategory) return false;
+      }
+      return true;
+    }).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  }, [stockLedger, startDate, endDate, selectedCategory, products]);
+
+  // Financial Stock KPI aggregates
+  const totalStockQty = products.reduce((sum, p) => sum + (p.stock || 0), 0);
+  const totalInventoryAssetValue = products.reduce((sum, p) => sum + ((p.stock || 0) * (p.lastPurchasePrice || 0)), 0);
+  const lowStockCount = products.filter(p => (p.stock || 0) <= 10).length;
+
+  const exportInventoryCSV = React.useCallback(() => {
+    let csvContent = "\uFEFF"; // UTF-8 BOM
+    csvContent += "=== CURRENT STOCKS INVENTORY CATALOG ===\n";
+    csvContent += "Product Name,Category,Sub Category,Stock Balance,Unit Type,Last Sourcing Price (BDT),Total Valuation (BDT)\n";
+    
+    filteredProducts.forEach(p => {
+      csvContent += `"${p.name}","${p.category}","${p.subCategory || ""}",${p.stock},"${p.unit}",${p.lastPurchasePrice || 0},${(p.stock * (p.lastPurchasePrice || 0)).toFixed(2)}\n`;
+    });
+
+    csvContent += `\n=== HISTORIC STOCK MOVEMENTS LEDGER (${startDate} to ${endDate}) ===\n`;
+    csvContent += "Date,Activity Type,Reference No,Product Target,Quantity,Unit,Unit Price,Total Cost,Supplier Destination\n";
+    
+    filteredLedger.forEach(l => {
+      csvContent += `"${l.date}","${l.type.toUpperCase()}","${l.refNo}","${l.productName}",${l.quantity},"${l.unit}",${l.unitPrice || 0},${l.totalAmount || 0},"${l.supplierName || ""}"\n`;
+    });
+
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = `Shop_Inventory_Audit_Report_${selectedCategory}_${startDate}_to_${endDate}.csv`;
+    link.click();
+  }, [filteredProducts, filteredLedger, selectedCategory, startDate, endDate]);
+
+  useEffect(() => {
+    if (onRegisterExporter) {
+      onRegisterExporter(exportInventoryCSV);
+    }
+  }, [exportInventoryCSV, onRegisterExporter]);
+
+  const downloadInventoryReportPDF = () => {
+    const doc = new jsPDF("p", "mm", "a4");
+    const pageWidth = doc.internal.pageSize.width || 210;
+    
+    // Header section
+    doc.setFillColor(15, 23, 42);
+    doc.rect(0, 0, pageWidth, 38, "F");
+
+    doc.setTextColor(255);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(16);
+    doc.text("INVENTORY DYNAMIC VALUATION AUDIT", 14, 16);
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(8.5);
+    doc.setTextColor(156, 163, 175);
+    doc.text(`AUDITOR CONSOLE REPORT GENERATED ON ${format(new Date(), "dd/MM/yyyy HH:mm:ss")}`, 14, 22);
+
+    // Corporate meta
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(10);
+    doc.setTextColor(255);
+    doc.text(companyName, pageWidth - 14, 14, { align: "right" });
+    
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(7.5);
+    doc.setTextColor(203, 213, 225);
+    doc.text(companyAddress, pageWidth - 14, 19, { align: "right" });
+    doc.text(`Phone: ${companyPhone} | Email: ${companyEmail}`, pageWidth - 14, 23, { align: "right" });
+
+    // Dividers and spacing
+    doc.setFillColor(34, 197, 94);
+    doc.rect(0, 38, pageWidth, 1.5, "F");
+
+    // KPI row card block
+    const cardY = 46;
+    doc.setFillColor(248, 250, 252);
+    doc.roundedRect(14, cardY, pageWidth - 28, 16, 2, 2, "F");
+    doc.setDrawColor(226, 232, 240);
+    doc.roundedRect(14, cardY, pageWidth - 28, 16, 2, 2, "D");
+
+    doc.setFontSize(7.5);
+    doc.setTextColor(100, 116, 139);
+    doc.setFont("helvetica", "bold");
+    doc.text("TOTAL PRODUCTS CATALOGED", 18, cardY + 5);
+    doc.text("COMBINED UNITS STOCK", pageWidth/2 - 20, cardY + 5);
+    doc.text("CONSOLIDATED ASSET VALUATION", pageWidth - 70, cardY + 5);
+
+    doc.setFontSize(10.5);
+    doc.setTextColor(15, 23, 42);
+    doc.text(`${filteredProducts.length} items`, 18, cardY + 11.5);
+    doc.text(`${totalStockQty.toLocaleString()} units`, pageWidth/2 - 20, cardY + 11.5);
+    doc.text(`BDT ${totalInventoryAssetValue.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}`, pageWidth - 70, cardY + 11.5);
+
+    // Section 1 Heading
+    doc.setFontSize(10);
+    doc.setFont("helvetica", "bold");
+    doc.setTextColor(30, 41, 59);
+    doc.text("CURRENT STOCKS LEVEL & BOOK VALUATIONS", 14, cardY + 24);
+
+    // Table 1: Current stock catalog
+    const tableBody1 = filteredProducts.map(p => [
+      p.name,
+      p.category,
+      p.subCategory || "-",
+      `${p.stock} ${p.unit}`,
+      `BDT ${(p.lastPurchasePrice || 0).toFixed(2)}`,
+      `BDT ${(p.stock * (p.lastPurchasePrice || 0)).toFixed(2)}`
+    ]);
+
+    autoTable(doc, {
+      startY: cardY + 27,
+      head: [["PRODUCT NAME", "CATEGORY", "SUB-CATEGORY", "STOCK BALANCE", "LAST COST/UNIT", "TOTAL BOOK VALUE"]],
+      body: tableBody1,
+      theme: "striped",
+      headStyles: {
+        fillColor: [15, 23, 42],
+        fontSize: 7.5,
+        fontStyle: "bold"
+      },
+      bodyStyles: {
+        fontSize: 7.5
+      },
+      styles: {
+        cellPadding: 2.5
+      }
+    });
+
+    const nextY = (doc as any).lastAutoTable.finalY + 12;
+
+    if (nextY < doc.internal.pageSize.height - 40) {
+      doc.setFontSize(10);
+      doc.setFont("helvetica", "bold");
+      doc.setTextColor(30, 41, 59);
+      doc.text(`STOCK LEDGER MOVEMENTS HISTORY (${startDate} to ${endDate})`, 14, nextY);
+
+      const tableBody2 = filteredLedger.slice(0, 30).map(l => [
+        l.date,
+        l.type.toUpperCase(),
+        l.refNo,
+        l.productName,
+        `${l.quantity} ${l.unit}`,
+        `BDT ${(l.unitPrice || 0).toFixed(2)}`,
+        `BDT ${(l.totalAmount || 0).toFixed(2)}`,
+        l.supplierName || "-"
+      ]);
+
+      autoTable(doc, {
+        startY: nextY + 3,
+        head: [["DATE", "TYPE", "REF NO", "PRODUCT TARGET", "QUANTITY", "UNIT PRICE", "TOTAL AMOUNT", "SUPPLIER"]],
+        body: tableBody2,
+        theme: "striped",
+        headStyles: {
+          fillColor: [15, 23, 42],
+          fontSize: 7.5,
+          fontStyle: "bold"
+        },
+        bodyStyles: {
+          fontSize: 7
+        },
+        styles: {
+          cellPadding: 2
+        }
+      });
+    }
+
+    doc.save(`Shop_Inventory_Verification_Report_${selectedCategory}.pdf`);
+  };
+
+  return (
+    <div className="space-y-6 animate-in fade-in duration-200">
+      {/* Search and KPI summaries Row */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="bg-white p-5 rounded-3xl shadow-xs border border-slate-100 flex items-center justify-between">
+          <div className="space-y-1">
+            <span className="text-[10px] text-gray-400 font-extrabold uppercase tracking-widest block font-sans">PRODUCTS SELECTIONS</span>
+            <span className="text-2xl font-black text-slate-800 font-sans">{filteredProducts.length} <span className="text-xs font-semibold text-slate-400">items</span></span>
+          </div>
+          <div className="p-3.5 bg-indigo-50 text-indigo-600 rounded-2xl">
+            <ShoppingCart className="w-5 h-5" />
+          </div>
+        </div>
+
+        <div className="bg-white p-5 rounded-3xl shadow-xs border border-slate-100 flex items-center justify-between">
+          <div className="space-y-1">
+            <span className="text-[10px] text-gray-400 font-extrabold uppercase tracking-widest block font-sans">AGGREGATE STOCKS IN HAND</span>
+            <span className="text-2xl font-black text-slate-800 font-sans">{totalStockQty.toLocaleString()} <span className="text-xs font-semibold text-slate-400">units</span></span>
+          </div>
+          <div className="p-3.5 bg-green-50 text-green-600 rounded-2xl">
+            <TrendingUp className="w-5 h-5" />
+          </div>
+        </div>
+
+        <div className="bg-white p-5 rounded-3xl shadow-xs border border-slate-100 flex items-center justify-between">
+          <div className="space-y-1">
+            <span className="text-[10px] text-gray-400 font-extrabold uppercase tracking-widest block font-sans">DYNAMIC INVENTORY VALUE</span>
+            <span className="text-xl font-black text-slate-800 font-mono">৳ {totalInventoryAssetValue.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</span>
+          </div>
+          <div className="p-3.5 bg-amber-50 text-amber-600 rounded-2xl">
+            <Wallet className="w-5 h-5" />
+          </div>
+        </div>
+      </div>
+
+      {/* Control filter board */}
+      <div className="bg-white p-6 rounded-3xl shadow-xs border border-slate-100 space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div className="flex items-center gap-2">
+            <Filter className="w-5 h-5 text-slate-700" />
+            <span className="font-extrabold text-slate-800 uppercase tracking-wider text-xs font-sans">Inventory Filters Board</span>
+          </div>
+          <div className="flex flex-wrap items-center gap-3 font-sans">
+            <button
+              onClick={exportInventoryCSV}
+              className="bg-white hover:bg-slate-50 text-xs font-bold uppercase text-slate-700 py-2.5 px-4 rounded-xl border border-slate-200 transition-all shadow-2xs flex items-center gap-1.5 cursor-pointer"
+            >
+              <Download className="w-4 h-4 text-slate-500" />
+              CSV Output
+            </button>
+            <button
+              onClick={downloadInventoryReportPDF}
+              className="bg-[#22c55e] hover:bg-[#16a34a] text-xs font-bold uppercase text-white py-2.5 px-4 rounded-xl transition-all shadow-md flex items-center gap-1.5 cursor-pointer"
+            >
+              <Printer className="w-4 h-4" />
+              Download PDF Report
+            </button>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-3 pt-2 font-sans">
+          {/* Category Dropdown */}
+          <div className="space-y-1">
+            <label className="text-[10px] uppercase font-black tracking-wider text-slate-400">Filter By Category</label>
+            <select
+              value={selectedCategory}
+              onChange={(e) => setSelectedCategory(e.target.value)}
+              className="w-full p-2.5 text-xs font-bold rounded-xl border border-gray-200 bg-slate-50 focus:outline-none focus:ring-1 focus:ring-slate-400"
+            >
+              {categories.map(cat => (
+                <option key={cat} value={cat}>
+                  {cat === "all" ? "All Categories" : cat}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* Search box */}
+          <div className="space-y-1 md:col-span-2">
+            <label className="text-[10px] uppercase font-black tracking-wider text-slate-400">Search Product</label>
+            <div className="relative">
+              <Search className="absolute left-3 top-3.5 w-4 h-4 text-slate-400 font-bold" />
+              <input
+                type="text"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                placeholder="Find Cotton fabric, Silk yarn, Premium threads..."
+                className="w-full pl-9 pr-4 py-2.5 text-xs font-semibold rounded-xl border border-gray-200 bg-slate-50 focus:outline-none focus:ring-1 focus:ring-slate-400"
+              />
+            </div>
+          </div>
+
+          {/* Low Stock alert filter */}
+          <div className="flex items-center gap-2.5 md:self-end md:pb-3 md:pl-2">
+            <input
+              type="checkbox"
+              id="lowStockOnly"
+              checked={lowStockOnly}
+              onChange={(e) => setLowStockOnly(e.target.checked)}
+              className="w-4.5 h-4.5 rounded-lg border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+            />
+            <label htmlFor="lowStockOnly" className="text-xs font-bold text-slate-700 cursor-pointer select-none">
+              Low Stock Only (≤ 10 Units)
+              {lowStockCount > 0 && (
+                <span className="ml-1.5 px-1.5 py-0.5 rounded-md bg-red-50 text-red-600 font-black text-[9px]">
+                  {lowStockCount} ALERT
+                </span>
+              )}
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 font-sans">
+        {/* S1: Dynamic stocks catalog table */}
+        <div className="bg-white p-6 rounded-3xl shadow-xs border border-slate-100 lg:col-span-2 space-y-4">
+          <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+            <h3 className="text-sm font-black uppercase text-slate-800 tracking-wider">Stocks Registry & Valuation Statement</h3>
+            <span className="text-[10px] font-black uppercase px-2.5 py-1 bg-slate-100 text-slate-500 rounded-lg">Real-time Catalog</span>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs border-collapse">
+              <thead>
+                <tr className="border-b border-slate-100 text-[10px] font-extrabold uppercase text-gray-400 tracking-widest bg-slate-50 select-none">
+                  <th className="py-3 px-4">Commodity Name</th>
+                  <th className="py-3 px-4">Categories</th>
+                  <th className="py-3 px-4 text-center">Remaining Quantity</th>
+                  <th className="py-3 px-4 text-right">Avg Unit Cost</th>
+                  <th className="py-3 px-4 text-right">Aggregate value</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-50 font-medium">
+                {filteredProducts.length === 0 ? (
+                  <tr>
+                    <td colSpan={5} className="text-center py-10 text-gray-400 italic">No matching products found in catalog.</td>
+                  </tr>
+                ) : (
+                  filteredProducts.map(p => {
+                    const value = p.stock * (p.lastPurchasePrice || 0);
+                    const isLow = p.stock <= 10;
+                    return (
+                      <tr key={p.id} className="hover:bg-slate-50/50 transition-colors">
+                        <td className="py-3.5 px-4 font-extrabold text-slate-800">
+                          {p.name}
+                        </td>
+                        <td className="py-3.5 px-4 font-semibold text-slate-500">
+                          <span className="px-2 py-0.5 rounded-lg bg-indigo-50 text-indigo-700 font-extrabold text-[9px] uppercase tracking-wider">{p.category}</span>
+                          {p.subCategory && <span className="ml-1.5 px-2 py-0.5 rounded-lg bg-slate-100 text-slate-600 font-semibold text-[9px] uppercase tracking-wider">{p.subCategory}</span>}
+                        </td>
+                        <td className="py-3.5 px-4 text-center">
+                          <span className={cn("px-2.5 py-1 rounded-xl font-mono font-extrabold text-xs", isLow ? "bg-red-50 text-red-600 border border-red-100" : "bg-green-50 text-green-700")}>
+                            {p.stock} {p.unit}
+                          </span>
+                        </td>
+                        <td className="py-3.5 px-4 text-right font-semibold font-mono text-slate-600">
+                          {p.lastPurchasePrice ? `৳${p.lastPurchasePrice.toFixed(2)}` : "৳0.00"}
+                        </td>
+                        <td className="py-3.5 px-4 text-right font-black font-mono text-slate-950 font-sans">
+                          ৳ {value.toFixed(2)}
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        {/* S2: Stock timeline logs ledger history flow panel */}
+        <div className="bg-white p-6 rounded-3xl shadow-xs border border-slate-100 space-y-4">
+          <div className="border-b border-slate-100 pb-3">
+            <h3 className="text-sm font-black uppercase text-slate-800 tracking-wider">Stocks Audit Ledger Logs</h3>
+            <p className="text-[10px] text-gray-400 font-semibold uppercase tracking-wider mt-0.5">Chronological sifting flow</p>
+          </div>
+
+          {/* Ledger Date filters */}
+          <div className="grid grid-cols-2 gap-2 bg-slate-50 p-2.5 rounded-2xl border border-slate-155">
+            <div className="space-y-0.5">
+              <label className="text-[9px] uppercase font-black tracking-wider text-slate-400">Date From</label>
+              <input
+                type="date"
+                value={startDate}
+                onChange={(e) => setStartDate(e.target.value)}
+                className="w-full p-2 text-[10px] font-bold rounded-lg border border-gray-200 bg-white focus:outline-none"
+              />
+            </div>
+            <div className="space-y-0.5">
+              <label className="text-[9px] uppercase font-black tracking-wider text-slate-400">Date To</label>
+              <input
+                type="date"
+                value={endDate}
+                onChange={(e) => setEndDate(e.target.value)}
+                className="w-full p-2 text-[10px] font-bold rounded-lg border border-gray-200 bg-white focus:outline-none"
+              />
+            </div>
+          </div>
+
+          <div className="max-h-[380px] overflow-y-auto space-y-3.5 pr-1 font-sans">
+            {filteredLedger.length === 0 ? (
+              <div className="text-center py-12 text-slate-400 italic text-xs">No stock ledger transactions found for selected span.</div>
+            ) : (
+              filteredLedger.map((entry) => {
+                const isAdd = entry.type === "purchase";
+                return (
+                  <div key={entry.id} className="relative flex flex-col p-3 bg-slate-50/50 hover:bg-slate-50 rounded-2xl border border-slate-150 shadow-2xs space-y-1.5 transition-colors">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-1.5">
+                        <span className={cn("text-[9px] font-black uppercase px-2 py-0.5 rounded-lg border", isAdd ? "bg-green-50 text-green-700 border-green-100" : "bg-red-50 text-red-700 border-red-100")}>
+                          {isAdd ? "DEPOSIT" : "WITHDRAW"}
+                        </span>
+                        <span className="text-[10px] text-slate-400 font-bold font-mono">{entry.date}</span>
+                      </div>
+                      <span className="text-[9.5px] font-black text-slate-500 font-mono">{entry.refNo}</span>
+                    </div>
+
+                    <div className="space-y-0.5 font-sans">
+                      <span className="text-xs font-black text-slate-800 block leading-tight">{entry.productName}</span>
+                      {entry.supplierName && (
+                        <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wide">Supplier: {entry.supplierName}</span>
+                      )}
+                    </div>
+
+                    <div className="flex justify-between items-end border-t border-slate-100/60 pt-1.5">
+                      <span className="text-[10px] text-slate-500 font-bold">
+                        Quantity: <span className="font-extrabold text-slate-800">{entry.quantity} {entry.unit}</span>
+                      </span>
+                      <span className="text-xs font-gray-900 font-mono">
+                        ৳ {entry.totalAmount ? entry.totalAmount.toLocaleString() : "0.00"}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })
+            )}
           </div>
         </div>
       </div>

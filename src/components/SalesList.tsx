@@ -973,54 +973,7 @@ export default function SalesList({ user, role, onEditSales, onNavigateToNewSale
                             )}
                           </div>
 
-                          {/* Individual Transactions Grid with Download PDF action */}
-                          <div>
-                            <h5 className="text-[11px] font-black text-gray-400 uppercase tracking-widest pl-0.5 mb-3 flex items-center gap-1.5 mt-2">
-                              <CheckCircle2 className="w-3.5 h-3.5 text-blue-500" />
-                              Store Ledger • Individual Transactions
-                            </h5>
-                            {group.transactions.length === 0 ? (
-                              <p className="text-xs text-gray-400 italic bg-[#fff] border border-gray-100 rounded-2xl p-4 text-center">
-                                No individual transaction records are synced for this day.
-                              </p>
-                            ) : (
-                              <div className="bg-white border border-gray-100 rounded-2xl divide-y divide-gray-50 shadow-sm overflow-hidden">
-                                {group.transactions.map((tx) => (
-                                  <div 
-                                    key={tx.id || tx.notes} 
-                                    className="flex flex-col sm:flex-row justify-between items-start sm:items-center p-4 hover:bg-slate-50/55 gap-4 transition-all"
-                                  >
-                                    <div className="flex flex-col text-left">
-                                      <div className="flex items-center gap-2">
-                                        <span className={cn(
-                                          "text-[10px] font-extrabold uppercase px-2 py-0.5 rounded border leading-no",
-                                          tx.category === "Employee Sales" ? "bg-emerald-50 text-emerald-700 border-emerald-100" :
-                                          tx.category === "Wholesale Sales" ? "bg-sky-50 text-sky-700 border-sky-100" :
-                                          "bg-rose-50 text-rose-700 border-rose-100"
-                                        )}>
-                                          {tx.category === "Employee Sales" ? "Staff Counter Sale" : tx.category === "Wholesale Sales" ? "Wholesale Inflow" : "Deposit Deduction"}
-                                        </span>
-                                        <span className="text-[10px] font-bold text-gray-400 font-mono">
-                                          Gateway: {tx.paymentMethod || "Cash"}
-                                        </span>
-                                      </div>
-                                      <p className="text-xs text-slate-700 font-bold mt-1.5">
-                                        {tx.notes || "Store ledger transaction record"}
-                                      </p>
-                                    </div>
 
-                                    <div className="flex items-center justify-between sm:justify-end gap-3 w-full sm:w-auto border-t sm:border-0 border-slate-50 pt-3 sm:pt-0 font-sans">
-                                      <div className="text-right">
-                                        <span className="font-mono text-sm font-black text-slate-800">
-                                          {formatCurrency(tx.amount)}
-                                        </span>
-                                      </div>
-                                    </div>
-                                  </div>
-                                ))}
-                              </div>
-                            )}
-                          </div>
 
                           {/* Full Day Summary Recital panel */}
                           <div className="bg-white border text-gray-700 border-gray-200/60 p-5 rounded-2xl shadow-sm space-y-4">

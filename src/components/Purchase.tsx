@@ -2,7 +2,7 @@ import React, { useState, useEffect } from "react";
 import { User } from "firebase/auth";
 import { collection, onSnapshot, addDoc, deleteDoc, doc, query, orderBy, increment, where, getDocs } from "firebase/firestore";
 import { db, OperationType, handleFirestoreError, updateDoc } from "@/src/lib/firebase";
-import { Supplier, Bank, UserRole, Transaction, SupplierTransaction } from "@/src/types";
+import { Supplier, Bank, UserRole, Transaction, SupplierTransaction, PurchaseItem, Product, StockLedgerEntry } from "@/src/types";
 import { cn, formatCurrency, computeDynamicPurchases } from "@/src/lib/utils";
 import { 
   Plus, Search, Eye, Trash2, Calendar, FileText, Image, ClipboardList, Wallet, Landmark, X, ChevronDown, Check, Download, Printer, RotateCcw
@@ -22,6 +22,7 @@ export interface PurchaseModel {
   paymentMethod: string;
   notes?: string;
   invoicePhoto?: string; // base64 representation
+  items?: PurchaseItem[]; // itemized purchase entries
   createdAt: string;
 }
 
@@ -55,6 +56,51 @@ export default function Purchase({
   const [notes, setNotes] = useState("");
   const [invoicePhoto, setInvoicePhoto] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // Itemized optional purchase items states
+  const [isItemsExpanded, setIsItemsExpanded] = useState(false);
+  const [purchaseItems, setPurchaseItems] = useState<PurchaseItem[]>([]);
+
+  const handleAddRow = () => {
+    setPurchaseItems([
+      ...purchaseItems,
+      {
+        productName: "",
+        category: "",
+        subCategory: "",
+        unit: "Piece",
+        quantity: 1,
+        unitPrice: 0,
+        totalAmount: 0
+      }
+    ]);
+  };
+
+  const handleRemoveRow = (index: number) => {
+    setPurchaseItems(purchaseItems.filter((_, i) => i !== index));
+  };
+
+  const handleRowChange = (index: number, field: keyof PurchaseItem, value: any) => {
+    const updated = [...purchaseItems];
+    updated[index] = {
+      ...updated[index],
+      [field]: value
+    };
+    
+    if (field === "quantity" || field === "unitPrice") {
+      const qty = field === "quantity" ? parseFloat(value) || 0 : parseFloat(updated[index].quantity as any) || 0;
+      const price = field === "unitPrice" ? parseFloat(value) || 0 : parseFloat(updated[index].unitPrice as any) || 0;
+      updated[index].totalAmount = Number((qty * price).toFixed(2));
+    }
+    
+    setPurchaseItems(updated);
+  };
+
+  const itemsTotalSum = purchaseItems.reduce((acc, item) => acc + (item.totalAmount || 0), 0);
+
+  const handleApplyItemsTotal = () => {
+    setTotalAmount(itemsTotalSum.toFixed(2));
+  };
 
   // Currency exchange rate states for Indian Supplier configuration
   const [exchangeRate, setExchangeRate] = useState("70");
@@ -201,6 +247,10 @@ export default function Purchase({
         appendNotes = ` [Exchange Rate: ₹100 = ৳${exchangeRate} | INR Total: ₹${parseFloat(inrTotalAmount || "0").toFixed(2)} | INR Paid: ₹${parseFloat(inrPaidAmount || "0").toFixed(2)}]`;
       }
 
+      const validItems = isItemsExpanded 
+        ? purchaseItems.filter(item => item.productName && item.productName.trim() !== "")
+        : [];
+
       const purchaseData: PurchaseModel = {
         supplierId,
         supplierName: supplierNameStr,
@@ -213,11 +263,77 @@ export default function Purchase({
         paymentMethod,
         notes: (notes + appendNotes + (returnVal > 0 ? ` (Auto-deducted purchase return: ৳${returnVal.toFixed(2)})` : "")).trim(),
         invoicePhoto: invoicePhoto || "",
+        ...(validItems.length > 0 ? { items: validItems } : {}),
         createdAt: new Date().toISOString()
       };
 
       // 1. Create Purchase document
       await addDoc(collection(db, "purchases"), purchaseData);
+
+      // If product details are entered, update inventory stock and create stock ledger entries
+      if (validItems.length > 0) {
+        for (const item of validItems) {
+          const trimmedName = item.productName.trim();
+          const productsRef = collection(db, "products");
+          const q = query(productsRef, where("name", "==", trimmedName));
+          const querySnapshot = await getDocs(q);
+          
+          let productId = "";
+          const addedQty = parseFloat(item.quantity as any) || 0;
+          const unitPriceVal = parseFloat(item.unitPrice as any) || 0;
+          const totalValItem = parseFloat(item.totalAmount as any) || 0;
+          
+          if (!querySnapshot.empty) {
+            const productDoc = querySnapshot.docs[0];
+            productId = productDoc.id;
+            const productData = productDoc.data();
+            const currentStock = productData.stock || 0;
+            const newStock = currentStock + addedQty;
+            const newTotalValue = newStock * unitPriceVal;
+            
+            await updateDoc(doc(db, "products", productId), {
+              stock: newStock,
+              lastPurchasePrice: unitPriceVal,
+              totalPurchaseValue: newTotalValue,
+              category: item.category,
+              subCategory: item.subCategory || "",
+              unit: item.unit,
+              updatedAt: new Date().toISOString()
+            });
+          } else {
+            const newProduct = {
+              name: trimmedName,
+              category: item.category,
+              subCategory: item.subCategory || "",
+              unit: item.unit,
+              stock: addedQty,
+              lastPurchasePrice: unitPriceVal,
+              totalPurchaseValue: addedQty * unitPriceVal,
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString()
+            };
+            const docRef = await addDoc(collection(db, "products"), newProduct);
+            productId = docRef.id;
+          }
+          
+          // Stock ledger record
+          const ledgerDoc = {
+            productId,
+            productName: trimmedName,
+            date: date,
+            type: "purchase",
+            refNo: purchaseData.refNo,
+            quantity: addedQty,
+            unit: item.unit,
+            unitPrice: unitPriceVal,
+            totalAmount: totalValItem,
+            supplierId,
+            supplierName: supplierNameStr,
+            createdAt: new Date().toISOString()
+          };
+          await addDoc(collection(db, "stockLedger"), ledgerDoc);
+        }
+      }
 
       // 2. Increment supplier totals (Total purchases gross + Supplier Due minus return)
       await updateDoc(doc(db, "suppliers", supplierId), {
@@ -292,6 +408,8 @@ export default function Purchase({
       setRefNo("");
       setInrTotalAmount("");
       setInrPaidAmount("");
+      setPurchaseItems([]);
+      setIsItemsExpanded(false);
       setViewState("list");
 
       if (onSuccess) onSuccess();
@@ -312,6 +430,42 @@ export default function Purchase({
       
       // 1. Delete main purchase document
       await deleteDoc(doc(db, "purchases", p.id));
+
+      // Revert Inventory Stock balances and clear stock ledger entries
+      if (p.items && p.items.length > 0) {
+        for (const item of p.items) {
+          const productsRef = collection(db, "products");
+          const q = query(productsRef, where("name", "==", item.productName));
+          const querySnapshot = await getDocs(q);
+          
+          if (!querySnapshot.empty) {
+            const productDoc = querySnapshot.docs[0];
+            const productData = productDoc.data();
+            const currentStock = productData.stock || 0;
+            const itemQty = parseFloat(item.quantity as any) || 0;
+            
+            const newStock = Math.max(0, currentStock - itemQty);
+            const price = productData.lastPurchasePrice || 0;
+            const newTotalValue = newStock * price;
+            
+            await updateDoc(doc(db, "products", productDoc.id), {
+              stock: newStock,
+              totalPurchaseValue: newTotalValue,
+              updatedAt: new Date().toISOString()
+            });
+          }
+        }
+        
+        // Remove Stock Ledger entries representing this purchase
+        const ledgerQuery = query(
+          collection(db, "stockLedger"),
+          where("refNo", "==", p.refNo)
+        );
+        const ledgerSnap = await getDocs(ledgerQuery);
+        for (const ledgerDoc of ledgerSnap.docs) {
+          await deleteDoc(doc(db, "stockLedger", ledgerDoc.id));
+        }
+      }
 
       // 2. Revert Supplier total caches and outstanding dues
       const originalNetDue = p.totalAmount - p.paidAmount - (p.writtenReturn || 0);
@@ -841,6 +995,171 @@ export default function Purchase({
                       </div>
                     </div>
                   </div>
+                </div>
+
+                {/* Expandable Itemized Purchase Section (Optional) */}
+                <div className="border border-slate-200 rounded-3xl overflow-hidden bg-slate-50/50 shadow-xs">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsItemsExpanded(!isItemsExpanded);
+                      if (purchaseItems.length === 0) {
+                        handleAddRow();
+                      }
+                    }}
+                    className="w-full flex items-center justify-between p-4 bg-slate-100 hover:bg-slate-200/60 transition-colors text-left"
+                  >
+                    <div className="flex items-center gap-2">
+                      <ClipboardList className="w-5 h-5 text-gray-600" />
+                      <div>
+                        <span className="font-extrabold text-sm text-slate-800">Add Purchase Items (Optional)</span>
+                        <p className="text-[11px] text-gray-500 font-medium">Add row-by-row item details to automatically track stock and update inventory reports.</p>
+                      </div>
+                    </div>
+                    <ChevronDown className={cn("w-5 h-5 text-gray-505 transition-transform duration-250", isItemsExpanded ? "rotate-180" : "")} />
+                  </button>
+
+                  <AnimatePresence>
+                    {isItemsExpanded && (
+                      <motion.div
+                        initial={{ height: 0, opacity: 0 }}
+                        animate={{ height: "auto", opacity: 1 }}
+                        exit={{ height: 0, opacity: 0 }}
+                        className="p-4 border-t border-slate-200 overflow-hidden space-y-4"
+                      >
+                        {purchaseItems.length === 0 ? (
+                          <div className="text-center py-6">
+                            <span className="text-xs text-slate-500">No items added yet. Click Add Row below to insert products.</span>
+                          </div>
+                        ) : (
+                          <div className="space-y-4 max-h-[350px] overflow-y-auto pr-1">
+                            {purchaseItems.map((item, index) => (
+                              <div key={index} className="grid grid-cols-1 md:grid-cols-7 gap-2.5 p-3.5 bg-white rounded-2xl border border-slate-150 relative shadow-xs">
+                                <div className="space-y-1 md:col-span-2">
+                                  <label className="text-[10px] uppercase font-black tracking-wider text-slate-400">Product Name *</label>
+                                  <input
+                                    type="text"
+                                    required={isItemsExpanded}
+                                    value={item.productName}
+                                    onChange={(e) => handleRowChange(index, "productName", e.target.value)}
+                                    placeholder="Cotton Fabric, Premium Shirt, etc."
+                                    className="w-full p-2.5 text-xs font-bold rounded-xl border border-gray-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                                  />
+                                </div>
+
+                                <div className="space-y-1">
+                                  <label className="text-[10px] uppercase font-black tracking-wider text-slate-400">Category *</label>
+                                  <input
+                                    type="text"
+                                    required={isItemsExpanded}
+                                    value={item.category}
+                                    onChange={(e) => handleRowChange(index, "category", e.target.value)}
+                                    placeholder="Fabric, Garment"
+                                    className="w-full p-2.5 text-xs rounded-xl border border-gray-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                                  />
+                                </div>
+
+                                <div className="space-y-1">
+                                  <label className="text-[10px] uppercase font-black tracking-wider text-slate-400">Sub Category</label>
+                                  <input
+                                    type="text"
+                                    value={item.subCategory}
+                                    onChange={(e) => handleRowChange(index, "subCategory", e.target.value)}
+                                    placeholder="Blue, M, XL, etc."
+                                    className="w-full p-2.5 text-xs rounded-xl border border-gray-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                                  />
+                                </div>
+
+                                <div className="space-y-1">
+                                  <label className="text-[10px] uppercase font-black tracking-wider text-slate-400">Unit *</label>
+                                  <select
+                                    value={item.unit}
+                                    onChange={(e) => handleRowChange(index, "unit", e.target.value)}
+                                    className="w-full p-2.5 text-xs rounded-xl border border-gray-200 focus:outline-none focus:ring-1 focus:ring-blue-500 bg-white font-semibold"
+                                  >
+                                    <optgroup label="Fabric Business">
+                                      <option value="Yard">Yard</option>
+                                      <option value="Meter">Meter</option>
+                                      <option value="Roll">Roll</option>
+                                    </optgroup>
+                                    <optgroup label="Garments & Ready-Made">
+                                      <option value="Piece">Piece</option>
+                                      <option value="Pair">Pair</option>
+                                      <option value="Dozen">Dozen</option>
+                                    </optgroup>
+                                  </select>
+                                </div>
+
+                                <div className="space-y-1">
+                                  <label className="text-[10px] uppercase font-black tracking-wider text-slate-400">Qty *</label>
+                                  <input
+                                    type="number"
+                                    min="0.01"
+                                    step="0.01"
+                                    required={isItemsExpanded}
+                                    value={item.quantity}
+                                    onChange={(e) => handleRowChange(index, "quantity", e.target.value)}
+                                    placeholder="0"
+                                    className="w-full p-2.5 text-xs font-bold rounded-xl border border-gray-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                                  />
+                                </div>
+
+                                <div className="space-y-1">
+                                  <label className="text-[10px] uppercase font-black tracking-wider text-slate-400">Unit Price *</label>
+                                  <input
+                                    type="number"
+                                    min="0"
+                                    step="0.01"
+                                    required={isItemsExpanded}
+                                    value={item.unitPrice}
+                                    onChange={(e) => handleRowChange(index, "unitPrice", e.target.value)}
+                                    placeholder="0.00"
+                                    className="w-full p-2.5 text-xs font-bold rounded-xl border border-gray-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                                  />
+                                </div>
+
+                                {/* Row Delete Icon button */}
+                                <button
+                                  type="button"
+                                  onClick={() => handleRemoveRow(index)}
+                                  className="absolute -top-2 -right-2 md:static md:col-start-7 md:col-end-8 md:self-end md:mb-1.5 w-7 h-7 rounded-full bg-red-50 hover:bg-red-100 border border-red-200 flex items-center justify-center text-red-500 self-center transition-colors cursor-pointer"
+                                  title="Remove item"
+                                >
+                                  <X className="w-4 h-4" />
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+
+                        <div className="flex flex-wrap items-center justify-between gap-4 pt-3 border-t border-slate-200/60">
+                          <button
+                            type="button"
+                            onClick={handleAddRow}
+                            className="bg-white hover:bg-slate-50 text-slate-700 font-bold py-2.5 px-4 rounded-xl border border-slate-200 transition-colors shadow-xs flex items-center gap-1.5 text-xs cursor-pointer"
+                          >
+                            <Plus className="w-4 h-4 text-slate-500" />
+                            Add Item Row
+                          </button>
+
+                          {purchaseItems.length > 0 && (
+                            <div className="flex items-center gap-3 bg-white p-2.5 rounded-2xl border border-slate-200 shadow-xs">
+                              <span className="text-[11px] font-black uppercase text-slate-400">Items Total:</span>
+                              <span className="text-sm font-extrabold text-slate-800">৳ {itemsTotalSum.toFixed(2)}</span>
+                              <button
+                                type="button"
+                                onClick={handleApplyItemsTotal}
+                                className="bg-[#00c0ef] hover:bg-[#00acd6] text-white text-[10px] font-black uppercase tracking-wider py-1.5 px-3 rounded-lg transition-colors cursor-pointer"
+                                title="Copy the itemized total amount to the main total field above."
+                              >
+                                Use as Bill Total
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
                 </div>
 
                 <div>
@@ -1450,6 +1769,36 @@ export default function Purchase({
                     <span className="text-sm font-extrabold text-red-700">৳{selectedPurchase.dueAmount.toFixed(2)}</span>
                   </div>
                 </div>
+
+                {selectedPurchase.items && selectedPurchase.items.length > 0 && (
+                  <div className="border border-slate-100 rounded-2xl bg-slate-50/50 p-3.5 space-y-2">
+                    <span className="text-[10px] text-gray-400 font-extrabold uppercase tracking-wider block">Purchased Products List</span>
+                    <div className="max-h-[160px] overflow-y-auto space-y-1.5 pr-1">
+                      {selectedPurchase.items.map((item, idx) => (
+                        <div key={idx} className="flex justify-between items-center text-xs p-2 bg-white rounded-xl border border-slate-100 shadow-2xs">
+                          <div className="space-y-0.5">
+                            <span className="font-bold text-gray-800">{item.productName}</span>
+                            <div className="flex gap-1.5 text-[9px] text-gray-400 font-bold uppercase">
+                              <span>{item.category}</span>
+                              {item.subCategory && (
+                                <>
+                                  <span>•</span>
+                                  <span>{item.subCategory}</span>
+                                </>
+                              )}
+                            </div>
+                          </div>
+                          <div className="text-right space-y-0.5">
+                            <span className="font-bold text-gray-900 block">৳ {item.totalAmount.toFixed(2)}</span>
+                            <span className="text-[10px] text-gray-500 font-semibold block">
+                              {item.quantity} {item.unit} @ ৳ {item.unitPrice}
+                            </span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
 
                 {selectedPurchase.notes && (
                   <div>

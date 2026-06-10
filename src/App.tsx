@@ -23,7 +23,8 @@ import {
   ChevronRight,
   UserPlus,
   Sun,
-  Moon
+  Moon,
+  Boxes
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { auth, db, OperationType, handleFirestoreError } from "@/src/lib/firebase";
@@ -48,6 +49,7 @@ import Suppliers from "./components/Suppliers";
 import Purchase from "./components/Purchase";
 import UsersManager from "./components/UsersManager";
 import Login from "./components/Login";
+import Inventory from "./components/Inventory";
 
 function QuotaExceededOverlay({ onDismiss, databaseId, projectId }: { onDismiss: () => void; databaseId: string; projectId: string }) {
   const upgradeUrl = `https://console.firebase.google.com/project/${projectId}/firestore/databases/${databaseId}/data?openUpgradeDialog=true`;
@@ -127,7 +129,7 @@ function QuotaExceededOverlay({ onDismiss, databaseId, projectId }: { onDismiss:
   );
 }
 
-type View = "dashboard" | "transactions" | "newSale" | "salesList" | "newEmployee" | "employeesList" | "salaryEntry" | "salarySheet" | "addAttendance" | "attendanceList" | "attendance" | "reports" | "settings" | "newSupplier" | "suppliersList" | "suppliers" | "newPurchase" | "purchaseList" | "newUser" | "usersList" | "rolesList" | "profileView";
+type View = "dashboard" | "transactions" | "newSale" | "salesList" | "newEmployee" | "employeesList" | "salaryEntry" | "salarySheet" | "addAttendance" | "attendanceList" | "attendance" | "reports" | "settings" | "newSupplier" | "suppliersList" | "suppliers" | "newPurchase" | "purchaseList" | "newUser" | "usersList" | "rolesList" | "profileView" | "inventory";
 
 export default function App() {
   const { language, setLanguage, t, formatDate } = useLanguage();
@@ -428,6 +430,7 @@ export default function App() {
         { id: "attendanceList", label: "Attendance Book" }
       ]
     },
+    { id: "inventory", label: "Inventory Hub", icon: Boxes },
     { id: "reports", label: "Reports & PDFs", icon: FileText },
     { 
       id: "users", 
@@ -1012,6 +1015,7 @@ export default function App() {
                   />
                 </div>
               )}
+              {activeView === "inventory" && <Inventory user={user} role={profile.role} />}
               {activeView === "reports" && <Reports user={user} role={profile.role} />}
               {activeView === "settings" && <Settings user={user} role={profile.role} />}
               {(activeView === "newUser" || activeView === "usersList" || activeView === "rolesList" || activeView === "profileView") && (

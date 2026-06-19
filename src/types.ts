@@ -141,6 +141,7 @@ export interface Product {
   totalPurchaseValue: number; // calculated as stock * lastPurchasePrice or similar
   createdAt: string;
   updatedAt: string;
+  minStock?: number;
 }
 
 export interface StockLedgerEntry {

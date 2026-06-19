@@ -37,7 +37,7 @@ import {
 import { motion, AnimatePresence } from "motion/react";
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, LineChart, Line } from "recharts";
 
-type ReportTab = "daily" | "bank" | "salary" | "supplier" | "purchase" | "attendance" | "transactions" | "inventory";
+type ReportTab = "daily" | "bank" | "salary" | "supplier" | "purchase" | "attendance" | "transactions" | "inventory" | "unified";
 
 export function addPdfGlobalLedgerSummary(
   doc: jsPDF,
@@ -719,7 +719,7 @@ export default function Reports({ user, role }: { user: User; role: UserRole }) 
         
         <div className="flex flex-col sm:flex-row sm:items-center gap-3 self-start lg:self-center shrink-0">
           <div className="flex bg-slate-100 p-1 rounded-2xl border border-slate-200 shadow-xs max-w-full overflow-x-auto">
-            {(["daily", "bank", "salary", "supplier", "purchase", "attendance", "transactions", "inventory"] as ReportTab[]).map(tab => (
+            {(["daily", "bank", "salary", "supplier", "purchase", "attendance", "transactions", "inventory", "unified"] as ReportTab[]).map(tab => (
               <button 
                 key={tab}
                 onClick={() => setActiveTab(tab)}
@@ -990,6 +990,21 @@ export default function Reports({ user, role }: { user: User; role: UserRole }) 
           formatCurrency={formatCurrency}
           globalLedgerTotals={globalLedgerTotals}
           onRegisterExporter={(exportFn) => registerExporter("inventory", exportFn)}
+        />
+      )}
+
+      {activeTab === "unified" && (
+        <UnifiedFinancialReport
+          transactions={transactions}
+          supplierTransactions={supplierTransactions}
+          purchases={purchases}
+          companyName={companyName}
+          companyAddress={companyAddress}
+          companyPhone={companyPhone}
+          companyEmail={companyEmail}
+          formatCurrency={formatCurrency}
+          globalLedgerTotals={globalLedgerTotals}
+          onRegisterExporter={(exportFn) => registerExporter("unified", exportFn)}
         />
       )}
     </div>
@@ -1364,19 +1379,53 @@ function SalaryFilterWiseReport({ employees, transactions, companyName, companyA
 }) {
   const [selectedEmpId, setSelectedEmpId] = useState("all");
   const [targetYear, setTargetYear] = useState(new Date().getFullYear().toString());
+  const [targetMonth, setTargetMonth] = useState("all"); // 'all', '01' to '12'
+  const { language, t } = useLanguage();
 
-  // Filters salary and advances
+  const monthsList = [
+    { value: "all", label: language === "bn" ? "সব মাস" : "All Months" },
+    { value: "01", label: language === "bn" ? "জানুয়ারি" : "January" },
+    { value: "02", label: language === "bn" ? "ফেব্রুয়ারি" : "February" },
+    { value: "03", label: language === "bn" ? "মার্চ" : "March" },
+    { value: "04", label: language === "bn" ? "এপ্রিল" : "April" },
+    { value: "05", label: language === "bn" ? "মে" : "May" },
+    { value: "06", label: language === "bn" ? "জুন" : "June" },
+    { value: "07", label: language === "bn" ? "জুলাই" : "July" },
+    { value: "08", label: language === "bn" ? "আগস্ট" : "August" },
+    { value: "09", label: language === "bn" ? "সেপ্টেম্বর" : "September" },
+    { value: "10", label: language === "bn" ? "অক্টোবর" : "October" },
+    { value: "11", label: language === "bn" ? "নভেম্বর" : "November" },
+    { value: "12", label: language === "bn" ? "ডিসেম্বর" : "December" }
+  ];
+
+  // Filters salary and advances safely
   const filteredTxs = transactions.filter(tx => {
-    const isSalaryOrAdvance = tx.category === "Salary" || tx.category === "Staff Salary" || tx.category === "Salary Advance" || tx.category === "Staff Advance";
+    const isSalaryOrAdvance = 
+      tx.category === "Salary" || 
+      tx.category === "Staff Salary" || 
+      tx.category === "Salary Advance" || 
+      tx.category === "Staff Advance" ||
+      tx.category === "Employee Advance";
     if (!isSalaryOrAdvance) return false;
     
-    if (new Date(tx.date).getFullYear().toString() !== targetYear) return false;
-    
-    if (selectedEmpId !== "all") {
-      if (tx.employeeId !== selectedEmpId) return false;
+    try {
+      const txDate = tx.date ? new Date(tx.date) : null;
+      if (!txDate || isNaN(txDate.getTime())) return false;
+      
+      const txYear = txDate.getFullYear().toString();
+      if (txYear !== targetYear) return false;
+      
+      if (targetMonth !== "all") {
+        const txMonth = (txDate.getMonth() + 1).toString().padStart(2, "0");
+        if (txMonth !== targetMonth) return false;
+      }
+      
+      if (selectedEmpId !== "all" && tx.employeeId !== selectedEmpId) return false;
+      return true;
+    } catch {
+      return false;
     }
-    return true;
-  }).sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+  }).sort((a,b) => new Date(b.date || 0).getTime() - new Date(a.date || 0).getTime());
 
   // Aggregate stats
   const totalSalaryPayout = filteredTxs
@@ -1384,26 +1433,42 @@ function SalaryFilterWiseReport({ employees, transactions, companyName, companyA
     .reduce((sum, tx) => sum + tx.amount, 0);
 
   const totalAdvancePayout = filteredTxs
-    .filter(tx => tx.category === "Salary Advance" || tx.category === "Staff Advance")
+    .filter(tx => tx.category === "Salary Advance" || tx.category === "Staff Advance" || tx.category === "Employee Advance")
     .reduce((sum, tx) => sum + tx.amount, 0);
 
   const exportSalaryCSV = React.useCallback(() => {
-    let csvContent = "Disbursement Date,Employee Name,Ledger Account,Method,Amount Paid (BDT),Reference Note\n";
-    filteredTxs.forEach(tx => {
-      const empName = employees.find(e => e.id === tx.employeeId)?.name || "Unknown";
-      const dt = tx.date ? tx.date.split("T")[0] : "";
-      csvContent += `"${dt}","${empName}","${tx.category}","${tx.paymentMethod}",${tx.amount},"${(tx.notes || "").replace(/"/g, '""')}"\n`;
-    });
+    let csvContent = "";
+    const bom = "\uFEFF";
     
-    csvContent += `\n"Total Salary Paid","","","",${totalSalaryPayout},""\n`;
-    csvContent += `"Total Advances Paid","","","",${totalAdvancePayout},""\n`;
+    if (language === "bn") {
+      csvContent = bom + "তারিখ,কর্মকর্তা/কর্মচারীর নাম,হিসাবের নাম,লেনদেনের মাধ্যম,প্রদত্ত পরিমাণ (টাকা),মন্তব্য/রেফারেন্স\n";
+      filteredTxs.forEach(tx => {
+        const empName = employees.find(e => e.id === tx.employeeId)?.name || "অজানা";
+        const dt = tx.date ? tx.date.split("T")[0] : "";
+        const catLabel = tx.category === "Staff Salary" ? "কর্মচারী বেতন" : "কর্মচারী অগ্রিম";
+        csvContent += `"${dt}","${empName}","${catLabel}","${tx.paymentMethod}",${tx.amount},"${(tx.notes || "").replace(/"/g, '""')}"\n`;
+      });
+      csvContent += `\n"সর্বমোট বেতন প্রদান","","","",${totalSalaryPayout},""\n`;
+      csvContent += `"সর্বমোট অগ্রিম প্রদান","","","",${totalAdvancePayout},""\n`;
+    } else {
+      csvContent = "Disbursement Date,Employee Name,Ledger Account,Method,Amount Paid (BDT),Reference Note\n";
+      filteredTxs.forEach(tx => {
+        const empName = employees.find(e => e.id === tx.employeeId)?.name || "Unknown";
+        const dt = tx.date ? tx.date.split("T")[0] : "";
+        csvContent += `"${dt}","${empName}","${tx.category}","${tx.paymentMethod}",${tx.amount},"${(tx.notes || "").replace(/"/g, '""')}"\n`;
+      });
+      csvContent += `\n"Total Salary Paid","","","",${totalSalaryPayout},""\n`;
+      csvContent += `"Total Advances Paid","","","",${totalAdvancePayout},""\n`;
+    }
 
     const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
     const link = document.createElement("a");
     link.href = URL.createObjectURL(blob);
-    link.download = `Salary_Report_${selectedEmpId}_Year_${targetYear}.csv`;
+    
+    const selectedMonthLabel = monthsList.find(m => m.value === targetMonth)?.label || "All_Months";
+    link.download = `Salary_Report_${selectedEmpId}_${selectedMonthLabel}_${targetYear}.csv`;
     link.click();
-  }, [filteredTxs, employees, selectedEmpId, targetYear, totalSalaryPayout, totalAdvancePayout]);
+  }, [filteredTxs, employees, selectedEmpId, targetYear, targetMonth, totalSalaryPayout, totalAdvancePayout, language]);
 
   useEffect(() => {
     if (onRegisterExporter) {
@@ -1413,6 +1478,53 @@ function SalaryFilterWiseReport({ employees, transactions, companyName, companyA
 
   // Selected Employee Basic Reference
   const empTarget = employees.find(e => e.id === selectedEmpId);
+
+  // Compute monthly totals for the selected year and employee for Recharts visualization
+  const chartData = Array.from({ length: 12 }, (_, idx) => {
+    const monthNum = (idx + 1).toString().padStart(2, "0");
+    const monthLabelObj = monthsList.find(m => m.value === monthNum);
+    const monthLabel = monthLabelObj ? monthLabelObj.label : "";
+    
+    const monthFilteredTxs = transactions.filter(tx => {
+      const isSalaryOrAdvance = 
+        tx.category === "Salary" || 
+        tx.category === "Staff Salary" || 
+        tx.category === "Salary Advance" || 
+        tx.category === "Staff Advance" ||
+        tx.category === "Employee Advance";
+      if (!isSalaryOrAdvance) return false;
+      
+      try {
+        const txDate = tx.date ? new Date(tx.date) : null;
+        if (!txDate || isNaN(txDate.getTime())) return false;
+        
+        const txYear = txDate.getFullYear().toString();
+        if (txYear !== targetYear) return false;
+        
+        const txMonth = (txDate.getMonth() + 1).toString().padStart(2, "0");
+        if (txMonth !== monthNum) return false;
+        
+        if (selectedEmpId !== "all" && tx.employeeId !== selectedEmpId) return false;
+        return true;
+      } catch {
+        return false;
+      }
+    });
+
+    const salaries = monthFilteredTxs
+      .filter(tx => tx.category === "Salary" || tx.category === "Staff Salary")
+      .reduce((sum, tx) => sum + tx.amount, 0);
+
+    const advances = monthFilteredTxs
+      .filter(tx => tx.category === "Salary Advance" || tx.category === "Staff Advance" || tx.category === "Employee Advance")
+      .reduce((sum, tx) => sum + tx.amount, 0);
+
+    return {
+      month: monthLabel,
+      [language === "bn" ? "বেতন প্রদান" : "Salaries"]: salaries,
+      [language === "bn" ? "অগ্রিম প্রদান" : "Advances"]: advances,
+    };
+  });
 
   const downloadSalaryReportPDF = () => {
     const doc = new jsPDF("p", "mm", "a4");
@@ -1430,7 +1542,9 @@ function SalaryFilterWiseReport({ employees, transactions, companyName, companyA
     doc.setFontSize(9);
     doc.setTextColor(203, 213, 225);
     doc.text(`${companyName.toUpperCase()} • ${companyAddress}`, 14, 23);
-    doc.text(`Issuer: HR Department || Target Year: ${targetYear}`, 14, 28);
+    
+    const activeMonthName = targetMonth === "all" ? "All Months" : (monthsList.find(m => m.value === targetMonth)?.label || "");
+    doc.text(`Issuer: HR & Payroll Department || Year: ${targetYear} || Month: ${activeMonthName}`, 14, 28);
     
     doc.setFillColor(14, 165, 233);
     doc.rect(0, 38, 210, 2, "F");
@@ -1465,7 +1579,7 @@ function SalaryFilterWiseReport({ employees, transactions, companyName, companyA
     const tableRows = filteredTxs.map(tx => [
       format(new Date(tx.date), "dd MMM yyyy"),
       employees.find(e => e.id === tx.employeeId)?.name || "Unknown",
-      tx.category,
+      tx.category === "Staff Salary" ? "Staff Salary" : tx.category === "Employee Advance" ? "Employee Advance" : tx.category,
       tx.paymentMethod,
       `BDT ${tx.amount.toLocaleString()}`,
       tx.notes || "-"
@@ -1499,145 +1613,296 @@ function SalaryFilterWiseReport({ employees, transactions, companyName, companyA
     const finalY = (doc as any).lastAutoTable.finalY + 8;
     addPdfGlobalLedgerSummary(doc, globalLedgerTotals, finalY);
 
-    doc.save(`Salary_Audit_${selectedEmpId}_${targetYear}.pdf`);
+    const activeMonthNameSlug = targetMonth === "all" ? "All_Months" : targetMonth;
+    doc.save(`Salary_Audit_${selectedEmpId}_${activeMonthNameSlug}_${targetYear}.pdf`);
   };
 
   return (
     <div className="space-y-6 animate-in slide-in-from-bottom-5 duration-300">
-      {/* Filters */}
-      <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-100 dark:border-slate-800">
-        <h3 className="text-xl font-extrabold text-slate-900 mb-5 flex items-center gap-2">
-          <Users className="w-5 h-5 text-slate-800" />
-          <span>Staff Payroll Ledger Filters</span>
-        </h3>
+      {/* Filters Panel */}
+      <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-100 dark:border-slate-800 space-y-4">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Users className="w-5 h-5 text-slate-800 dark:text-slate-205" />
+            <span className="text-lg font-extrabold text-slate-900 dark:text-neutral-100">
+              {language === "bn" ? "বেতন ও অগ্রিম লেজার ফিল্টার" : "Staff Payroll Ledger Filters"}
+            </span>
+          </div>
+          <div className="text-[10px] bg-slate-100 text-slate-600 px-3 py-1 rounded-full font-bold uppercase tracking-wider">
+            {language === "bn" ? "অডিটেড প্যাকেজ" : "Audited Package"}
+          </div>
+        </div>
         
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          {/* Target Staff Filter */}
           <div className="space-y-1">
-            <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block">Target Staff / Employee</label>
-            <select
-              value={selectedEmpId}
-              onChange={(e) => setSelectedEmpId(e.target.value)}
-              className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold text-xs"
-            >
-              <option value="all">All Employees Combined</option>
-              {employees.map(emp => (
-                <option key={emp.id} value={emp.id}>{emp.name} ({emp.role})</option>
-              ))}
-            </select>
+            <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block">
+              {language === "bn" ? "কর্মকর্তা / কর্মচারী নির্বাচন" : "Target Staff / Employee"}
+            </label>
+            <div className="relative">
+              <select
+                value={selectedEmpId}
+                onChange={(e) => setSelectedEmpId(e.target.value)}
+                className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 focus:border-slate-950 focus:bg-white rounded-xl font-bold text-xs appearance-none outline-none cursor-pointer"
+              >
+                <option value="all">
+                  {language === "bn" ? "সকল কর্মচারী একসাথে" : "All Employees Combined"}
+                </option>
+                {employees.map(emp => (
+                  <option key={emp.id} value={emp.id}>
+                    {emp.name} ({t(emp.role)})
+                  </option>
+                ))}
+              </select>
+              <div className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-slate-500">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" className="w-3.5 h-3.5">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
+                </svg>
+              </div>
+            </div>
           </div>
 
+          {/* Fiscal Year Filter */}
           <div className="space-y-1">
-            <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block">Fiscal Year</label>
-            <select
-              value={targetYear}
-              onChange={(e) => setTargetYear(e.target.value)}
-              className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold text-xs"
-            >
-              <option value="2024">2024</option>
-              <option value="2025">2025</option>
-              <option value="2026">2026</option>
-            </select>
+            <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block">
+              {language === "bn" ? "অর্থবছর" : "Fiscal Year"}
+            </label>
+            <div className="relative">
+              <select
+                value={targetYear}
+                onChange={(e) => setTargetYear(e.target.value)}
+                className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 focus:border-slate-950 focus:bg-white rounded-xl font-bold text-xs appearance-none outline-none cursor-pointer"
+              >
+                <option value="2024">2024</option>
+                <option value="2025">2025</option>
+                <option value="2026">2026</option>
+              </select>
+              <div className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-slate-500">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" className="w-3.5 h-3.5">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
+                </svg>
+              </div>
+            </div>
+          </div>
+
+          {/* Target Month Filter */}
+          <div className="space-y-1">
+            <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block">
+              {language === "bn" ? "নির্দিষ্ট মাস" : "Monthly Period"}
+            </label>
+            <div className="relative">
+              <select
+                value={targetMonth}
+                onChange={(e) => setTargetMonth(e.target.value)}
+                className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 focus:border-slate-950 focus:bg-white rounded-xl font-bold text-xs appearance-none outline-none cursor-pointer"
+              >
+                {monthsList.map(m => (
+                  <option key={m.value} value={m.value}>{m.label}</option>
+                ))}
+              </select>
+              <div className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-slate-500">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" className="w-3.5 h-3.5">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
+                </svg>
+              </div>
+            </div>
           </div>
 
           <div className="flex items-end">
             <button
               onClick={downloadSalaryReportPDF}
-              className="w-full flex items-center justify-center gap-1.5 px-5 py-2.5 bg-slate-900 text-white hover:bg-slate-800 rounded-xl text-xs font-bold tracking-wider uppercase transition-all shadow-xs cursor-pointer"
+              className="w-full flex items-center justify-center gap-2 px-5 py-2.5 bg-slate-900 border border-transparent text-white hover:bg-slate-800 rounded-xl text-xs font-bold tracking-wider uppercase transition-all shadow-sm cursor-pointer"
             >
               <Printer className="w-4 h-4" />
-              <span>PDF Payroll Audit</span>
+              <span>{language === "bn" ? "পিডিএফ রিপোর্ট অডিট" : "PDF Payroll Audit"}</span>
             </button>
           </div>
         </div>
       </div>
 
-      {/* Stats Cards */}
+      {/* KPI Stats Cards */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <div className="bg-slate-50 border border-slate-200 p-6 rounded-3xl">
-          <p className="text-[10px] font-extrabold text-slate-500 uppercase tracking-widest mb-1">Target Monthly Salary</p>
-          <p className="text-2xl font-black text-slate-900">
-            {empTarget ? formatCurrency(empTarget.salary) : "N/A (Multiple staff)"}
-          </p>
-          {empTarget && (
-            <p className="text-[10px] text-slate-400 font-bold mt-1 uppercase">department: {empTarget.department || "General"}</p>
+        {/* Base / Rate Card */}
+        <div className="bg-white border border-slate-100 p-6 rounded-3xl flex flex-col justify-between shadow-xs">
+          <div>
+            <p className="text-[10px] font-extrabold text-slate-400 uppercase tracking-widest mb-1.5">
+              {empTarget 
+                ? (language === "bn" ? "মাসিক বেতন হার" : "Target Monthly Salary") 
+                : (language === "bn" ? "সম্মিলিত মাসিক সক্রিয় বেতন" : "Combined Monthly Base Payroll")}
+            </p>
+            <p className="text-2xl font-black text-slate-950">
+              {empTarget 
+                ? formatCurrency(empTarget.salary) 
+                : formatCurrency(employees.filter(e => e.status === "active").reduce((sum, e) => sum + (e.salary || 0), 0))}
+            </p>
+          </div>
+          {empTarget ? (
+            <div className="text-[10px] text-slate-500 font-bold mt-3 uppercase border-t border-slate-50 pt-2 flex items-center justify-between">
+              <span>{language === "bn" ? "পদবী: " : "Designation: "} {empTarget.role}</span>
+              <span>{empTarget.department || "General"}</span>
+            </div>
+          ) : (
+            <div className="text-[10px] text-slate-400 font-bold mt-3 uppercase border-t border-slate-50 pt-2">
+              <span>{employees.filter(e => e.status === "active").length} {language === "bn" ? "সক্রিয় কর্মচারী" : "active staff members"}</span>
+            </div>
           )}
         </div>
 
-        <div className="bg-green-50 border border-green-100 p-6 rounded-3xl flex items-center justify-between">
+        {/* Salaries paid card */}
+        <div className="bg-emerald-50/50 border border-emerald-100/70 p-6 rounded-3xl flex items-center justify-between shadow-xs">
           <div>
-            <p className="text-[10px] font-extrabold text-green-850 uppercase tracking-widest mb-1">Total Salary Paid (Yearly)</p>
-            <p className="text-2xl font-black text-green-950">{formatCurrency(totalSalaryPayout)}</p>
+            <p className="text-[10px] font-extrabold text-emerald-800 uppercase tracking-widest mb-1">
+              {language === "bn" ? "মোট বেতন প্রদান (ফিল্টার)" : "Total Salary Paid (Period)"}
+            </p>
+            <p className="text-2xl font-black text-emerald-950">{formatCurrency(totalSalaryPayout)}</p>
+            <div className="text-[10px] text-emerald-600 font-bold uppercase mt-1">
+              {filteredTxs.filter(tx => tx.category === "Salary" || tx.category === "Staff Salary").length} {language === "bn" ? "টি অ্যাকাউন্ট এন্ট্রি" : "ledger accounts paid"}
+            </div>
           </div>
-          <div className="w-11 h-11 bg-green-100 rounded-full flex items-center justify-center text-green-600">
+          <div className="w-12 h-12 bg-emerald-100 text-emerald-700 rounded-2xl flex items-center justify-center">
             <CheckCircle2 className="w-5 h-5" />
           </div>
         </div>
 
-        <div className="bg-amber-50 border border-amber-100 p-6 rounded-3xl flex items-center justify-between">
+        {/* Advances Given Card */}
+        <div className="bg-amber-50/50 border border-amber-100/70 p-6 rounded-3xl flex items-center justify-between shadow-xs">
           <div>
-            <p className="text-[10px] font-extrabold text-amber-850 uppercase tracking-widest mb-1">Total Advances Issued</p>
+            <p className="text-[10px] font-extrabold text-amber-800 uppercase tracking-widest mb-1">
+              {language === "bn" ? "মোট অগ্রিম উত্তোলন (ফিল্টার)" : "Total Advances Issued"}
+            </p>
             <p className="text-2xl font-black text-amber-950">{formatCurrency(totalAdvancePayout)}</p>
+            <div className="text-[10px] text-amber-600 font-bold uppercase mt-1">
+              {filteredTxs.filter(tx => tx.category === "Salary Advance" || tx.category === "Staff Advance" || tx.category === "Employee Advance").length} {language === "bn" ? "বার অগ্রিম উত্তোলন" : "disbursement events"}
+            </div>
           </div>
-          <div className="w-11 h-11 bg-amber-100 text-amber-600 rounded-full flex items-center justify-center">
+          <div className="w-12 h-12 bg-amber-100 text-amber-700 rounded-2xl flex items-center justify-center">
             <Info className="w-5 h-5" />
           </div>
         </div>
       </div>
 
+      {/* Chart Segment - Huge attractive and user-friendly update! */}
+      <div className="bg-white p-6 rounded-3xl border border-slate-100 dark:border-slate-800 shadow-sm space-y-4">
+        <div>
+          <h4 className="text-base font-extrabold text-slate-900">
+            {language === "bn" ? "মাসিক বেতন ও অগ্রিম তুলনা গ্রাফ" : "Monthly Comparison Trend Graph"}
+          </h4>
+          <p className="text-xs text-slate-400">
+            {language === "bn" ? "সারাবছরের মাসভিত্তিক তুলনামূলক বাজেট বিশ্লেষণ" : `Comparing Month-to-Month disbursals across fiscal ${targetYear} for selected targets`}
+          </p>
+        </div>
+        
+        <div className="h-64 sm:h-72 w-full pt-2">
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={chartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+              <XAxis dataKey="month" stroke="#94a3b8" fontSize={10} tickLine={false} />
+              <YAxis stroke="#94a3b8" fontSize={10} tickLine={false} />
+              <Tooltip 
+                contentStyle={{ 
+                  borderRadius: "12px", 
+                  background: "#0f172a", 
+                  color: "#fff", 
+                  fontSize: "11px",
+                  border: "none"
+                }} 
+              />
+              <Legend wrapperStyle={{ fontSize: "11px", fontWeight: "bold" }} />
+              <Bar dataKey={language === "bn" ? "বেতন প্রদান" : "Salaries"} fill="#059669" radius={[4, 4, 0, 0]} />
+              <Bar dataKey={language === "bn" ? "অগ্রিম প্রদান" : "Advances"} fill="#d97706" radius={[4, 4, 0, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      </div>
+
       {/* History Ledger Table */}
       <div className="bg-white rounded-3xl shadow-sm border border-slate-100 overflow-hidden">
-        <table className="w-full text-left">
-          <thead>
-            <tr className="bg-slate-50/70">
-              <th className="px-6 py-4 text-[10px] font-extrabold text-slate-500 uppercase tracking-widest border-b border-slate-100">Disbursement Date</th>
-              <th className="px-6 py-4 text-[10px] font-extrabold text-slate-500 uppercase tracking-widest border-b border-slate-100">Employee Name</th>
-              <th className="px-6 py-4 text-[10px] font-extrabold text-slate-500 uppercase tracking-widest border-b border-slate-100">Category</th>
-              <th className="px-6 py-4 text-[10px] font-extrabold text-slate-500 uppercase tracking-widest border-b border-slate-100">Payment Channel</th>
-              <th className="px-6 py-4 text-[10px] font-extrabold text-slate-500 uppercase tracking-widest border-b border-slate-100 text-right">Amount Out (BDT)</th>
-              <th className="px-6 py-4 text-[10px] font-extrabold text-slate-500 uppercase tracking-widest border-b border-slate-100">Comments/Notes</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-100 text-xs">
-            {filteredTxs.map(tx => (
-              <tr key={tx.id} className="hover:bg-slate-50/30 transition-all">
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <p className="font-bold text-slate-900">{format(new Date(tx.date), "dd MMM yyyy")}</p>
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap font-semibold text-slate-800">
-                  {employees.find(e => e.id === tx.employeeId)?.name || "Unknown"}
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <span className={cn(
-                    "px-2.5 py-0.5 rounded-full text-[9px] font-extrabold uppercase tracking-wide",
-                    tx.category.includes("Advance") 
-                      ? "bg-amber-100 text-amber-800 border border-amber-200"
-                      : "bg-green-100 text-green-800 border border-green-200"
-                  )}>
-                    {tx.category}
-                  </span>
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap">
-                   <span className="px-2.5 py-1 bg-slate-100 rounded-lg font-bold text-slate-600 uppercase text-[9px]">
-                    {tx.paymentMethod}
-                   </span>
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap text-right font-black text-slate-900">
-                  {formatCurrency(tx.amount)}
-                </td>
-                <td className="px-6 py-4 text-slate-500 max-w-xs truncate italic">
-                  {tx.notes || "—"}
-                </td>
+        <div className="p-6 border-b border-slate-50 flex items-center justify-between">
+          <div>
+            <h4 className="text-base font-extrabold text-slate-800">
+              {language === "bn" ? "লেনদেন জার্নাল ইতিহাস" : "Disbursement Audit Journal"}
+            </h4>
+            <p className="text-xs text-slate-400">
+              {language === "bn" ? "নির্বাচিত ফিল্টার অনুযায়ী বেতন ও অগ্রিমের বিস্তারিত তালিকা" : `Detailed records matching active filters for ${targetMonth !== "all" ? monthsList.find(m => m.value === targetMonth)?.label : ""} ${targetYear}`}
+            </p>
+          </div>
+          <span className="text-[10px] bg-slate-50 border border-slate-100 text-slate-650 px-2.5 py-1 rounded-md font-bold">
+            {filteredTxs.length} {language === "bn" ? "টি রেকর্ড পাওয়া গেছে" : "records captured"}
+          </span>
+        </div>
+
+        <div className="overflow-x-auto">
+          <table className="w-full text-left">
+            <thead>
+              <tr className="bg-slate-50/70">
+                <th className="px-6 py-4 text-[10px] font-extrabold text-slate-500 uppercase tracking-widest border-b border-slate-100">
+                  {language === "bn" ? "প্রদানের তারিখ" : "Disbursement Date"}
+                </th>
+                <th className="px-6 py-4 text-[10px] font-extrabold text-slate-500 uppercase tracking-widest border-b border-slate-100">
+                  {language === "bn" ? "কর্মচারীর নাম" : "Employee Name"}
+                </th>
+                <th className="px-6 py-4 text-[10px] font-extrabold text-slate-500 uppercase tracking-widest border-b border-slate-100">
+                  {language === "bn" ? "খাত / ক্যাটাগরি" : "Ledger Category"}
+                </th>
+                <th className="px-6 py-4 text-[10px] font-extrabold text-slate-500 uppercase tracking-widest border-b border-slate-100">
+                  {language === "bn" ? "প্রদানের মাধ্যম" : "Channel / Method"}
+                </th>
+                <th className="px-6 py-4 text-[10px] font-extrabold text-slate-500 uppercase tracking-widest border-b border-slate-100 text-right">
+                  {language === "bn" ? "পরিমাণ (টাকা)" : "Amount Out (BDT)"}
+                </th>
+                <th className="px-6 py-4 text-[10px] font-extrabold text-slate-500 uppercase tracking-widest border-b border-slate-100">
+                  {language === "bn" ? "মন্তব্য" : "Reference Notes"}
+                </th>
               </tr>
-            ))}
-            {filteredTxs.length === 0 && (
-              <tr>
-                <td colSpan={6} className="px-6 py-16 text-center text-slate-400 italic font-medium">
-                  No payroll/salary dispatch matches for fiscal {targetYear}.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
+            </thead>
+            <tbody className="divide-y divide-slate-100 text-xs text-slate-600">
+              {filteredTxs.map(tx => (
+                <tr key={tx.id} className="hover:bg-slate-50/30 transition-all">
+                  <td className="px-6 py-4 whitespace-nowrap">
+                    <p className="font-bold text-slate-900">{format(new Date(tx.date), "dd MMM yyyy")}</p>
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap font-bold text-slate-800">
+                    {employees.find(e => e.id === tx.employeeId)?.name || "Unknown"}
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap">
+                    <span className={cn(
+                      "px-2.5 py-0.5 rounded-full text-[9px] font-extrabold uppercase tracking-wide",
+                      tx.category.includes("Advance") 
+                        ? "bg-amber-100 text-amber-800 border border-amber-200"
+                        : "bg-green-100 text-green-800 border border-green-200"
+                    )}>
+                      {tx.category === "Staff Salary" 
+                        ? (language === "bn" ? "কর্মচারী বেতন" : "Staff Salary")
+                        : tx.category === "Employee Advance"
+                        ? (language === "bn" ? "কর্মচারী অগ্রিম" : "Employee Advance")
+                        : tx.category}
+                    </span>
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap">
+                     <span className="px-2.5 py-1 bg-slate-100 rounded-lg font-bold text-slate-500 uppercase text-[9px]">
+                      {tx.paymentMethod}
+                     </span>
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-right font-black text-slate-900">
+                    {formatCurrency(tx.amount)}
+                  </td>
+                  <td className="px-6 py-4 text-slate-400 max-w-xs truncate italic">
+                    {tx.notes || "—"}
+                  </td>
+                </tr>
+              ))}
+              {filteredTxs.length === 0 && (
+                <tr>
+                  <td colSpan={6} className="px-6 py-16 text-center text-slate-400 italic font-medium">
+                    {language === "bn" 
+                      ? "কোন তথ্য বা প্রদানের ইতিহাস খুঁজে পাওয়া যায়নি।" 
+                      : `No payroll/salary dispatch matches for chosen criteria in ${targetYear}.`}
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   );
@@ -3784,6 +4049,692 @@ function InventoryReportSection({ products = [], stockLedger = [], companyName, 
               })
             )}
           </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ==========================================================================
+   NEW TAB: UNIFIED LEDGER AUDIT REPORT (SALES, EXPENSES & SUPPLIER PAYMENTS)
+   ========================================================================== */
+function UnifiedFinancialReport({
+  transactions,
+  supplierTransactions,
+  purchases,
+  companyName,
+  companyAddress,
+  companyPhone,
+  companyEmail,
+  formatCurrency,
+  globalLedgerTotals,
+  onRegisterExporter,
+}: {
+  transactions: Transaction[];
+  supplierTransactions: SupplierTransaction[];
+  purchases: PurchaseModel[];
+  companyName: string;
+  companyAddress: string;
+  companyPhone: string;
+  companyEmail: string;
+  formatCurrency: (val: number) => string;
+  globalLedgerTotals: any;
+  onRegisterExporter?: (exportFn: () => void) => void;
+}) {
+  const { language, t } = useLanguage();
+
+  // Robust parsing of any date representation (string, Date, or Firestore Timestamp object)
+  const getDateStr = (dt: any): string => {
+    if (!dt) return "";
+    if (typeof dt === "string") {
+      return dt.split("T")[0];
+    }
+    if (dt && typeof dt === "object" && "seconds" in dt) {
+      try {
+        return new Date(dt.seconds * 1000).toISOString().split("T")[0];
+      } catch {
+        return "";
+      }
+    }
+    if (dt instanceof Date) {
+      return dt.toISOString().split("T")[0];
+    }
+    return "";
+  };
+
+  // 1. Calculate absolute dataset limits dynamically (All-time first day to last date)
+  const allDates = [...transactions, ...supplierTransactions]
+    .map(tk => getDateStr(tk.date))
+    .filter(Boolean)
+    .sort();
+
+  const absoluteMinDate = allDates.length > 0 ? allDates[0] : format(subDays(new Date(), 90), "yyyy-MM-dd");
+  const absoluteMaxDate = allDates.length > 0 ? allDates[allDates.length - 1] : format(new Date(), "yyyy-MM-dd");
+
+  // 2. State filters (Dynamic bounds system that remains reactive when Firestore arrays populate asynchronously)
+  const [startDate, setStartDate] = useState("");
+  const [endDate, setEndDate] = useState("");
+  const [groupBy, setGroupBy] = useState<"day" | "week" | "month">("day");
+  const [searchQuery, setSearchQuery] = useState("");
+
+  const activeStartDate = startDate || absoluteMinDate;
+  const activeEndDate = endDate || absoluteMaxDate;
+
+  // 3. Reset dates to absolute min/max helper
+  const handleSetAllTime = () => {
+    setStartDate(absoluteMinDate);
+    setEndDate(absoluteMaxDate);
+  };
+
+  const handleSetLast30Days = () => {
+    setStartDate(format(subDays(new Date(), 30), "yyyy-MM-dd"));
+    setEndDate(format(new Date(), "yyyy-MM-dd"));
+  };
+
+  const handleSetThisMonth = () => {
+    setStartDate(format(startOfMonth(new Date()), "yyyy-MM-dd"));
+    setEndDate(format(endOfMonth(new Date()), "yyyy-MM-dd"));
+  };
+
+  // 4. Build unique timeline map of dates in the selected range
+  const dailyMap: Record<
+    string,
+    {
+      dateStr: string;
+      sales: number;
+      expenses: number;
+      supplierPayments: number;
+    }
+  > = {};
+
+  // Process standard transactional sales and general expenses
+  transactions.forEach(tx => {
+    const dateKey = getDateStr(tx.date);
+    if (!dateKey) return;
+    if (dateKey < activeStartDate || dateKey > activeEndDate) return;
+
+    if (!dailyMap[dateKey]) {
+      dailyMap[dateKey] = { dateStr: dateKey, sales: 0, expenses: 0, supplierPayments: 0 };
+    }
+
+    const categStr = (tx.category || "").trim();
+
+    // Determine if it is a Product/Retail/Wholesale Sale
+    const isSale =
+      tx.type === "income" &&
+      (categStr === "Employee Sales" ||
+        categStr === "Wholesale Sales" ||
+        categStr === "Product Sales" ||
+        categStr === "Retail Sales" ||
+        categStr === "Total Deposit" ||
+        categStr.toLowerCase().includes("sale"));
+
+    // Determine if it is a Business/Utility/General Expense
+    const isExpense = tx.type === "expense" && categStr !== "Bank Credit";
+
+    if (isSale) {
+      dailyMap[dateKey].sales += tx.amount || 0;
+    } else if (isExpense) {
+      dailyMap[dateKey].expenses += tx.amount || 0;
+    }
+  });
+
+  // Process supplier transactions payments
+  supplierTransactions.forEach(stx => {
+    const dateKey = getDateStr(stx.date);
+    if (!dateKey) return;
+    if (dateKey < activeStartDate || dateKey > activeEndDate) return;
+
+    if (!dailyMap[dateKey]) {
+      dailyMap[dateKey] = { dateStr: dateKey, sales: 0, expenses: 0, supplierPayments: 0 };
+    }
+
+    // Direct supplier cash payments or bank payouts
+    if (stx.type === "payment") {
+      dailyMap[dateKey].supplierPayments += stx.totalAmount || 0;
+    }
+    // Sourcing raw purchases immediate paid portion
+    else if (stx.type === "purchase" && stx.paidAmount && stx.paidAmount > 0) {
+      dailyMap[dateKey].supplierPayments += stx.paidAmount;
+    }
+  });
+
+  // 5. Group and aggregate based on interval selector
+  const getGroupInfo = (dateStr: string) => {
+    try {
+      const d = parseISO(dateStr);
+      if (isNaN(d.getTime())) return { key: dateStr, label: dateStr };
+
+      if (groupBy === "day") {
+        return {
+          key: dateStr,
+          label: format(d, "dd MMM yyyy"),
+        };
+      } else if (groupBy === "week") {
+        // Find Sunday of the week containing d
+        const day = d.getDay();
+        const startOfWeekDate = new Date(d);
+        startOfWeekDate.setDate(d.getDate() - day);
+        const weekKey = format(startOfWeekDate, "yyyy-ww");
+        return {
+          key: weekKey,
+          label: language === "bn" ? `সপ্তাহ: ${format(startOfWeekDate, "dd MMM")}` : `Week of ${format(startOfWeekDate, "dd MMM yyyy")}`,
+        };
+      } else {
+        // month
+        const monthKey = format(d, "yyyy-MM");
+        return {
+          key: monthKey,
+          label: format(d, "MMMM yyyy"),
+        };
+      }
+    } catch {
+      return { key: dateStr, label: dateStr };
+    }
+  };
+
+  const groupedMap: Record<
+    string,
+    {
+      label: string;
+      sales: number;
+      expenses: number;
+      supplierPayments: number;
+      netFlow: number;
+      keyStr: string;
+    }
+  > = {};
+
+  Object.values(dailyMap).forEach(rec => {
+    const { key, label } = getGroupInfo(rec.dateStr);
+    if (!groupedMap[key]) {
+      groupedMap[key] = {
+        label,
+        sales: 0,
+        expenses: 0,
+        supplierPayments: 0,
+        netFlow: 0,
+        keyStr: key,
+      };
+    }
+    groupedMap[key].sales += rec.sales;
+    groupedMap[key].expenses += rec.expenses;
+    groupedMap[key].supplierPayments += rec.supplierPayments;
+  });
+
+  // Convert to sorted array and filter by query (month name, etc.)
+  let groupedData = Object.values(groupedMap)
+    .map(item => {
+      const netFlow = item.sales - item.expenses - item.supplierPayments;
+      return {
+        ...item,
+        netFlow,
+      };
+    })
+    .sort((a, b) => a.keyStr.localeCompare(b.keyStr));
+
+  if (searchQuery.trim() !== "") {
+    const q = searchQuery.toLowerCase();
+    groupedData = groupedData.filter(item => item.label.toLowerCase().includes(q));
+  }
+
+  // 6. Aggregate lifetime/span stats
+  const totalSalesSpan = groupedData.reduce((sum, item) => sum + item.sales, 0);
+  const totalExpensesSpan = groupedData.reduce((sum, item) => sum + item.expenses, 0);
+  const totalSupplierPaymentsSpan = groupedData.reduce((sum, item) => sum + item.supplierPayments, 0);
+  const totalNetFlowSpan = totalSalesSpan - totalExpensesSpan - totalSupplierPaymentsSpan;
+
+  // 7. CSV exporter
+  const exportUnifiedCSV = React.useCallback(() => {
+    let csvContent = "";
+    const bom = "\uFEFF";
+    
+    if (language === "bn") {
+      csvContent = bom + "সময় সীমা,মোট বিক্রয় (টাকা),মোট ব্যবসায়িক খরচ (টাকা),সরবরাহকারী পরিশোধ (টাকা),নীট তারল্য প্রবাহ (টাকা)\n";
+      groupedData.forEach(item => {
+        csvContent += `"${item.label}",${item.sales},${item.expenses},${item.supplierPayments},${item.netFlow}\n`;
+      });
+      csvContent += `\n"সর্বমোট","${totalSalesSpan}","${totalExpensesSpan}","${totalSupplierPaymentsSpan}","${totalNetFlowSpan}"\n`;
+    } else {
+      csvContent = "Interval Period,Total Gross Sales,Business Expenses,Supplier Payments,Net Liquid cashflow\n";
+      groupedData.forEach(item => {
+        csvContent += `"${item.label}",${item.sales},${item.expenses},${item.supplierPayments},${item.netFlow}\n`;
+      });
+      csvContent += `\n"Grand Totals Across Period","${totalSalesSpan}","${totalExpensesSpan}","${totalSupplierPaymentsSpan}","${totalNetFlowSpan}"\n`;
+    }
+
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = `Consolidated_Financial_Journal_${groupBy}_${activeStartDate}_to_${activeEndDate}.csv`;
+    link.click();
+  }, [groupedData, language, groupBy, activeStartDate, activeEndDate, totalSalesSpan, totalExpensesSpan, totalSupplierPaymentsSpan, totalNetFlowSpan]);
+
+  useEffect(() => {
+    if (onRegisterExporter) {
+      onRegisterExporter(exportUnifiedCSV);
+    }
+  }, [exportUnifiedCSV, onRegisterExporter]);
+
+  // 8. PDF download generator
+  const downloadUnifiedPDF = () => {
+    const doc = new jsPDF("p", "mm", "a4");
+    const pageWidth = doc.internal.pageSize.getWidth();
+
+    // Elegant header
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(22);
+    doc.setTextColor(15, 23, 42); // slate-900
+    doc.text(companyName.toUpperCase(), 14, 16);
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(8.5);
+    doc.setTextColor(148, 163, 184); // slate-400
+    doc.text(`${companyAddress} • ${companyPhone} • ${companyEmail}`, 14, 21);
+
+    doc.setFillColor(15, 23, 42);
+    doc.rect(0, 25, pageWidth, 1.5, "F");
+
+    // Corporate metadata box
+    doc.setFillColor(248, 250, 252);
+    doc.rect(14, 30, pageWidth - 28, 22, "F");
+    doc.setDrawColor(226, 232, 240);
+    doc.rect(14, 30, pageWidth - 28, 22);
+
+    doc.setFontSize(9);
+    doc.setTextColor(71, 85, 105);
+    doc.setFont("helvetica", "bold");
+    doc.text("CONSOLIDATED FINANCIAL STATEMENT AUDIT", 18, 36);
+    
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(8);
+    doc.text(`Selected Audit Interval: ${format(new Date(activeStartDate), "dd MMM yyyy")} to ${format(new Date(activeEndDate), "dd MMM yyyy")}`, 18, 41);
+    doc.text(`Interval Grouping Method: Chronological ${groupBy.toUpperCase()}-wise indexation`, 18, 46);
+
+    doc.text(`Report Generated On: ${format(new Date(), "dd MMM yyyy HH:mm")}`, pageWidth - 18, 36, { align: "right" });
+    doc.text(`Status: Verified System Ledger`, pageWidth - 18, 41, { align: "right" });
+
+    // Table rows
+    const tableHeaders = [
+      language === "bn" ? "সময়-কাল" : "Interval Period",
+      language === "bn" ? "মোট বিক্রয়" : "Gross Sales",
+      language === "bn" ? "ব্যবসায়িক খরচ" : "Business Expenses",
+      language === "bn" ? "সরবরাহকারী পরিশোধ" : "Supplier Payments",
+      language === "bn" ? "নীট গ্যাস প্রবাহ" : "Net Cash Movement",
+    ];
+
+    const tableRows = groupedData.map(item => [
+      item.label,
+      `BDT ${item.sales.toLocaleString()}`,
+      `BDT ${item.expenses.toLocaleString()}`,
+      `BDT ${item.supplierPayments.toLocaleString()}`,
+      `BDT ${item.netFlow.toLocaleString()}`,
+    ]);
+
+    // Append cumulative totals row at the end of PDF table
+    tableRows.push([
+      language === "bn" ? "সর্বমোট টাকা" : "GRAND TOTAL PORTFOLIO",
+      `BDT ${totalSalesSpan.toLocaleString()}`,
+      `BDT ${totalExpensesSpan.toLocaleString()}`,
+      `BDT ${totalSupplierPaymentsSpan.toLocaleString()}`,
+      `BDT ${totalNetFlowSpan.toLocaleString()}`,
+    ]);
+
+    autoTable(doc, {
+      startY: 58,
+      head: [tableHeaders],
+      body: tableRows,
+      theme: "grid",
+      headStyles: {
+        fillColor: [30, 41, 59], // slate-800
+        fontSize: 8,
+        fontStyle: "bold",
+      },
+      styles: {
+        font: "helvetica",
+        fontSize: 7.5,
+      },
+      columnStyles: {
+        1: { halign: "right" },
+        2: { halign: "right" },
+        3: { halign: "right" },
+        4: { halign: "right", fontStyle: "bold" },
+      },
+      didParseCell: (data) => {
+        // Bold and shade the final portfolio row
+        if (data.row.index === tableRows.length - 1) {
+          data.cell.styles.fontStyle = "bold";
+          data.cell.styles.fillColor = [241, 245, 249]; // light grayish slate
+          if (data.column.index === 4) {
+            data.cell.styles.textColor = totalNetFlowSpan >= 0 ? [5, 150, 105] : [220, 38, 38];
+          }
+        }
+      },
+    });
+
+    const finalY = (doc as any).lastAutoTable.finalY + 10;
+    addPdfGlobalLedgerSummary(doc, globalLedgerTotals, finalY);
+
+    doc.save(`Consolidated_Business_Ledger_${groupBy}_${activeStartDate}_to_${activeEndDate}.pdf`);
+  };
+
+  // Recharts Chart Map data format
+  const chartData = groupedData.map(item => ({
+    name: item.label,
+    [language === "bn" ? "বিক্রয়" : "Sales"]: item.sales,
+    [language === "bn" ? "ব্যবসায়িক খরচ" : "Expenses"]: item.expenses,
+    [language === "bn" ? "সরবরাহকারী পরিশোধ" : "Supplier Payments"]: item.supplierPayments,
+    [language === "bn" ? "নীট তারল্য প্রবাহ" : "Net Flow"]: item.netFlow,
+  }));
+
+  return (
+    <div className="space-y-6 animate-in slide-in-from-bottom-5 duration-300">
+      
+      {/* Search and Date Filter Panel */}
+      <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-100 dark:border-slate-800 space-y-4">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div className="flex items-center gap-2">
+            <Layout className="w-5 h-5 text-slate-800 dark:text-neutral-100" />
+            <h3 className="text-lg font-black text-slate-900 dark:text-neutral-100">
+              {language === "bn" ? "সমন্বিত ব্যবসায়িক আর্থিক খতিয়ান" : "Consolidated Ledger Statement"}
+            </h3>
+          </div>
+          
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              onClick={handleSetAllTime}
+              className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-bold transition-all cursor-pointer border-none"
+            >
+              {language === "bn" ? "প্রথম থেকে শেষ" : "First to Last (All)"}
+            </button>
+            <button
+              onClick={handleSetThisMonth}
+              className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-bold transition-all cursor-pointer border-none"
+            >
+              {language === "bn" ? "এই মাস" : "This Month"}
+            </button>
+            <button
+              onClick={handleSetLast30Days}
+              className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-bold transition-all cursor-pointer border-none"
+            >
+              {language === "bn" ? "গত ৩০ দিন" : "Last 30 Days"}
+            </button>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 pt-2">
+          {/* Start Date */}
+          <div className="space-y-1">
+            <label className="text-xs font-bold text-slate-400 uppercase tracking-wider block">
+              {language === "bn" ? "আরম্ভের তারিখ" : "Start Date"}
+            </label>
+            <input
+              type="date"
+              value={activeStartDate}
+              onChange={(e) => setStartDate(e.target.value)}
+              className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold text-xs outline-none focus:border-slate-400 transition-all dark:bg-neutral-900 dark:border-neutral-800 dark:text-white"
+            />
+          </div>
+
+          {/* End Date */}
+          <div className="space-y-1">
+            <label className="text-xs font-bold text-slate-400 uppercase tracking-wider block">
+              {language === "bn" ? "সমাপ্তির তারিখ" : "End Date"}
+            </label>
+            <input
+              type="date"
+              value={activeEndDate}
+              onChange={(e) => setEndDate(e.target.value)}
+              className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold text-xs outline-none focus:border-slate-400 transition-all dark:bg-neutral-900 dark:border-neutral-800 dark:text-white"
+            />
+          </div>
+
+          {/* Group Interval Selector */}
+          <div className="space-y-1">
+            <label className="text-xs font-bold text-slate-400 uppercase tracking-wider block">
+              {language === "bn" ? "রূপান্তর বিন্যাস" : "Interval Grouping"}
+            </label>
+            <select
+              value={groupBy}
+              onChange={(e) => setGroupBy(e.target.value as any)}
+              className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl font-bold text-xs h-[38px] cursor-pointer outline-none focus:border-slate-400 transition-all dark:bg-neutral-900 dark:border-neutral-800 dark:text-white"
+            >
+              <option value="day">{language === "bn" ? "দৈনিক বিবরণী" : "Day-wise Details"}</option>
+              <option value="week">{language === "bn" ? "সাপ্তাহিক বিবরণী" : "Week-wise Details"}</option>
+              <option value="month">{language === "bn" ? "মাসিক বিবরণী" : "Month-wise Details"}</option>
+            </select>
+          </div>
+
+          {/* Action buttons (Print) */}
+          <div className="flex items-end gap-2">
+            <button
+              onClick={downloadUnifiedPDF}
+              className="w-full flex items-center justify-center gap-1.5 px-4 py-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold tracking-wider uppercase transition-all shadow-sm cursor-pointer border border-transparent"
+            >
+              <Printer className="w-4 h-4" />
+              <span>{language === "bn" ? "পিডিএফ ডাউনলোড" : "PDF Ledger"}</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Search input to filter final lists */}
+        <div className="pt-2 border-t border-slate-50 dark:border-neutral-800">
+          <div className="relative">
+            <Search className="absolute left-3 top-3 w-4 h-4 text-slate-400" />
+            <input
+              type="text"
+              placeholder={language === "bn" ? "গ্রুপ বা তারিখ খুজুন..." : "Filter results by keyword label..."}
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full pl-9 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold text-xs outline-none focus:border-slate-400 transition-all dark:bg-neutral-900 dark:border-neutral-800 dark:text-white"
+            />
+          </div>
+        </div>
+      </div>
+
+      {/* KPI Stats Grid */}
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        {/* Sales Card */}
+        <div className="bg-emerald-50/70 border border-emerald-100 p-5 rounded-3xl flex items-center justify-between shadow-xs">
+          <div>
+            <p className="text-[10px] font-extrabold text-emerald-800 uppercase tracking-widest mb-1">
+              {language === "bn" ? "মোট বিক্রয় (বাছাইকাল)" : "SPAN TOTAL SALES"}
+            </p>
+            <p className="text-xl font-black text-emerald-950">{formatCurrency(totalSalesSpan)}</p>
+            <span className="text-[9px] text-emerald-600 font-semibold uppercase block mt-1.5">
+              {language === "bn" ? "গ্রুপ সংখ্যা: " : "active records: "} {groupedData.length}
+            </span>
+          </div>
+          <div className="w-11 h-11 bg-emerald-100 text-emerald-700 rounded-2xl flex items-center justify-center">
+            <ShoppingCart className="w-5 h-5" />
+          </div>
+        </div>
+
+        {/* Expenses Card */}
+        <div className="bg-rose-50/70 border border-rose-100 p-5 rounded-3xl flex items-center justify-between shadow-xs">
+          <div>
+            <p className="text-[10px] font-extrabold text-rose-800 uppercase tracking-widest mb-1">
+              {language === "bn" ? "মোট অন্যান্য খরচ" : "BUSINESS EXPENSES"}
+            </p>
+            <p className="text-xl font-black text-rose-950">{formatCurrency(totalExpensesSpan)}</p>
+            <span className="text-[9px] text-rose-600 font-semibold uppercase block mt-1.5 font-sans">
+              {language === "bn" ? "বেতন ও পরিচালনা খরচ" : "Includes Payroll & Operations"}
+            </span>
+          </div>
+          <div className="w-11 h-11 bg-rose-100 text-rose-700 rounded-2xl flex items-center justify-center">
+            <ArrowDownLeft className="w-5 h-5" />
+          </div>
+        </div>
+
+        {/* Supplier Payments Card */}
+        <div className="bg-amber-50/70 border border-amber-100 p-5 rounded-3xl flex items-center justify-between shadow-xs">
+          <div>
+            <p className="text-[10px] font-extrabold text-amber-800 uppercase tracking-widest mb-1">
+              {language === "bn" ? "মোট সরবরাহকারী পরিশোধ" : "SUPPLIER DISBURSEMENTS"}
+            </p>
+            <p className="text-xl font-black text-amber-950">{formatCurrency(totalSupplierPaymentsSpan)}</p>
+            <span className="text-[9px] text-amber-600 font-semibold uppercase block mt-1.5 font-sans">
+              {language === "bn" ? "ক্রয় ও বকেয়া খতিয়ান" : "Direct & Credit Payments"}
+            </span>
+          </div>
+          <div className="w-11 h-11 bg-amber-100 text-amber-700 rounded-2xl flex items-center justify-center">
+            <Truck className="w-5 h-5" />
+          </div>
+        </div>
+
+        {/* Net Flow Card */}
+        <div className={cn(
+          "p-5 rounded-3xl border flex items-center justify-between shadow-xs",
+          totalNetFlowSpan >= 0 
+            ? "bg-violet-50/70 border-violet-100" 
+            : "bg-red-50/70 border-red-100"
+        )}>
+          <div>
+            <p className={cn("text-[10px] font-extrabold uppercase tracking-widest mb-1", totalNetFlowSpan >= 0 ? "text-violet-800" : "text-red-800")}>
+              {language === "bn" ? "নীট তারল্য প্রবাহ" : "NET CASH FLOW"}
+            </p>
+            <p className={cn("text-xl font-black", totalNetFlowSpan >= 0 ? "text-violet-950" : "text-red-950")}>
+              {formatCurrency(totalNetFlowSpan)}
+            </p>
+            <span className="text-[9px] text-slate-500 font-semibold uppercase block mt-1.5 font-sans">
+              {totalNetFlowSpan >= 0 
+                ? (language === "bn" ? "তারল্য উদ্ধৃত্ত" : "Cash surplus") 
+                : (language === "bn" ? "তারল্য ঘাটতি" : "Cash deficit")}
+            </span>
+          </div>
+          <div className={cn("w-11 h-11 rounded-2xl flex items-center justify-center", totalNetFlowSpan >= 0 ? "bg-violet-100 text-violet-700" : "bg-red-100 text-red-700")}>
+            <TrendingUp className="w-5 h-5" />
+          </div>
+        </div>
+      </div>
+
+      {/* Visual Chart Trend Segment */}
+      <div className="bg-white p-6 rounded-3xl border border-slate-100 dark:border-slate-800 shadow-sm space-y-4">
+        <div>
+          <h4 className="text-base font-extrabold text-slate-900 dark:text-neutral-100">
+            {language === "bn" ? "আর্থিক কর্মক্ষমতা প্রবণতা চার্ট" : "Consolidated Financial Performance Trend"}
+          </h4>
+          <p className="text-xs text-slate-400">
+            {language === "bn" ? "বেছে নেওয়া গ্রুপ ভিত্তিক আয়, ব্যয় এবং পেমেন্টের দৃষ্টিনন্দন তুলনা" : `Visual trend flow showing side-by-side transaction metrics mapped to ${groupBy}-level groups`}
+          </p>
+        </div>
+        
+        <div className="h-72 sm:h-80 w-full pt-2">
+          {chartData.length === 0 ? (
+            <div className="w-full h-full flex items-center justify-center text-slate-400 italic text-xs">
+              {language === "bn" ? "কোন তথ্য পাওয়া যায়নি" : "No chart coordinates found in selected range."}
+            </div>
+          ) : (
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={chartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f8fafc" />
+                <XAxis dataKey="name" stroke="#94a3b8" fontSize={9} tickLine={false} />
+                <YAxis stroke="#94a3b8" fontSize={9} tickLine={false} />
+                <Tooltip 
+                  contentStyle={{ 
+                    borderRadius: "16px", 
+                    background: "#0f172a", 
+                    color: "#fff", 
+                    fontSize: "11px",
+                    border: "none",
+                    boxShadow: "0 10px 15px -3px rgb(0 0 0 / 0.1)"
+                  }} 
+                />
+                <Legend wrapperStyle={{ fontSize: "11px", fontWeight: "bold" }} />
+                <Bar dataKey={language === "bn" ? "বিক্রয়" : "Sales"} fill="#10b981" radius={[4, 4, 0, 0]} />
+                <Bar dataKey={language === "bn" ? "ব্যবসায়িক খরচ" : "Expenses"} fill="#f43f5e" radius={[4, 4, 0, 0]} />
+                <Bar dataKey={language === "bn" ? "সরবরাহকারী পরিশোধ" : "Supplier Payments"} fill="#f59e0b" radius={[4, 4, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          )}
+        </div>
+      </div>
+
+      {/* Main Consolidated Ledger Table Details */}
+      <div className="bg-white rounded-3xl shadow-sm border border-slate-100 overflow-hidden dark:bg-neutral-900 dark:border-neutral-800">
+        <div className="p-6 border-b border-slate-50 dark:border-neutral-800 flex items-center justify-between">
+          <div>
+            <h4 className="text-base font-extrabold text-slate-900 dark:text-neutral-100">
+              {language === "bn" ? "একত্রিত অডিট খতিয়ান তালিকা" : "Consolidated Audited Registry Ledger"}
+            </h4>
+            <p className="text-xs text-slate-400">
+              {language === "bn" ? "গ্রুপ ভিত্তিক বিস্তারিত আয়, ব্যয়, পেমেন্ট ও উদ্বৃত্তের সম্পূর্ণ ছক" : "Period-by-period breakups of sales receipts, business expenses, supplier payouts, and net flows"}
+            </p>
+          </div>
+          <span className="text-[10px] bg-slate-50 border border-slate-200 text-slate-600 px-3 py-1 rounded-full font-extrabold uppercase tracking-widest dark:bg-neutral-800 dark:border-neutral-700 dark:text-neutral-300">
+            {groupedData.length} {language === "bn" ? "টি গ্রুপ" : "Interval rows"}
+          </span>
+        </div>
+
+        <div className="overflow-x-auto">
+          <table className="w-full text-left text-xs text-slate-600 dark:text-neutral-300">
+            <thead>
+              <tr className="bg-slate-50/70 border-b border-slate-100 text-[10px] font-extrabold uppercase text-slate-400 tracking-widest dark:bg-neutral-800/50 dark:border-neutral-800">
+                <th className="py-4 px-6">{language === "bn" ? "সময়-কাল / তারিখ" : "Interval Period"}</th>
+                <th className="py-4 px-6 text-right">{language === "bn" ? "মোট বিক্রয় (+)" : "Total Gross Sales (+)"}</th>
+                <th className="py-4 px-6 text-right">{language === "bn" ? "মোট ব্যবসায়িক খরচ (-)" : "Business Expenses (-)"}</th>
+                <th className="py-4 px-6 text-right">{language === "bn" ? "সরবরাহকারী পরিশোধ (-)" : "Supplier Payments (-)"}</th>
+                <th className="py-4 px-6 text-right">{language === "bn" ? "নীট তারল্য প্রবাহ" : "Period Net Cashflow"}</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100 dark:divide-neutral-800">
+              {groupedData.length === 0 ? (
+                <tr>
+                  <td colSpan={5} className="py-16 text-center text-slate-400 font-medium italic">
+                    {language === "bn" ? "বাছাইকৃত তারিখে কোন খতিয়ান রেকর্ড পাওয়া যায়নি।" : "No record items mapping to selected date range parameters."}
+                  </td>
+                </tr>
+              ) : (
+                groupedData.map((item, index) => (
+                  <tr key={index} className="hover:bg-slate-50/30 dark:hover:bg-neutral-800/20 transition-colors">
+                    <td className="py-4 px-6 font-extrabold text-slate-900 dark:text-neutral-100">
+                      {item.label}
+                    </td>
+                    <td className="py-4 px-6 text-right font-bold text-emerald-600 font-mono">
+                      {formatCurrency(item.sales)}
+                    </td>
+                    <td className="py-4 px-6 text-right font-semibold text-rose-500 font-mono">
+                      {formatCurrency(item.expenses)}
+                    </td>
+                    <td className="py-4 px-6 text-right font-semibold text-amber-500 font-mono">
+                      {formatCurrency(item.supplierPayments)}
+                    </td>
+                    <td className={cn(
+                      "py-4 px-6 text-right font-black font-mono",
+                      item.netFlow >= 0 ? "text-violet-700" : "text-red-500"
+                    )}>
+                      {formatCurrency(item.netFlow)}
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+            {/* Table Footer: Span Aggregated totals */}
+            {groupedData.length > 0 && (
+              <tfoot className="bg-slate-50/80 border-t-2 border-slate-200 font-sans dark:bg-neutral-800/80 dark:border-neutral-700">
+                <tr className="font-extrabold text-slate-900 dark:text-neutral-100">
+                  <td className="py-4 px-6 uppercase tracking-wider text-[10px] text-slate-500">
+                    {language === "bn" ? "সর্বমোট টাকা (অডিট)" : "GRAND CUMULATIVE TOTALS"}
+                  </td>
+                  <td className="py-4 px-6 text-right font-black text-emerald-700 font-mono text-sm">
+                    {formatCurrency(totalSalesSpan)}
+                  </td>
+                  <td className="py-4 px-6 text-right font-black text-rose-600 font-mono text-sm">
+                    {formatCurrency(totalExpensesSpan)}
+                  </td>
+                  <td className="py-4 px-6 text-right font-black text-amber-600 font-mono text-sm">
+                    {formatCurrency(totalSupplierPaymentsSpan)}
+                  </td>
+                  <td className={cn(
+                    "py-4 px-6 text-right font-black font-mono text-sm",
+                    totalNetFlowSpan >= 0 ? "text-violet-800" : "text-red-600"
+                    )}>
+                    {formatCurrency(totalNetFlowSpan)}
+                  </td>
+                </tr>
+              </tfoot>
+            )}
+          </table>
         </div>
       </div>
     </div>

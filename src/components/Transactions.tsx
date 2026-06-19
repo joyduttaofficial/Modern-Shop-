@@ -13,9 +13,28 @@ import {
 import { motion } from "motion/react";
 import { format } from "date-fns";
 
-export default function Transactions({ user, role }: { user: User; role: UserRole }) {
+export default function Transactions({ 
+  user, 
+  role,
+  initialActiveTab,
+  onClearInitialActiveTab
+}: { 
+  user: User; 
+  role: UserRole;
+  initialActiveTab?: "income" | "expense";
+  onClearInitialActiveTab?: () => void;
+}) {
   const [workspaceTab, setWorkspaceTab] = useState<"inout" | "opening" | "banks" | "loans" | "ledgers">("inout");
-  const [activeTab, setActiveTab] = useState<TransactionType>("income");
+  const [activeTab, setActiveTab] = useState<TransactionType>(initialActiveTab || "income");
+
+  useEffect(() => {
+    if (initialActiveTab) {
+      setActiveTab(initialActiveTab);
+      if (onClearInitialActiveTab) {
+        onClearInitialActiveTab();
+      }
+    }
+  }, [initialActiveTab]);
   const [currentAction, setCurrentAction] = useState<
     "income" | "prev_cash" | "expense" | "bank_deposit" | "bank_credit" | "loan_deposit" | "loan_credit"
   >("income");

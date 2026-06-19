@@ -46,6 +46,7 @@ const dictionary: Record<string, string> = {
   "attendance": "উপস্থিতি বিবরণী",
   "transactions": "লেনদেন খতিয়ান",
   "inventory": "ইনভেন্টরি",
+  "unified": "একত্রিত খতিয়ান",
   "Settings": "সিস্টেম সেটিংস",
   "Users Manager": "ব্যবহারকারী ব্যবস্থাপক",
   "Pre-Register User": "নতুন আমন্ত্রণ",

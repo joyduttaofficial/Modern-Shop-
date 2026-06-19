@@ -134,6 +134,7 @@ type View = "dashboard" | "transactions" | "newSale" | "salesList" | "newEmploye
 export default function App() {
   const { language, setLanguage, t, formatDate } = useLanguage();
   const [activeView, setActiveView] = useState<View>("dashboard");
+  const [initialActiveTab, setInitialActiveTab] = useState<"income" | "expense">("income");
   const [salesEditDate, setSalesEditDate] = useState<string>("");
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
 
@@ -875,8 +876,29 @@ export default function App() {
               exit={{ opacity: 0, y: -12 }}
               transition={{ duration: 0.15, ease: "easeOut" }}
             >
-              {activeView === "dashboard" && <Dashboard user={user} role={profile.role} />}
-              {activeView === "transactions" && <Transactions user={user} role={profile.role} />}
+               {activeView === "dashboard" && (
+                <Dashboard 
+                  user={user} 
+                  role={profile.role} 
+                  onNavigate={(view, extra) => {
+                    if (view === "transactions" && extra?.activeTab) {
+                      setInitialActiveTab(extra.activeTab);
+                    }
+                    if (view === "newSale") {
+                      setSalesEditDate(""); // clear edit date for new sale
+                    }
+                    setActiveView(view);
+                  }}
+                />
+              )}
+              {activeView === "transactions" && (
+                <Transactions 
+                  user={user} 
+                  role={profile.role} 
+                  initialActiveTab={initialActiveTab}
+                  onClearInitialActiveTab={() => setInitialActiveTab("income")}
+                />
+              )}
               {activeView === "newSale" && (
                 <NewSale 
                   user={user} 

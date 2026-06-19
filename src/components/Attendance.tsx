@@ -21,6 +21,7 @@ import {
   Filter,
   Save,
   Download,
+  Printer,
   Activity,
   Trash2,
   UserCheck,
@@ -37,6 +38,8 @@ import {
 } from "lucide-react";
 import { format, startOfMonth, endOfMonth, eachDayOfInterval, isSameDay, startOfToday, addDays, subDays, parseISO, startOfDay, endOfDay } from "date-fns";
 import { motion, AnimatePresence } from "motion/react";
+import { jsPDF } from "jspdf";
+import autoTable from "jspdf-autotable";
 
 const STATUS_CONFIG: Record<AttendanceStatus, { label: string; icon: any; color: string; bg: string; dot: string }> = {
   present: { label: "Present", icon: CheckCircle2, color: "text-emerald-600 border-emerald-100", bg: "bg-emerald-50", dot: "bg-emerald-500" },
@@ -78,7 +81,7 @@ export default function AttendancePage({
   const [modalNotes, setModalNotes] = useState("");
   
   // List view specific states
-  const [listTab, setListTab] = useState<"matrix" | "logs" | "lunch" | "days">("matrix");
+  const [listTab, setListTab] = useState<"matrix" | "logs" | "lunch" | "days" | "timeliness">("days");
   const [selectedMonth, setSelectedMonth] = useState<string>(format(new Date(), "yyyy-MM")); // e.g. "2026-05"
   const [filterType, setFilterType] = useState<"month" | "range">("month");
   const [startDate, setStartDate] = useState<string>(format(startOfMonth(new Date()), "yyyy-MM-dd"));
@@ -443,7 +446,387 @@ export default function AttendancePage({
     document.body.removeChild(link);
   };
 
-  // Generate Months List for Filter dropdown
+  const handleDownloadPDF = () => {
+    const doc = new jsPDF("landscape", "mm", "a4");
+    
+    // Title Banner
+    doc.setFillColor(30, 41, 59); // Slate-800
+    doc.rect(14, 15, 269, 18, "F");
+    
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(14);
+    doc.setTextColor(255, 255, 255);
+    doc.text("GLOBAL OPERATIONS ATTENDANCE MODULE - DISCHARGE LEDGER", 20, 26);
+    
+    doc.setFontSize(9);
+    doc.setFont("helvetica", "normal");
+    doc.setTextColor(148, 163, 184);
+    doc.text(`Generated: ${format(new Date(), "yyyy-MM-dd HH:mm")} | Caller: ${user?.email || "Manager"}`, 263, 26, { align: "right" });
+
+    // Section header
+    doc.setFontSize(11);
+    doc.setFont("helvetica", "bold");
+    doc.setTextColor(51, 65, 85);
+    
+    let tabLabel = "";
+    let subInfo = "";
+
+    if (listTab === "matrix") {
+      tabLabel = "PRESENCE HEATMAP MATRIX LEDGER";
+      subInfo = `Month Period: ${format(listMonthDate, "MMMM yyyy")} | Active Personnel Checklist (${employees.length} staff)`;
+    } else if (listTab === "logs") {
+      tabLabel = "ALL CHECK-IN & CHECK-OUT HISTORY LEDGER (FILTERED)";
+      subInfo = `Active logs dataset. Verified events logged: ${validAttendance.length}`;
+    } else if (listTab === "lunch") {
+      tabLabel = "LUNCH OVERTIME COMPLIANCE EXCEPTION REPORT";
+      subInfo = `Official Limit: ${lunchDurationLimit} minutes. Filtered list identifying long break violations.`;
+    } else if (listTab === "days") {
+      const focusDateStr = selectedDate.toISOString().split("T")[0];
+      const todayLogs = attendance.filter(a => a.date && a.date.startsWith(focusDateStr));
+      tabLabel = `DAILY OPERATIONS AUDIT STATEMENT - ${format(selectedDate, "EEEE, d MMMM yyyy")}`;
+      subInfo = `Marked: ${todayLogs.length} / ${employees.length} employees active today.`;
+    } else if (listTab === "timeliness") {
+      tabLabel = "MONTHLY TIMELINESS & BREACH AUDIT REPORT";
+      subInfo = `Evaluation Period: ${format(new Date(selectedMonth + "-01"), "MMMM yyyy")} | Compliance ratings index.`;
+    }
+
+    doc.text(tabLabel, 14, 42);
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9);
+    doc.text(subInfo, 14, 47);
+
+    // Prepare headers and body rows dynamically based on selected ledger tab
+    let headCells: string[][] = [];
+    let bodyRows: any[][] = [];
+
+    if (listTab === "matrix") {
+      headCells = [["Employee Name", "Role", ...daysInMonth.map(d => format(d, "dd")), "Pr/Ab"]];
+      bodyRows = filteredEmployees.map(emp => {
+        const empRecords = validAttendance.filter(a => a.employeeId === emp.id);
+        const presentCnt = empRecords.filter(r => r.status === "present" || r.status === "late" || r.status === "half-day").length;
+        const absentCnt = empRecords.filter(r => r.status === "absent").length;
+        return [
+          emp.name,
+          emp.role,
+          ...daysInMonth.map(day => {
+            const r = empRecords.find(rec => isSameDay(new Date(rec.date), day));
+            if (!r) return "-";
+            if (r.status === "present") return "P";
+            if (r.status === "late") return "L";
+            if (r.status === "half-day") return "HD";
+            if (r.status === "absent") return "A";
+            if (r.status === "leave") return "LV";
+            if (r.status === "holiday") return "H";
+            return "-";
+          }),
+          `${presentCnt}/${absentCnt}`
+        ];
+      });
+    } else if (listTab === "logs") {
+      headCells = [["Log Date", "Employee Profile", "Recorded Status", "Clock In", "Lunch Out", "Lunch In", "Clock Out", "Remarks / Logs"]];
+      const searchFilteredLogs = validAttendance
+        .filter(rec => {
+          const emp = employees.find(e => e.id === rec.employeeId);
+          if (!emp) return false;
+          return (
+            emp.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+            emp.role.toLowerCase().includes(searchQuery.toLowerCase()) ||
+            (rec.notes && rec.notes.toLowerCase().includes(searchQuery.toLowerCase()))
+          );
+        })
+        .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+
+      bodyRows = searchFilteredLogs.map(rec => {
+        const emp = employees.find(e => e.id === rec.employeeId);
+        return [
+          rec.date ? format(new Date(rec.date), "yyyy-MM-dd") : "-",
+          emp ? `${emp.name} (${emp.role})` : "Unindexed Employee",
+          rec.status.toUpperCase(),
+          rec.checkIn || "-",
+          rec.lunchOut || "-",
+          rec.lunchIn || "-",
+          rec.checkOut || "-",
+          rec.notes || "-"
+        ];
+      });
+    } else if (listTab === "lunch") {
+      headCells = [["Employee Profile", "Role / Department", "Total Present Days", "Lunch Breach Occurrences", "Average Break Taken", "Breach Ratio"]];
+      bodyRows = filteredEmployees.map(emp => {
+        const empRecords = validAttendance.filter(a => a.employeeId === emp.id);
+        const presentCnt = empRecords.filter(r => r.status === "present" || r.status === "late" || r.status === "half-day").length;
+        const breaches = empRecords.filter(r => {
+          const mins = getLunchDurationMinutes(r.lunchOut, r.lunchIn);
+          return mins > lunchDurationLimit;
+        });
+        const completedLunches = empRecords.filter(r => r.lunchOut && r.lunchIn);
+        const totalMins = completedLunches.reduce((sum, r) => sum + getLunchDurationMinutes(r.lunchOut, r.lunchIn), 0);
+        const avgLunch = completedLunches.length > 0 ? Math.round(totalMins / completedLunches.length) : 0;
+        const rate = presentCnt > 0 ? Math.round((breaches.length / presentCnt) * 100) : 0;
+        return [
+          emp.name,
+          emp.role,
+          `${presentCnt} Days`,
+          `${breaches.length} breaches`,
+          `${avgLunch} mins`,
+          `${rate}%`
+        ];
+      });
+    } else if (listTab === "days") {
+      headCells = [["Employee Profile", "Role / Dept", "Recorded Status", "Clock In Details", "Lunch Break & Duration", "Clock Out", "Daily Logs / Notes"]];
+      const focusDateStr = selectedDate.toISOString().split("T")[0];
+      const dayAttendance = attendance.filter(a => a.date && a.date.startsWith(focusDateStr));
+
+      bodyRows = filteredEmployees.map(emp => {
+        const rec = dayAttendance.find(a => a.employeeId === emp.id);
+        let lunchText = "No lunch break logged";
+        if (rec && rec.lunchOut) {
+          const duration = getLunchDurationMinutes(rec.lunchOut, rec.lunchIn);
+          lunchText = `${rec.lunchOut} - ${rec.lunchIn || "Incomplete"}`;
+          if (rec.lunchIn) {
+            lunchText += ` (${duration}m)`;
+            if (duration > lunchDurationLimit) {
+              lunchText += ` *VIOLATION (+${duration - lunchDurationLimit}m)*`;
+            }
+          }
+        }
+
+        let checkInText = "-";
+        if (rec && (rec.status === "present" || rec.status === "late" || rec.status === "half-day")) {
+          checkInText = rec.checkIn || "09:00 AM";
+          if (rec.status === "late") checkInText += " (LATE)";
+          else checkInText += " (TIMELY)";
+        }
+
+        let checkOutText = "-";
+        if (rec) {
+          if (rec.checkOut) checkOutText = rec.checkOut;
+          else if (rec.status === "present" || rec.status === "late" || rec.status === "half-day") checkOutText = "Active Shift";
+        }
+
+        return [
+          emp.name,
+          emp.role,
+          rec ? STATUS_CONFIG[rec.status]?.label : "Unmarked",
+          checkInText,
+          lunchText,
+          checkOutText,
+          rec?.notes || "-"
+        ];
+      });
+    } else if (listTab === "timeliness") {
+      headCells = [["Employee Profile", "Role", "Days Present", "Late Arrivals", "Lunch Breaches", "Average Lunch Break Time", "Operational Rating"]];
+      bodyRows = filteredEmployees.map(emp => {
+        const empRecords = validAttendance.filter(a => a.employeeId === emp.id);
+        const presentCount = empRecords.filter(r => r.status === "present" || r.status === "late" || r.status === "half-day").length;
+        const latesOfEmp = empRecords.filter(r => r.status === "late").length;
+        const breachesCount = empRecords.filter(r => getLunchDurationMinutes(r.lunchOut, r.lunchIn) > lunchDurationLimit).length;
+        const completedLunches = empRecords.filter(r => r.lunchOut && r.lunchIn);
+        const totalLunchMins = completedLunches.reduce((sum, r) => sum + getLunchDurationMinutes(r.lunchOut, r.lunchIn), 0);
+        const avgLunch = completedLunches.length > 0 ? Math.round(totalLunchMins / completedLunches.length) : 0;
+
+        let ratingLabel = "🌟 Perfect Standard";
+        if (latesOfEmp > 0 || breachesCount > 0) {
+          const totalViolations = latesOfEmp * 1.5 + breachesCount;
+          if (totalViolations <= 2) ratingLabel = "🟢 Highly Compliant";
+          else if (totalViolations <= 5) ratingLabel = "🟡 Minor Violations";
+          else if (totalViolations <= 9) ratingLabel = "🚨 Action Required";
+          else ratingLabel = "💀 Severe Operational Deficit";
+        }
+        return [
+          emp.name,
+          emp.role,
+          `${presentCount} Days`,
+          `${latesOfEmp} times`,
+          `${breachesCount} times`,
+          `${avgLunch} mins`,
+          ratingLabel
+        ];
+      });
+    }
+
+    autoTable(doc, {
+      startY: 53,
+      head: headCells,
+      body: bodyRows,
+      theme: "grid",
+      headStyles: {
+        fillColor: [30, 41, 59],
+        textColor: [255, 255, 255],
+        fontSize: 8,
+        fontStyle: "bold"
+      },
+      bodyStyles: {
+        fontSize: 7.5,
+        textColor: [51, 65, 85]
+      },
+      styles: {
+        font: "helvetica",
+        cellPadding: 2.8
+      }
+    });
+
+    doc.save(`Attendance_Report_${listTab}_${format(new Date(), "yyyyMMdd")}.pdf`);
+  };
+
+  const handleDownloadAllDaysPDF = () => {
+    // Generate a beautiful portrait multi-page PDF document, one page per day
+    const doc = new jsPDF("portrait", "mm", "a4");
+    let isFirstPage = true;
+
+    // Filter dates in month/range that actually have records to generate a clean, condensed ledger
+    const datesWithLogs = daysInMonth.filter(day => {
+      const dayStr = day.toISOString().split("T")[0];
+      return attendance.some(a => a.date && a.date.startsWith(dayStr));
+    });
+
+    if (datesWithLogs.length === 0) {
+      alert("No attendance logs found in the selected time range/month to generate daily reports.");
+      return;
+    }
+
+    datesWithLogs.forEach(day => {
+      if (!isFirstPage) {
+        doc.addPage();
+      }
+      isFirstPage = false;
+
+      // Outer border frame
+      doc.setDrawColor(226, 232, 240);
+      doc.setLineWidth(0.4);
+      doc.rect(10, 10, 190, 277);
+
+      // Page Banner Header
+      doc.setFillColor(30, 41, 59);
+      doc.rect(14, 14, 182, 18, "F");
+
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(11);
+      doc.setTextColor(255, 255, 255);
+      doc.text("DAILY COMPLIANCE & ATTENDANCE STATEMENT REPORT", 20, 25);
+
+      doc.setFontSize(8);
+      doc.setFont("helvetica", "normal");
+      doc.setTextColor(148, 163, 184);
+      doc.text("GLOBAL OPERATIONS LEDGER", 190, 25, { align: "right" });
+
+      // Daily Details
+      doc.setFontSize(12);
+      doc.setFont("helvetica", "bold");
+      doc.setTextColor(15, 23, 42);
+      doc.text(format(day, "EEEE, d MMMM yyyy").toUpperCase(), 14, 42);
+
+      // Calculations for summary boxes
+      const focusDateStr = day.toISOString().split("T")[0];
+      const dayAttendance = attendance.filter(a => a.date && a.date.startsWith(focusDateStr));
+
+      const totalActiveCount = employees.length;
+      const dailyCountPresent = dayAttendance.filter(r => r.status === "present" || r.status === "late" || r.status === "half-day").length;
+      const dailyCountLate = dayAttendance.filter(r => r.status === "late").length;
+      const dailyCountAbsent = dayAttendance.filter(r => r.status === "absent").length;
+      const dailyCountLeave = dayAttendance.filter(r => r.status === "leave").length;
+      const dailyCountHoliday = dayAttendance.filter(r => r.status === "holiday").length;
+      const dailyLunchBreaches = dayAttendance.filter(r => {
+        const mins = getLunchDurationMinutes(r.lunchOut, r.lunchIn);
+        return mins > lunchDurationLimit;
+      }).length;
+
+      // Print Summary Card Grid in A4 Portrait representation
+      doc.setFillColor(248, 250, 252);
+      doc.rect(14, 48, 182, 14, "F");
+
+      doc.setFontSize(8);
+      doc.setFont("helvetica", "bold");
+      doc.setTextColor(71, 85, 105);
+      doc.text(`Present: ${dailyCountPresent} / ${totalActiveCount}`, 20, 57);
+      doc.text(`Late Arrivals: ${dailyCountLate}`, 65, 57);
+      doc.text(`Lunch Violations: ${dailyLunchBreaches}`, 115, 57);
+      doc.text(`Off-Duty/Abs: ${dailyCountAbsent + dailyCountLeave + dailyCountHoliday}`, 155, 57);
+
+      // Horizontal separator line
+      doc.setDrawColor(203, 213, 225);
+      doc.line(14, 68, 196, 68);
+
+      // Generate the Daily table
+      const headCells = [["Employee Profile", "Recorded Status", "Clock In Detail", "Lunch Break / Breach", "Clock Out", "Daily Remarks"]];
+      const bodyRows = employees.map(emp => {
+        const rec = dayAttendance.find(a => a.employeeId === emp.id);
+        
+        let statusLabel = "Unmarked";
+        if (rec) {
+          statusLabel = STATUS_CONFIG[rec.status]?.label || rec.status.toUpperCase();
+        }
+
+        let checkInVal = "-";
+        if (rec && (rec.status === "present" || rec.status === "late" || rec.status === "half-day")) {
+          checkInVal = rec.checkIn || "09:00 AM";
+          if (rec.status === "late") checkInVal += " (L)";
+        }
+
+        let lunchVal = "-";
+        if (rec && rec.lunchOut) {
+          const duration = getLunchDurationMinutes(rec.lunchOut, rec.lunchIn);
+          lunchVal = `${rec.lunchOut} - ${rec.lunchIn || "Incomplete"}`;
+          if (rec.lunchIn) {
+            lunchVal += ` (${duration}m)`;
+            if (duration > lunchDurationLimit) {
+              lunchVal += ` *BREACH*`;
+            }
+          }
+        }
+
+        let checkOutVal = "-";
+        if (rec) {
+          if (rec.checkOut) {
+            checkOutVal = rec.checkOut;
+          } else if (rec.status === "present" || rec.status === "late" || rec.status === "half-day") {
+            checkOutVal = "Active Shift";
+          }
+        }
+
+        return [
+          `${emp.name}\n(${emp.role})`,
+          statusLabel,
+          checkInVal,
+          lunchVal,
+          checkOutVal,
+          rec?.notes || "-"
+        ];
+      });
+
+      autoTable(doc, {
+        startY: 72,
+        head: headCells,
+        body: bodyRows,
+        theme: "striped",
+        headStyles: {
+          fillColor: [51, 65, 85],
+          textColor: [255, 255, 255],
+          fontSize: 8,
+          fontStyle: "bold"
+        },
+        bodyStyles: {
+          fontSize: 7.5,
+          textColor: [30, 41, 59]
+        },
+        styles: {
+          font: "helvetica",
+          cellPadding: 2.5
+        },
+        columnStyles: {
+          0: { cellWidth: 42 },
+          3: { cellWidth: 42 }
+        }
+      });
+
+      // Footer notice
+      doc.setFontSize(7);
+      doc.setTextColor(148, 163, 184);
+      doc.text(`Operational Report Page - Period ${format(day, "yyyy-MM")}`, 14, 282);
+      doc.text(`Global Operations Ledger System`, 196, 282, { align: "right" });
+    });
+
+    doc.save(`Complete_Daily_Attendance_Ledger_${selectedMonth}.pdf`);
+  };
   const generateMonthsDropdown = () => {
     const list = [];
     const base = new Date();
@@ -1103,6 +1486,26 @@ export default function AttendancePage({
         </div>
       </div>      {/* Main Tab selectors for Ledger Lists */}
       <div className="bg-white rounded-[32px] border border-gray-100 p-6 shadow-xs space-y-6">
+        {/* Printable Section Header - Only visible when printing */}
+        <div className="hidden print:block border-b-2 border-slate-900 pb-4 mb-4">
+          <div className="flex justify-between items-end">
+            <div>
+              <h1 className="text-xl font-black text-slate-900 tracking-tight">GLOBAL OPERATIONS ATTENDANCE MODULE</h1>
+              <p className="text-xs font-bold text-slate-500 uppercase tracking-widest mt-1">
+                Report Category: {listTab === "matrix" ? "Presence Heatmap Matrix" :
+                                 listTab === "logs" ? "All Check-In & Check-Out Logs" :
+                                 listTab === "lunch" ? "Lunch Overtime Breaches Report" :
+                                 listTab === "days" ? `Daily Operations Audit for ${format(selectedDate, "EEEE, d MMMM yyyy")}` :
+                                 "Monthly Timeliness & Breach Audit"}
+              </p>
+            </div>
+            <div className="text-right">
+              <p className="text-sm font-mono font-bold">{format(new Date(), "yyyy-MM-dd HH:mm")}</p>
+              <p className="text-[9px] text-slate-400 font-bold uppercase tracking-wider">Report Generated Successfully</p>
+            </div>
+          </div>
+        </div>
+
         <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-4 border-b border-gray-150 pb-4 flex-wrap">
           <div className="flex bg-gray-50 p-1 rounded-xl flex-wrap gap-1">
             <button 
@@ -1139,19 +1542,62 @@ export default function AttendancePage({
                 listTab === "days" ? "bg-white text-slate-950 shadow-xs" : "text-gray-500 hover:text-slate-950"
               )}
             >
-              Day-wise Summary
+              Day-by-Day Master Report
+            </button>
+            <button 
+              onClick={() => setListTab("timeliness")}
+              className={cn(
+                "px-4 py-2 rounded-lg text-xs font-bold tracking-tight transition-all cursor-pointer",
+                listTab === "timeliness" ? "bg-white text-slate-950 shadow-xs" : "text-gray-500 hover:text-slate-950"
+              )}
+            >
+              Monthly Lateness & Breach Audit
             </button>
           </div>
 
-          <div className="relative w-full sm:w-64">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" />
-            <input 
-              type="text"
-              placeholder="Search employee..."
-              value={searchQuery}
-              onChange={e => setSearchQuery(e.target.value)}
-              className="w-full pl-9 pr-3 py-2 bg-gray-50 hover:bg-gray-100/50 rounded-xl border-none outline-none text-xs font-bold placeholder:text-gray-400"
-            />
+          <div className="flex flex-wrap items-center gap-2 w-full xl:w-auto">
+            <div className="relative flex-1 sm:flex-initial sm:w-64">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" />
+              <input 
+                type="text"
+                placeholder="Search employee..."
+                value={searchQuery}
+                onChange={e => setSearchQuery(e.target.value)}
+                className="w-full pl-9 pr-3 py-2 bg-gray-50 hover:bg-gray-100/50 rounded-xl border-none outline-none text-xs font-bold placeholder:text-gray-400"
+              />
+            </div>
+
+            <div className="flex items-center gap-1.5 print:hidden">
+              <button
+                onClick={() => window.print()}
+                className="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-xs font-black uppercase tracking-wider cursor-pointer flex items-center justify-center gap-2 shadow-2xs transition-all hover:scale-102 active:scale-98"
+                title="Print current tab layout using browser print dialog"
+              >
+                <Printer className="w-3.5 h-3.5 text-emerald-400" />
+                <span className="hidden sm:inline">Print Page</span>
+                <span className="sm:hidden">Print</span>
+              </button>
+
+              <button
+                onClick={handleDownloadPDF}
+                className="px-3.5 py-2 bg-white hover:bg-slate-50 border border-gray-200 text-slate-800 rounded-xl text-xs font-black uppercase tracking-wider transition-all cursor-pointer flex items-center justify-center gap-2 shadow-2xs hover:scale-102 active:scale-98"
+                title="Generate and download a high-fidelity PDF document for the current tab"
+              >
+                <Download className="w-3.5 h-3.5 text-[#D12765]" />
+                <span className="hidden sm:inline">Download PDF</span>
+                <span className="sm:hidden">PDF</span>
+              </button>
+
+              <button
+                onClick={handleDownloadAllDaysPDF}
+                className="px-3.5 py-2 bg-[#D12765]/10 hover:bg-[#D12765]/20 text-[#D12765] border border-[#D12765]/20 rounded-xl text-xs font-black uppercase tracking-wider transition-all cursor-pointer flex items-center justify-center gap-2 shadow-2xs hover:scale-102 active:scale-98"
+                title="Download full multi-page PDF ledger: one separate page per day for all days of the month"
+              >
+                <CalendarDays className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">All Days PDF</span>
+                <span className="sm:hidden">All Days</span>
+              </button>
+            </div>
           </div>
         </div>
 
@@ -1405,135 +1851,416 @@ export default function AttendancePage({
               </table>
             </div>
           </div>
-        ) : (
-          /* "days" tab: DAY-WISE SUMMARY REPORT */
+        ) : listTab === "days" ? (
+          /* "days" tab: DAY-BY-DAY MASTER REPORT WITH DATEWISE PAGINATION */
           <div className="space-y-6">
-            <div className="border-b border-gray-100 dark:border-zinc-800 pb-3">
-              <h4 className="text-sm font-black text-gray-900 dark:text-neutral-100 uppercase tracking-wide">Daily Operations Attendance Ledger</h4>
-              <p className="text-[11px] text-gray-450 dark:text-gray-400 uppercase tracking-widest mt-0.5">Click any day from the left pane to drill down and review individual logs on the right side</p>
-            </div>
+            {/* Beautiful Page Header with Date Wise Pagination */}
+            <div className="bg-slate-50 border border-slate-200/60 p-5 rounded-[24px] flex flex-col sm:flex-row items-center justify-between gap-4">
+              <button
+                onClick={() => setSelectedDate(prev => subDays(prev, 1))}
+                className="w-full sm:w-auto px-4 py-2 bg-white hover:bg-slate-100 text-slate-700 rounded-xl text-xs font-black uppercase tracking-wider transition-all border border-slate-200 cursor-pointer flex items-center justify-center gap-1.5 shadow-2xs hover:scale-102 active:scale-98"
+              >
+                <ChevronLeft className="w-4 h-4 shrink-0 text-slate-400" />
+                <span>Previous Day</span>
+              </button>
 
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              {/* Left Column: List of Days */}
-              <div className="space-y-3 max-h-[580px] overflow-y-auto pr-2">
-                {(() => {
-                  const daysInOrder = [...daysInMonth].sort((a, b) => b.getTime() - a.getTime());
-                  
-                  if (daysInOrder.length === 0) {
-                    return (
-                      <div className="p-8 text-center text-gray-450 italic text-xs font-semibold">
-                        No days found in selected range.
-                      </div>
-                    );
-                  }
-
-                  return daysInOrder.map(day => {
-                    const dateString = day.toISOString().split("T")[0];
-                    const dailyRecords = attendance.filter(a => a.date && a.date.startsWith(dateString));
-                    
-                    const countPresent = dailyRecords.filter(r => r.status === "present" || r.status === "late" || r.status === "half-day").length;
-                    const countLate = dailyRecords.filter(r => r.status === "late").length;
-                    const countAbsent = dailyRecords.filter(r => r.status === "absent").length;
-                    const countLeave = dailyRecords.filter(r => r.status === "leave").length;
-                    const countHoliday = dailyRecords.filter(r => r.status === "holiday").length;
-                    
-                    const totalEmployees = employees.length;
-                    const workedCount = countPresent;
-                    const rate = totalEmployees > 0 ? Math.round((workedCount / totalEmployees) * 100) : 0;
-                    const isSelected = selectedDate.toISOString().split("T")[0] === dateString;
-
-                    return (
-                      <div 
-                        key={dateString}
-                        className={cn(
-                          "p-4 rounded-2xl border transition-colors cursor-pointer group flex flex-col gap-2.5",
-                          isSelected 
-                            ? "bg-slate-55 dark:bg-zinc-850/60 border-[#D12765]" 
-                            : "bg-gray-50/50 dark:bg-zinc-950/40 border-gray-100 dark:border-zinc-800 hover:border-slate-350 dark:hover:border-zinc-700"
-                        )}
-                        onClick={() => {
-                          setSelectedDate(day);
-                        }}
-                      >
-                        <div className="flex justify-between items-start gap-2">
-                          <div>
-                            <h5 className="font-extrabold text-sm text-slate-900 dark:text-neutral-100">{format(day, "EEEE, d MMMM yyyy")}</h5>
-                            <span className="text-[10px] font-bold text-slate-450 uppercase tracking-wider">{rate}% Presence Rate</span>
-                          </div>
-                          <span className={`px-2.5 py-1 rounded-lg text-[9px] font-black uppercase tracking-wider ${
-                            rate >= 80 ? "bg-emerald-50 text-emerald-600 dark:bg-emerald-950/20" : "bg-rose-50 text-red-650 dark:bg-rose-950/20"
-                          }`}>
-                            {workedCount} / {totalEmployees} Present
-                          </span>
-                        </div>
-
-                        <div className="flex flex-wrap gap-1.5 text-[9px] font-bold">
-                          <span className="px-2 py-0.5 rounded-md bg-emerald-50 dark:bg-emerald-950/20 text-emerald-600">Present: {countPresent - countLate}</span>
-                          {countLate > 0 && <span className="px-2 py-0.5 rounded-md bg-amber-50 dark:bg-amber-950/20 text-amber-600">Late: {countLate}</span>}
-                          {countAbsent > 0 && <span className="px-2 py-0.5 rounded-md bg-red-50 dark:bg-red-950/20 text-red-650">Absent: {countAbsent}</span>}
-                          {countLeave > 0 && <span className="px-2 py-0.5 rounded-md bg-indigo-50 dark:bg-indigo-950/20 text-indigo-600">Leave: {countLeave}</span>}
-                          {countHoliday > 0 && <span className="px-2 py-0.5 rounded-md bg-purple-50 dark:bg-purple-950/20 text-purple-600">Holiday: {countHoliday}</span>}
-                        </div>
-                      </div>
-                    );
-                  });
-                })()}
+              <div className="text-center space-y-1">
+                <span className="text-[9px] font-black tracking-widest text-[#D12765] uppercase block">Daily Operations Analytics</span>
+                <div className="flex items-center justify-center gap-2">
+                  <Calendar className="w-4 h-4 text-slate-400" />
+                  <h3 className="text-base font-black text-slate-900">
+                    {format(selectedDate, "EEEE, d MMMM yyyy")}
+                  </h3>
+                </div>
               </div>
 
-              {/* Right Column: Focus Day Drilldown details */}
-              <div className="space-y-4">
-                <div className="bg-slate-950 text-white p-5 rounded-[24px] border border-slate-900 shadow-xl relative overflow-hidden">
-                  <div className="absolute -right-10 -top-10 w-40 h-40 bg-rose-500/10 rounded-full blur-2xl pointer-events-none" />
-                  <h4 className="text-xs font-black tracking-widest text-[#D12765] uppercase mb-1">Focus Date Drilldown</h4>
-                  <h3 className="text-lg font-black">{format(selectedDate, "EEEE, d MMM yyyy")}</h3>
-                  <p className="text-[10px] text-gray-400 font-medium uppercase mt-0.5">Logs ledger for active personnel on this specific date</p>
-                </div>
+              <button
+                onClick={() => setSelectedDate(prev => addDays(prev, 1))}
+                className="w-full sm:w-auto px-4 py-2 bg-white hover:bg-slate-100 text-slate-700 rounded-xl text-xs font-black uppercase tracking-wider transition-all border border-slate-200 cursor-pointer flex items-center justify-center gap-1.5 shadow-2xs hover:scale-102 active:scale-98"
+              >
+                <span>Next Day</span>
+                <ChevronRight className="w-4 h-4 shrink-0 text-slate-400" />
+              </button>
+            </div>
 
-                <div className="bg-white dark:bg-zinc-900 p-5 rounded-[24px] border border-gray-100 dark:border-zinc-850 shadow-sm max-h-[460px] overflow-y-auto space-y-2.5">
-                  {(() => {
-                    const focusDateStr = selectedDate.toISOString().split("T")[0];
-                    const dayAttendance = attendance.filter(a => a.date && a.date.startsWith(focusDateStr));
+            {/* Quick Stats Grid representing Daily Reports consolidated on one page */}
+            {(() => {
+              const focusDateStr = selectedDate.toISOString().split("T")[0];
+              const dayAttendance = attendance.filter(a => a.date && a.date.startsWith(focusDateStr));
 
-                    return employees.map(emp => {
-                      const rec = dayAttendance.find(a => a.employeeId === emp.id);
+              const totalActiveCount = employees.length;
+              const markedCount = dayAttendance.length;
+              const dailyCountPresent = dayAttendance.filter(r => r.status === "present" || r.status === "late" || r.status === "half-day").length;
+              const dailyCountLate = dayAttendance.filter(r => r.status === "late").length;
+              const dailyCountAbsent = dayAttendance.filter(r => r.status === "absent").length;
+              const dailyCountLeave = dayAttendance.filter(r => r.status === "leave").length;
+              const dailyCountHoliday = dayAttendance.filter(r => r.status === "holiday").length;
+
+              // Compute Overtime breaches for lunch
+              const dailyLunchBreaches = dayAttendance.filter(r => {
+                const mins = getLunchDurationMinutes(r.lunchOut, r.lunchIn);
+                return mins > lunchDurationLimit;
+              }).length;
+
+              return (
+                <>
+                  {/* Daily Analytics Cards */}
+                  <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                    <div className="bg-emerald-50/60 border border-emerald-100/90 p-4 rounded-2xl flex flex-col justify-between space-y-1">
+                      <span className="text-[9px] font-black text-emerald-800 uppercase tracking-wider block">Presence Status</span>
+                      <div className="flex items-baseline gap-2">
+                        <span className="text-xl font-black text-emerald-950 font-mono">{dailyCountPresent}</span>
+                        <span className="text-[10px] text-emerald-700 font-bold">/ {totalActiveCount} present</span>
+                      </div>
+                      <p className="text-[9px] font-medium text-emerald-600/90 leading-normal">
+                        {dailyCountPresent === totalActiveCount ? "Perfect attendance today!" : `${totalActiveCount - dailyCountPresent} active staff off-duty.`}
+                      </p>
+                    </div>
+
+                    <div className="bg-amber-50/60 border border-amber-100/90 p-4 rounded-2xl flex flex-col justify-between space-y-1">
+                      <span className="text-[9px] font-black text-amber-800 uppercase tracking-wider block">Timeliness & Delay</span>
+                      <div className="flex items-baseline gap-2">
+                        <span className="text-xl font-black text-amber-950 font-mono">{dailyCountLate}</span>
+                        <span className="text-[10px] text-amber-700 font-bold">late arrivals</span>
+                      </div>
+                      <p className="text-[9px] font-medium text-amber-600/90 leading-normal">
+                        Checked-in after threshold of {lateThreshold}.
+                      </p>
+                    </div>
+
+                    <div className="bg-red-50/60 border border-red-100/90 p-4 rounded-2xl flex flex-col justify-between space-y-1">
+                      <span className="text-[9px] font-black text-red-800 uppercase tracking-wider block">Lunch Overtime Breaches</span>
+                      <div className="flex items-baseline gap-2">
+                        <span className="text-xl font-black text-red-950 font-mono">{dailyLunchBreaches}</span>
+                        <span className="text-[10px] text-red-700 font-bold">overtime breaches</span>
+                      </div>
+                      <p className="text-[9px] font-medium text-red-650 leading-normal">
+                        Exceeded policy limits of {lunchDurationLimit} minutes.
+                      </p>
+                    </div>
+
+                    <div className="bg-purple-50/60 border border-purple-100/90 p-4 rounded-2xl flex flex-col justify-between space-y-1">
+                      <span className="text-[9px] font-black text-purple-800 uppercase tracking-wider block">Not on Floor</span>
+                      <div className="flex items-baseline gap-2">
+                        <span className="text-xl font-black text-purple-950 font-mono">{dailyCountAbsent + dailyCountLeave + dailyCountHoliday}</span>
+                        <span className="text-[10px] text-purple-750 font-bold">off-duty total</span>
+                      </div>
+                      <p className="text-[9px] font-medium text-purple-600/90 leading-normal">
+                        {dailyCountAbsent} Abs | {dailyCountLeave} Leave | {dailyCountHoliday} Hol.
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Comprehensive Single Date Table & Detailed Analysis */}
+                  <div className="bg-white rounded-2xl border border-gray-150 shadow-2xs overflow-hidden">
+                    <div className="bg-gray-50 border-b border-gray-150 px-5 py-4 flex flex-col sm:flex-row justify-between sm:items-center gap-2">
+                      <div>
+                        <h4 className="text-xs font-black uppercase text-gray-500 tracking-wider">All-In-One Unified Day Report Ledger</h4>
+                        <p className="text-[10px] text-gray-400 font-medium">Shows precise timelines, overtime breaches, and timeliness for all staff in a single dashboard screen.</p>
+                      </div>
+                      <div className="text-[10px] font-bold text-slate-500 bg-white border border-gray-150 px-3 py-1 rounded-full uppercase tracking-wider shadow-3xs">
+                        Marked: {markedCount} / {totalActiveCount} Employees
+                      </div>
+                    </div>
+
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left border-collapse min-w-[750px]">
+                        <thead>
+                          <tr className="bg-gray-50/40 border-b border-gray-100">
+                            <th className="px-6 py-3.5 text-[9px] font-black text-gray-400 uppercase tracking-widest">Employee Profile</th>
+                            <th className="px-6 py-3.5 text-[9px] font-black text-gray-400 uppercase tracking-widest">Attendance Status</th>
+                            <th className="px-6 py-3.5 text-[9px] font-black text-gray-400 uppercase tracking-widest">Clock In</th>
+                            <th className="px-6 py-3.5 text-[9px] font-black text-gray-400 uppercase tracking-widest">Lunch Break Detail & Breach</th>
+                            <th className="px-6 py-3.5 text-[9px] font-black text-gray-400 uppercase tracking-widest">Clock Out</th>
+                            <th className="px-6 py-3.5 text-[9px] font-black text-gray-400 uppercase tracking-widest">Remarks / Logs</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-100">
+                          {employees.map(emp => {
+                            const rec = dayAttendance.find(a => a.employeeId === emp.id);
+
+                            // Calculate lunch duration details and check for breach
+                            let lunchDuration = 0;
+                            let excessMins = 0;
+                            let hasBreached = false;
+
+                            if (rec) {
+                              lunchDuration = getLunchDurationMinutes(rec.lunchOut, rec.lunchIn);
+                              if (lunchDuration > lunchDurationLimit) {
+                                hasBreached = true;
+                                excessMins = lunchDuration - lunchDurationLimit;
+                              }
+                            }
+
+                            // Calculate late details
+                            let isStaffLate = false;
+                            if (rec && rec.status === "late") {
+                              isStaffLate = true;
+                            }
+
+                            return (
+                              <tr key={emp.id} className="hover:bg-slate-50/40 transition-colors">
+                                <td className="px-6 py-4">
+                                  <div className="flex items-center gap-3">
+                                    <div className="w-8 h-8 rounded-full bg-slate-100 text-slate-800 flex items-center justify-center font-bold text-xs ring-2 ring-slate-100">
+                                      {emp.name.charAt(0)}
+                                    </div>
+                                    <div>
+                                      <span className="font-extrabold text-gray-900 text-sm block">{emp.name}</span>
+                                      <span className="text-[8px] font-bold text-gray-450 uppercase leading-none block mt-0.5">{emp.role}</span>
+                                    </div>
+                                  </div>
+                                </td>
+
+                                <td className="px-6 py-4">
+                                  {rec ? (
+                                    <span className={cn(
+                                      "inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[8.5px] font-black uppercase tracking-wider border", 
+                                      STATUS_CONFIG[rec.status].bg, 
+                                      STATUS_CONFIG[rec.status].color
+                                    )}>
+                                      <span className={cn("w-1.5 h-1.5 rounded-full-stop rounded-full", STATUS_CONFIG[rec.status].dot)} />
+                                      {STATUS_CONFIG[rec.status].label}
+                                    </span>
+                                  ) : (
+                                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[8.5px] font-black uppercase tracking-wider bg-slate-100 text-slate-400 border border-slate-200">
+                                      Unmarked
+                                    </span>
+                                  )}
+                                </td>
+
+                                <td className="px-6 py-4">
+                                  {rec && (rec.status === "present" || rec.status === "late" || rec.status === "half-day") ? (
+                                    <div className="space-y-0.5">
+                                      <span className="font-mono font-bold text-gray-800 text-xs flex items-center gap-1">
+                                        <Clock className="w-3.5 h-3.5 text-gray-400" />
+                                        {rec.checkIn || "09:00 AM"}
+                                      </span>
+                                      {isStaffLate ? (
+                                        <span className="text-[9px] font-bold text-amber-600 block">
+                                          ⚠️ Late Arrival (After {lateThreshold})
+                                        </span>
+                                      ) : (
+                                        <span className="text-[9px] font-medium text-emerald-600 block">
+                                          🟢 Timely
+                                        </span>
+                                      )}
+                                    </div>
+                                  ) : (
+                                    <span className="text-xs text-gray-400">-</span>
+                                  )}
+                                </td>
+
+                                <td className="px-6 py-4">
+                                  {rec && rec.lunchOut ? (
+                                    <div className="space-y-1">
+                                      <p className="text-[11px] font-mono font-semibold text-gray-650">
+                                        {rec.lunchOut} - {rec.lunchIn || "Incomplete"}
+                                      </p>
+                                      {rec.lunchIn ? (
+                                        <div className="flex flex-wrap items-center gap-1.55 gap-1.5">
+                                          <span className="text-[10px] font-mono font-extrabold text-[#D12765]">
+                                            {lunchDuration} mins break
+                                          </span>
+                                          {hasBreached && (
+                                            <span className="px-1.5 py-0.5 bg-red-100 text-red-700 font-extrabold text-[8px] rounded uppercase tracking-wider">
+                                              +{excessMins}m Overtime Breach
+                                            </span>
+                                          )}
+                                        </div>
+                                      ) : (
+                                        <span className="text-[9px] font-bold text-yellow-600 block">
+                                          🟡 Out for lunch / Active Break
+                                        </span>
+                                      )}
+                                    </div>
+                                  ) : rec && (rec.status === "present" || rec.status === "late") ? (
+                                    <span className="text-xs text-gray-400 italic">No break logged</span>
+                                  ) : (
+                                    <span className="text-xs text-gray-400">-</span>
+                                  )}
+                                </td>
+
+                                <td className="px-6 py-4">
+                                  {rec && rec.checkOut ? (
+                                    <span className="font-mono font-bold text-gray-800 text-xs flex items-center gap-1">
+                                      <Clock className="w-3.5 h-3.5 text-gray-400" />
+                                      {rec.checkOut}
+                                    </span>
+                                  ) : rec && (rec.status === "present" || rec.status === "late" || rec.status === "half-day") ? (
+                                    <span className="text-[9px] font-bold text-indigo-650 bg-indigo-50 px-2 py-0.5 rounded">
+                                      Active Shift
+                                    </span>
+                                  ) : (
+                                    <span className="text-xs text-gray-400">-</span>
+                                  )}
+                                </td>
+
+                                <td className="px-6 py-4 text-xs font-semibold text-gray-500 max-w-xs truncate" title={rec?.notes}>
+                                  {rec?.notes ? (
+                                    <span className="italic">"{rec.notes}"</span>
+                                  ) : (
+                                    <span className="text-gray-300">-</span>
+                                  )}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </>
+              );
+            })()}
+          </div>
+        ) : (
+          /* "timeliness" tab: MONTHLY TIMELINESS & BREACH AUDIT REPORT */
+          <div className="space-y-6">
+            <div className="bg-slate-50 border border-slate-200 p-5 rounded-[24px] flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+              <div>
+                <h3 className="text-sm font-black text-slate-900 uppercase tracking-tight">Monthly Timeliness & Breach Audit Ledger</h3>
+                <p className="text-[11px] text-slate-500 font-semibold mt-0.5">
+                  Month Period: <strong className="text-[#D12765]">{format(new Date(selectedMonth + "-01"), "MMMM yyyy")}</strong> | Analyzes all check-in delays and lunch break violations.
+                </p>
+              </div>
+              
+              {/* Month Picker Selection */}
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] uppercase font-black text-slate-400">Month Period:</span>
+                <input
+                  type="month"
+                  value={selectedMonth}
+                  onChange={(e) => setSelectedMonth(e.target.value)}
+                  className="p-2 border border-slate-200 bg-white rounded-xl text-xs font-bold outline-none cursor-pointer"
+                />
+              </div>
+            </div>
+
+            {/* Monthly Timeliness Grid / Table */}
+            <div className="bg-white rounded-2xl border border-gray-150 shadow-2xs overflow-hidden">
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse min-w-[800px]">
+                  <thead>
+                    <tr className="bg-gray-50 border-b border-gray-150">
+                      <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest">Employee Profile</th>
+                      <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest text-center">Days Present / Active</th>
+                      <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest text-center">Total Late Arrivals</th>
+                      <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest text-center">Lunch Overtime Breaches</th>
+                      <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest text-center">Average Lunch Break</th>
+                      <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest">Analysis rating</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-50">
+                    {employees.map(emp => {
+                      const empRecords = validAttendance.filter(a => a.employeeId === emp.id);
                       
-                      return (
-                        <div key={emp.id} className="flex items-center justify-between p-3 rounded-xl hover:bg-slate-50/55 dark:hover:bg-zinc-850/40 transition-colors border border-slate-50 dark:border-zinc-850">
-                          <div>
-                            <span className="font-extrabold text-xs text-gray-900 dark:text-neutral-100 block">{emp.name}</span>
-                            <span className="text-[8px] font-bold text-gray-450 dark:text-neutral-350 uppercase tracking-widest">{emp.role}</span>
-                          </div>
+                      // Present count
+                      const presentCount = empRecords.filter(r => r.status === "present" || r.status === "late" || r.status === "half-day").length;
+                      
+                      // Lateness count
+                      const latesOfEmp = empRecords.filter(r => r.status === "late").length;
+                      
+                      // Lunch breaches count
+                      const breachesOfEmp = empRecords.filter(r => {
+                        const mins = getLunchDurationMinutes(r.lunchOut, r.lunchIn);
+                        return mins > lunchDurationLimit;
+                      });
+                      const breachesCount = breachesOfEmp.length;
+                      
+                      // Average lunch break
+                      const completedLunches = empRecords.filter(r => r.lunchOut && r.lunchIn);
+                      const totalLunchMins = completedLunches.reduce((sum, r) => sum + getLunchDurationMinutes(r.lunchOut, r.lunchIn), 0);
+                      const avgLunch = completedLunches.length > 0 ? Math.round(totalLunchMins / completedLunches.length) : 0;
 
-                          <div className="flex items-center gap-3">
-                            {rec ? (
-                              <div className="text-right">
-                                <span className={`px-2.5 py-0.5 rounded text-[9px] font-extrabold uppercase tracking-wide inline-block ${
-                                  rec.status === "present" ? "bg-emerald-50 text-emerald-600 dark:bg-emerald-950/10" :
-                                  rec.status === "late" ? "bg-amber-50 text-amber-600 dark:bg-amber-950/10" :
-                                  rec.status === "half-day" ? "bg-yellow-50 text-yellow-600 dark:bg-yellow-950/10" :
-                                  rec.status === "leave" ? "bg-indigo-50 text-indigo-600 dark:bg-indigo-950/10" :
-                                  rec.status === "holiday" ? "bg-purple-50 text-purple-600 dark:bg-purple-950/10" :
-                                  "bg-red-50 text-red-600 dark:bg-red-950/10"
-                                }`}>
-                                  {rec.status.toUpperCase()}
-                                </span>
-                                {(rec.checkIn || rec.checkOut) && (
-                                  <span className="block text-[8px] font-mono text-gray-400 font-bold mt-0.5">
-                                    {rec.checkIn || "--:--"} - {rec.checkOut || "--:--"}
-                                  </span>
-                                )}
+                      // Calculate compliance score
+                      let ratingLabel = "🌟 Perfect Standard";
+                      let ratingClass = "bg-emerald-50 text-emerald-800 border-emerald-100";
+                      
+                      if (latesOfEmp > 0 || breachesCount > 0) {
+                        const totalViolations = latesOfEmp * 1.5 + breachesCount;
+                        if (totalViolations <= 2) {
+                          ratingLabel = "🟢 Highly Compliant";
+                          ratingClass = "bg-teal-50 text-teal-800 border-teal-100";
+                        } else if (totalViolations <= 5) {
+                          ratingLabel = "🟡 Minor Violations";
+                          ratingClass = "bg-amber-50 text-amber-800 border-amber-100";
+                        } else if (totalViolations <= 9) {
+                          ratingLabel = "🚨 Action Required";
+                          ratingClass = "bg-rose-50 text-rose-800 border-rose-100";
+                        } else {
+                          ratingLabel = "💀 Severe Operational Deficit";
+                          ratingClass = "bg-red-100 text-red-900 border-red-250";
+                        }
+                      }
+
+                      return (
+                        <tr key={emp.id} className="hover:bg-slate-50/40 transition-colors">
+                          <td className="px-6 py-4">
+                            <div className="flex items-center gap-3">
+                              <div className="w-8 h-8 rounded-full bg-slate-100 text-slate-800 flex items-center justify-center font-bold text-xs">
+                                {emp.name.charAt(0)}
                               </div>
+                              <div>
+                                <span className="font-extrabold text-gray-900 text-sm block">{emp.name}</span>
+                                <span className="text-[8px] font-bold text-gray-450 uppercase leading-none block mt-0.5">{emp.role}</span>
+                              </div>
+                            </div>
+                          </td>
+
+                          <td className="px-6 py-4 text-center font-mono font-bold text-slate-750">
+                            {presentCount} Days
+                          </td>
+
+                          <td className="px-6 py-4 text-center">
+                            {latesOfEmp > 0 ? (
+                              <span className="inline-flex flex-col items-center">
+                                <span className="text-sm font-extrabold text-amber-605 font-mono text-amber-600">{latesOfEmp} times</span>
+                                <span className="text-[8px] text-amber-500 uppercase font-black">Late Arrivals</span>
+                              </span>
                             ) : (
-                              <span className="px-2 py-0.5 rounded bg-gray-100 dark:bg-zinc-800 text-gray-400/80 text-[9px] font-black uppercase tracking-wide">
-                                UNMARKED
+                              <span className="text-xs font-semibold text-emerald-600 bg-emerald-50 px-2 py-1 rounded">
+                                Perfect Timeliness
                               </span>
                             )}
-                          </div>
-                        </div>
+                          </td>
+
+                          <td className="px-6 py-4 text-center">
+                            {breachesCount > 0 ? (
+                              <span className="inline-flex flex-col items-center">
+                                <span className="text-sm font-extrabold text-red-600 font-mono">{breachesCount} time(s)</span>
+                                <span className="text-[8px] text-red-500 uppercase font-black">Overtime breaks</span>
+                              </span>
+                            ) : (
+                              <span className="text-xs font-semibold text-emerald-600 bg-emerald-50 px-2 py-1 rounded">
+                                Zero Breaches
+                              </span>
+                            )}
+                          </td>
+
+                          <td className="px-6 py-4 text-center font-mono font-bold text-gray-650">
+                            {avgLunch > 0 ? (
+                              <span>
+                                {avgLunch} mins <span className="text-[9px] text-gray-400">avg</span>
+                              </span>
+                            ) : (
+                              <span className="text-gray-400 text-xs">-</span>
+                            )}
+                          </td>
+
+                          <td className="px-6 py-4">
+                            <span className={cn(
+                              "px-2.5 py-1 rounded text-[10px] font-extrabold uppercase tracking-wide border",
+                              ratingClass
+                            )}>
+                              {ratingLabel}
+                            </span>
+                          </td>
+                        </tr>
                       );
-                    });
-                  })()}
-                </div>
+                    })}
+                  </tbody>
+                </table>
               </div>
             </div>
           </div>

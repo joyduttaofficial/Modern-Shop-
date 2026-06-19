@@ -20,7 +20,8 @@ import {
   Search,
   Filter,
   FileDown,
-  Download
+  Download,
+  Printer
 } from "lucide-react";
 import { format, startOfMonth, endOfMonth, isWithinInterval, parseISO } from "date-fns";
 import jsPDF from "jspdf";
@@ -32,6 +33,15 @@ export default function SalarySheet({ user, role }: { user: User; role: UserRole
   const [banks, setBanks] = useState<Bank[]>([]);
   const [loading, setLoading] = useState(true);
 
+  // Company info state for printing/branding
+  const [companyName, setCompanyName] = useState("Modern Pro");
+  const [companyTagline, setCompanyTagline] = useState("Automated POS");
+  const [companyLogoUrl, setCompanyLogoUrl] = useState("");
+  const [companyPhone, setCompanyPhone] = useState("+880 1234 567890");
+  const [companyEmail, setCompanyEmail] = useState("info@modernmanager.com");
+  const [companyAddress, setCompanyAddress] = useState("Dhaka, Bangladesh");
+  const [companyPoweredBy, setCompanyPoweredBy] = useState("Powered by ModernManager");
+
   // Month-Year Selection
   const [selectedMonth, setSelectedMonth] = useState<string>(format(new Date(), "yyyy-MM")); // e.g. "2026-05"
   const [employeeSearch, setEmployeeSearch] = useState("");
@@ -40,6 +50,20 @@ export default function SalarySheet({ user, role }: { user: User; role: UserRole
   const [payoutToDelete, setPayoutToDelete] = useState<Transaction | null>(null);
 
   useEffect(() => {
+    // Snap company settings
+    const unsubCompany = onSnapshot(doc(db, "settings", "company"), (docSnap) => {
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        setCompanyName(data.companyName || "Modern Pro");
+        setCompanyTagline(data.companyTagline || "Automated POS");
+        setCompanyLogoUrl(data.companyLogoUrl || "");
+        setCompanyPhone(data.companyPhone || "+880 1234 567890");
+        setCompanyEmail(data.companyEmail || "info@modernmanager.com");
+        setCompanyAddress(data.companyAddress || "Dhaka, Bangladesh");
+        setCompanyPoweredBy(data.companyPoweredBy || "Powered by ModernManager");
+      }
+    }, (error) => handleFirestoreError(error, OperationType.GET, "settings/company"));
+
     // Snap employees
     const unsubEmps = onSnapshot(collection(db, "employees"), (snap) => {
       const emps = snap.docs.map(d => ({ id: d.id, ...d.data() } as Employee));
@@ -65,7 +89,7 @@ export default function SalarySheet({ user, role }: { user: User; role: UserRole
       setBanks(snap.docs.map(d => ({ id: d.id, ...d.data() } as Bank)));
     }, (error) => handleFirestoreError(error, OperationType.LIST, "banks"));
 
-    return () => { unsubEmps(); unsubTx(); unsubBanks(); };
+    return () => { unsubCompany(); unsubEmps(); unsubTx(); unsubBanks(); };
   }, []);
 
   const confirmDeletePayout = async () => {
@@ -384,8 +408,55 @@ export default function SalarySheet({ user, role }: { user: User; role: UserRole
 
   return (
     <div className="space-y-8 animate-in fade-in duration-500">
+      {/* Custom Printed Header (Visible ONLY during print layout) */}
+      <div className="print:flex hidden flex-col w-full border-b-[3px] border-slate-950 pb-5 mb-8">
+        <div className="flex justify-between items-start w-full">
+          {/* Left: Branding & Info */}
+          <div className="space-y-1.5 col-span-2">
+            <div className="flex items-center gap-3">
+              {companyLogoUrl ? (
+                <img src={companyLogoUrl} alt="Logo" className="w-12 h-12 object-contain rounded-lg" referrerPolicy="no-referrer" />
+              ) : (
+                <div className="w-12 h-12 bg-slate-900 text-white rounded-lg flex items-center justify-center font-black text-xl">
+                  {companyName ? companyName.charAt(0).toUpperCase() : "M"}
+                </div>
+              )}
+              <div>
+                <h1 className="text-2xl font-black text-slate-950 leading-none tracking-tight">{companyName.toUpperCase()}</h1>
+                <p className="text-slate-500 font-bold text-[10px] tracking-wide mt-1.5">{companyTagline}</p>
+              </div>
+            </div>
+            <div className="text-[10px] text-slate-500 font-semibold pt-2 max-w-md space-y-0.5 leading-normal">
+              <p><strong>Address:</strong> {companyAddress}</p>
+              <p><strong>Phone:</strong> {companyPhone} &bull; <strong>Email:</strong> {companyEmail}</p>
+            </div>
+          </div>
+
+          {/* Right: Statement Meta */}
+          <div className="text-right space-y-2 shrink-0">
+            <div className="bg-slate-900 text-white px-3 py-1 rounded-md text-center inline-block">
+              <span className="text-[9px] font-extrabold uppercase tracking-widest block">Payroll Sheet</span>
+            </div>
+            <h2 className="text-base font-black text-slate-950 uppercase tracking-tight mt-1">Monthly Payroll & Salary Ledger</h2>
+            <div className="text-[10px] text-slate-500 space-y-0.5 font-semibold leading-normal">
+              <p><strong>Statement Month:</strong> {selectedMonth ? (() => {
+                try {
+                  const parts = selectedMonth.split("-");
+                  const d = new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, 1);
+                  return format(d, "MMMM yyyy");
+                } catch(e) {}
+                return selectedMonth;
+              })() : "N/A"}</p>
+              <p><strong>Generated By:</strong> {user.email} ({role === "admin" ? "Administrator" : "Manager"})</p>
+              <p><strong>Print Timestamp:</strong> {format(new Date(), "dd MMMM yyyy, hh:mm a")} (BST)</p>
+            </div>
+          </div>
+        </div>
+        <div className="w-full bg-slate-200 h-[1px] mt-4 print:block"></div>
+      </div>
+
       {/* Header */}
-      <header className="flex flex-col md:flex-row md:items-center justify-between gap-6">
+      <header className="flex flex-col md:flex-row md:items-center justify-between gap-6 print:hidden">
         <div>
           <h2 className="text-3xl font-black tracking-tight mb-2 text-gray-950">Salary Sheet</h2>
           <p className="text-gray-500 font-medium italic">Track employee payouts, monthly breakdowns, and due reconciliations.</p>
@@ -410,6 +481,14 @@ export default function SalarySheet({ user, role }: { user: User; role: UserRole
 
           {/* Export Options */}
           <div className="flex items-center gap-2 bg-white p-2 rounded-[24px] shadow-sm border border-gray-100">
+            <button
+              onClick={() => window.print()}
+              className="flex items-center gap-1.5 px-4 py-2 bg-white hover:bg-slate-55 text-slate-800 rounded-[16px] text-xs font-bold transition-all cursor-pointer border border-slate-200 shadow-sm"
+              title="Print standard monthly salary ledger"
+            >
+              <Printer className="w-3.5 h-3.5 text-slate-500" />
+              <span>Print</span>
+            </button>
             <button
               onClick={exportToPDF}
               className="flex items-center gap-1.5 px-4 py-2 bg-slate-900 text-white hover:bg-slate-800 rounded-[16px] text-xs font-bold transition-all cursor-pointer shadow-sm"

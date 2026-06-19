@@ -100,7 +100,7 @@ export default function Inventory({
       const matchesSearch = p.name?.toLowerCase().includes(searchTerm.toLowerCase()) || 
         p.category?.toLowerCase().includes(searchTerm.toLowerCase());
       const matchesCategory = selectedCategory === "all" || p.category === selectedCategory;
-      const matchesLowStock = !lowStockFilter || (p.stock || 0) <= 10;
+      const matchesLowStock = !lowStockFilter || (p.stock || 0) <= (p.minStock ?? 10);
       return matchesSearch && matchesCategory && matchesLowStock;
     });
   }, [products, searchTerm, selectedCategory, lowStockFilter]);
@@ -111,7 +111,7 @@ export default function Inventory({
   }, [products]);
 
   const uniqueProductCount = products.length;
-  const lowStockCount = products.filter(p => (p.stock || 0) <= 10 && (p.stock || 0) > 0).length;
+  const lowStockCount = products.filter(p => (p.stock || 0) <= (p.minStock ?? 10) && (p.stock || 0) > 0).length;
   const outOfStockCount = products.filter(p => (p.stock || 0) === 0).length;
 
   // Add / Edit Product modal state
@@ -125,6 +125,7 @@ export default function Inventory({
   const [prodUnit, setProdUnit] = useState("Roll");
   const [prodStock, setProdStock] = useState<number>(0);
   const [prodLastPurchasePrice, setProdLastPurchasePrice] = useState<number>(0);
+  const [prodMinStock, setProdMinStock] = useState<number>(10);
   const [submittingProduct, setSubmittingProduct] = useState(false);
 
   const openAddModal = () => {
@@ -135,6 +136,7 @@ export default function Inventory({
     setProdUnit("Roll");
     setProdStock(0);
     setProdLastPurchasePrice(0);
+    setProdMinStock(10);
     setProductModalOpen(true);
   };
 
@@ -146,6 +148,7 @@ export default function Inventory({
     setProdUnit(p.unit || "Roll");
     setProdStock(p.stock || 0);
     setProdLastPurchasePrice(p.lastPurchasePrice || 0);
+    setProdMinStock(p.minStock ?? 10);
     setProductModalOpen(true);
   };
 
@@ -163,6 +166,7 @@ export default function Inventory({
         unit: prodUnit,
         stock: Number(prodStock),
         lastPurchasePrice: Number(prodLastPurchasePrice),
+        minStock: Number(prodMinStock),
         totalPurchaseValue: Number(prodStock) * Number(prodLastPurchasePrice),
         updatedAt: new Date().toISOString()
       };
@@ -634,7 +638,7 @@ export default function Inventory({
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                   {filteredProducts.map((p) => {
                     const valuation = (p.stock || 0) * (p.lastPurchasePrice || 0);
-                    const isLow = (p.stock || 0) <= 10 && (p.stock || 0) > 0;
+                    const isLow = (p.stock || 0) <= (p.minStock ?? 10) && (p.stock || 0) > 0;
                     const isEmpty = (p.stock || 0) === 0;
 
                     return (
@@ -684,12 +688,17 @@ export default function Inventory({
                         <div className="grid grid-cols-2 gap-2 bg-slate-50 p-3 rounded-2xl border border-slate-100">
                           <div>
                             <span className="text-[8.5px] font-black uppercase text-slate-400 tracking-wider block">Quantity</span>
-                            <span className={cn(
-                              "text-xs font-black font-mono",
-                              isEmpty ? "text-red-600" : isLow ? "text-amber-600" : "text-green-700"
-                            )}>
-                              {p.stock} <span className="text-[10px] font-semibold text-slate-400">{p.unit}</span>
-                            </span>
+                            <div className="flex flex-col">
+                              <span className={cn(
+                                "text-xs font-black font-mono",
+                                isEmpty ? "text-red-600" : isLow ? "text-amber-600" : "text-green-700"
+                              )}>
+                                {p.stock} <span className="text-[10px] font-semibold text-slate-400">{p.unit}</span>
+                              </span>
+                              <span className="text-[9px] text-slate-400/80 font-semibold italic">
+                                Min: {p.minStock ?? 10} {p.unit}
+                              </span>
+                            </div>
                           </div>
                           <div>
                             <span className="text-[8.5px] font-black uppercase text-slate-400 tracking-wider block">Sourcing Unit Cost</span>
@@ -1162,6 +1171,23 @@ export default function Inventory({
                       required
                       min="0"
                       className="w-full p-2.5 border border-slate-200 bg-slate-50 focus:bg-white rounded-xl focus:outline-none"
+                    />
+                  </div>
+                </div>
+
+                {/* Minimum Stock Threshold Row */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-black text-slate-400 block">Minimum Stock Threshold (Alert Level) *</label>
+                    <input
+                      type="number"
+                      value={prodMinStock}
+                      onChange={(e) => setProdMinStock(Number(e.target.value))}
+                      required
+                      min="0"
+                      placeholder="e.g. 10"
+                      className="w-full p-2.5 border border-slate-200 bg-slate-50 focus:bg-white rounded-xl focus:outline-none"
+                      title="An alert / badge will appear on the dashboard if stock goes below this level"
                     />
                   </div>
                 </div>

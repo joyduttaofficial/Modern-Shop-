@@ -41,6 +41,57 @@ export default function Employees({
   const [editingEmployee, setEditingEmployee] = useState<Employee | null>(null);
   const [viewingProfile, setViewingProfile] = useState<Employee | null>(null);
   const [viewingAttendance, setViewingAttendance] = useState<Employee | null>(null);
+
+  // Profile Detail Extra states
+  const [profileTab, setProfileTab] = useState<"kyc" | "attendance" | "financial">("kyc");
+  const [profileAttendance, setProfileAttendance] = useState<any[]>([]);
+  const [loadingProfileAttendance, setLoadingProfileAttendance] = useState(false);
+  const [lunchDurationLimit, setLunchDurationLimit] = useState(60);
+
+  const getLunchDurationMinutes = (lunchOut?: string, lunchIn?: string): number => {
+    if (!lunchOut || !lunchIn) return 0;
+    try {
+      const [outH, outM] = lunchOut.split(":").map(Number);
+      const [inH, inM] = lunchIn.split(":").map(Number);
+      if (isNaN(outH) || isNaN(outM) || isNaN(inH) || isNaN(inM)) return 0;
+      return (inH * 60 + inM) - (outH * 60 + outM);
+    } catch {
+      return 0;
+    }
+  };
+
+  // Load attendance rules
+  useEffect(() => {
+    const unsubRules = onSnapshot(doc(db, "settings", "attendance"), (docSnap) => {
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        setLunchDurationLimit(data.lunchDurationLimit ?? 60);
+      }
+    });
+    return () => unsubRules();
+  }, []);
+
+  // Fetch full continuous attendance history for the selected employee
+  useEffect(() => {
+    if (viewingProfile) {
+      setProfileTab("kyc");
+      setLoadingProfileAttendance(true);
+      const q = query(
+        collection(db, "attendance"),
+        where("employeeId", "==", viewingProfile.id),
+        orderBy("date", "desc")
+      );
+      getDocs(q).then(snap => {
+        setProfileAttendance(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+        setLoadingProfileAttendance(false);
+      }).catch(err => {
+        console.error("Error loaded profile attendance", err);
+        setLoadingProfileAttendance(false);
+      });
+    } else {
+      setProfileAttendance([]);
+    }
+  }, [viewingProfile]);
   const [showImport, setShowImport] = useState(false);
   const [importText, setImportText] = useState("");
 
@@ -1506,8 +1557,57 @@ export default function Employees({
                 </div>
               </div>
 
+              {/* Profile Nav Tab Bar */}
+              <div className="bg-white px-8 py-1 border-b border-gray-150 flex gap-1 flex-wrap shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setProfileTab("kyc")}
+                  className={cn(
+                    "px-4 py-3 font-bold text-xs uppercase tracking-wider border-b-2 transition-all cursor-pointer flex items-center gap-2",
+                    profileTab === "kyc"
+                      ? "border-blue-600 text-blue-600"
+                      : "border-transparent text-gray-400 hover:text-gray-600"
+                  )}
+                >
+                  <ShieldCheck className="w-4 h-4" /> Personnel KYC & Files
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setProfileTab("attendance")}
+                  className={cn(
+                    "px-4 py-3 font-bold text-xs uppercase tracking-wider border-b-2 transition-all cursor-pointer flex items-center gap-2",
+                    profileTab === "attendance"
+                      ? "border-blue-600 text-blue-600"
+                      : "border-transparent text-gray-400 hover:text-gray-600"
+                  )}
+                >
+                  <History className="w-4 h-4" /> Attendance & Clock-In Log ({profileAttendance.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setProfileTab("financial")}
+                  className={cn(
+                    "px-4 py-3 font-bold text-xs uppercase tracking-wider border-b-2 transition-all cursor-pointer flex items-center gap-2",
+                    profileTab === "financial"
+                      ? "border-blue-600 text-blue-600"
+                      : "border-transparent text-gray-400 hover:text-gray-600"
+                  )}
+                >
+                  <CreditCard className="w-4 h-4" /> Financials & Payout Ledger
+                </button>
+              </div>
+
               {/* Content */}
-               <div className="flex-1 overflow-y-auto p-8 space-y-8">
+              <div className="flex-1 overflow-y-auto p-8 bg-gray-50/50">
+                <AnimatePresence mode="wait">
+                  {profileTab === "kyc" && (
+                    <motion.div
+                      key="kyc"
+                      initial={{ opacity: 0, y: 10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: -10 }}
+                      className="space-y-8"
+                    >
                 {/* Stats Grid */}
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                   <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm">
@@ -1650,7 +1750,294 @@ export default function Employees({
                     </div>
                   </div>
                 </div>
-              </div>
+              </motion.div>
+            )}
+
+              {profileTab === "attendance" && (
+                <motion.div
+                  key="attendance"
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -10 }}
+                  className="space-y-8"
+                >
+                  {loadingProfileAttendance ? (
+                    <div className="py-20 text-center text-gray-400 font-bold italic animate-pulse">
+                      🔄 Querying complete ledger archives... please wait...
+                    </div>
+                  ) : (
+                    <>
+                      {/* Attendance KPIs */}
+                      {(() => {
+                        const attStats = {
+                          total: profileAttendance.length,
+                          present: profileAttendance.filter(r => r.status === "present" || r.status === "late" || r.status === "half-day").length,
+                          late: profileAttendance.filter(r => r.status === "late").length,
+                          absent: profileAttendance.filter(r => r.status === "absent").length,
+                          leave: profileAttendance.filter(r => r.status === "leave").length,
+                          halfDay: profileAttendance.filter(r => r.status === "half-day").length,
+                          holiday: profileAttendance.filter(r => r.status === "holiday").length,
+                          lunchBreaches: profileAttendance.filter(r => {
+                            const m = getLunchDurationMinutes(r.lunchOut, r.lunchIn);
+                            return m > lunchDurationLimit;
+                          }).length,
+                        };
+
+                        const percentageOnTime = attStats.present > 0 
+                          ? Math.round(((attStats.present - attStats.late) / attStats.present) * 100) 
+                          : 100;
+
+                        const presentRecords = profileAttendance.filter(r => r.checkIn && (r.status === "present" || r.status === "late" || r.status === "half-day"));
+                        let avgCheckIn = "09:00 AM";
+                        if (presentRecords.length > 0) {
+                          try {
+                            let totalMins = 0;
+                            let validCount = 0;
+                            presentRecords.forEach(r => {
+                              if (!r.checkIn) return;
+                              const cleanCheck = r.checkIn.trim().toUpperCase();
+                              const parts = cleanCheck.split(" ");
+                              const [hStr, mStr] = parts[0].split(":");
+                              let h = Number(hStr);
+                              const m = Number(mStr);
+                              if (!isNaN(h) && !isNaN(m)) {
+                                if (parts[1] === "PM" && h !== 12) h += 12;
+                                if (parts[1] === "AM" && h === 12) h = 0;
+                                totalMins += h * 60 + m;
+                                validCount++;
+                              }
+                            });
+                            if (validCount > 0) {
+                              const avgMins = Math.round(totalMins / validCount);
+                              const avgHour = Math.floor(avgMins / 60);
+                              const avgMin = avgMins % 60;
+                              const ampm = avgHour >= 12 ? "PM" : "AM";
+                              const hour12 = avgHour % 12 === 0 ? 12 : avgHour % 12;
+                              avgCheckIn = `${hour12.toString().padStart(2, "0")}:${avgMin.toString().padStart(2, "0")} ${ampm}`;
+                            }
+                          } catch (e) {
+                            console.error(e);
+                          }
+                        }
+
+                        const lunchRecords = profileAttendance.filter(r => r.lunchOut && r.lunchIn);
+                        const avgLunchDuration = lunchRecords.length > 0
+                          ? Math.round(lunchRecords.reduce((sum, r) => sum + getLunchDurationMinutes(r.lunchOut, r.lunchIn), 0) / lunchRecords.length)
+                          : 0;
+
+                        const lastRecord = profileAttendance[0];
+
+                        return (
+                          <>
+                            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                              <div className="bg-white p-5 rounded-3xl border border-gray-150/70 shadow-2xs">
+                                <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-1.5 font-sans">Shift Presence Rate</p>
+                                <p className="text-2xl font-black text-blue-600">{attStats.present} Logged Days</p>
+                                <p className="text-[10px] text-gray-400 font-bold mt-1">Absents Logged: {attStats.absent} | Leaves: {attStats.leave}</p>
+                              </div>
+                              <div className="bg-white p-5 rounded-3xl border border-gray-150/70 shadow-2xs">
+                                <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-1.5 font-sans">On-Time Arrival Rate</p>
+                                <p className="text-2xl font-black text-emerald-600">{percentageOnTime > 100 ? 100 : percentageOnTime}% On-Time</p>
+                                <p className="text-[10px] text-gray-400 font-bold mt-1">Total Lates: <span className="text-red-500 font-black">{attStats.late} times</span></p>
+                              </div>
+                              <div className="bg-white p-5 rounded-3xl border border-gray-150/70 shadow-2xs">
+                                <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-1.5 font-sans">Average Clock-In Hour</p>
+                                <p className="text-2xl font-black text-slate-800 font-mono">{avgCheckIn}</p>
+                                <p className="text-[10px] text-gray-400 font-bold mt-1">Daily Official Schedule: 09:00 AM</p>
+                              </div>
+                              <div className="bg-white p-5 rounded-3xl border border-gray-150/70 shadow-2xs">
+                                <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-1.5 font-bold font-sans">Lunch Break Compliance</p>
+                                <p className="text-2xl font-black text-amber-600">{avgLunchDuration}m Avg</p>
+                                <p className="text-[10px] text-gray-400 font-bold mt-1">Breach Violations: <span className="text-red-500 font-black">{attStats.lunchBreaches} incidents</span></p>
+                              </div>
+                            </div>
+
+                            {lastRecord && (
+                              <div className="bg-slate-900 text-white p-6 rounded-3xl border border-slate-800 flex flex-col md:flex-row justify-between items-start md:items-center gap-4 shadow-md">
+                                <div>
+                                  <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Most Recent Event Record</p>
+                                  <h4 className="text-lg font-black">{format(new Date(lastRecord.date), "EEEE, dd MMMM yyyy")}</h4>
+                                  <p className="text-xs text-slate-400 uppercase font-bold tracking-wider mt-1">
+                                    Shift Status: <span className="text-amber-400 font-black">{lastRecord.status.toUpperCase()}</span>
+                                  </p>
+                                </div>
+                                <div className="grid grid-cols-2 sm:grid-cols-4 gap-y-2 gap-x-6 text-xs bg-slate-800 border border-slate-700/60 p-4 rounded-2xl w-full md:w-auto">
+                                  <div>
+                                    <p className="text-slate-400 font-bold mb-0.5">Clock In</p>
+                                    <p className="font-extrabold font-mono text-white">{lastRecord.checkIn || "--:--"}</p>
+                                  </div>
+                                  <div>
+                                    <p className="text-slate-400 font-bold mb-0.5">Lunch Out</p>
+                                    <p className="font-extrabold font-mono text-white">{lastRecord.lunchOut || "--:--"}</p>
+                                  </div>
+                                  <div>
+                                    <p className="text-slate-400 font-bold mb-0.5">Lunch In</p>
+                                    <p className="font-extrabold font-mono text-white">{lastRecord.lunchIn || "--:--"}</p>
+                                  </div>
+                                  <div>
+                                    <p className="text-slate-400 font-bold mb-0.5">Clock Out</p>
+                                    <p className="font-extrabold font-mono text-white">{lastRecord.checkOut || "--:--"}</p>
+                                  </div>
+                                </div>
+                              </div>
+                            )}
+
+                            <div className="space-y-4">
+                              <div className="flex justify-between items-center bg-transparent">
+                                <h3 className="font-extrabold text-slate-900 border-l-4 border-blue-600 pl-3 uppercase text-xs tracking-wider">
+                                  Chronological Shift Logs Report (All Days Active)
+                                </h3>
+                                <span className="text-[10px] font-black text-gray-500 uppercase tracking-widest bg-gray-250 px-3 py-1 rounded-full">
+                                  Total logs archived: {profileAttendance.length}
+                                </span>
+                              </div>
+
+                              {profileAttendance.length === 0 ? (
+                                <div className="py-12 bg-white text-center text-gray-400 font-medium italic rounded-3xl border border-dashed border-gray-200">
+                                  No historical logs recorded for this personnel in the database yet.
+                                </div>
+                              ) : (
+                                <div className="space-y-3 max-h-[400px] overflow-y-auto pr-2">
+                                  {profileAttendance.map((rec) => {
+                                    const lunchMins = getLunchDurationMinutes(rec.lunchOut, rec.lunchIn);
+                                    const lunchOvertime = lunchMins > lunchDurationLimit;
+                                    return (
+                                      <div key={rec.id} className="bg-white p-5 rounded-2xl flex flex-col md:flex-row md:items-center justify-between border border-gray-100 gap-4 shadow-2xs hover:border-blue-100 transition-all">
+                                        <div className="flex items-center gap-4">
+                                          <div className="w-12 h-12 rounded-[16px] bg-slate-50 flex flex-col items-center justify-center font-bold text-gray-600 border border-gray-150 shadow-2xs">
+                                            <p className="text-xs font-black font-mono leading-none">{format(new Date(rec.date), "dd")}</p>
+                                            <p className="text-[8px] font-black uppercase tracking-wider text-gray-400 mt-1">{format(new Date(rec.date), "MMM")}</p>
+                                          </div>
+                                          <div>
+                                            <p className="font-extrabold text-slate-900 text-sm">{format(new Date(rec.date), "EEEE, d MMMM yyyy")}</p>
+                                            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 mt-1 text-[11px] text-slate-500 font-bold">
+                                              <span>In: <strong className="font-mono text-slate-800">{rec.checkIn || "09:00 AM"}</strong></span>
+                                              <span>•</span>
+                                              <span>Out: <strong className="font-mono text-slate-800">{rec.checkOut || "Active Shift"}</strong></span>
+                                              {rec.lunchOut && (
+                                                <>
+                                                  <span>•</span>
+                                                  <span className={cn(
+                                                    "flex items-center gap-1 px-1.5 py-0.5 rounded-sm line-clamp-1",
+                                                    lunchOvertime ? "bg-red-50 text-red-600 font-black" : "bg-green-50 text-green-700"
+                                                  )}>
+                                                    Lunch: {rec.lunchOut} - {rec.lunchIn || "Ongoing"} ({lunchMins}m)
+                                                    {lunchOvertime && ` *+${lunchMins - lunchDurationLimit}m Overtime`}
+                                                  </span>
+                                                </>
+                                              )}
+                                            </div>
+                                          </div>
+                                        </div>
+
+                                        <div className="flex items-center gap-3 justify-end shrink-0">
+                                          {rec.notes && (
+                                            <span className="text-[10px] text-gray-500 bg-gray-55 border border-gray-100 max-w-[200px] truncate px-2.5 py-1 rounded-lg italic font-bold" title={rec.notes}>
+                                              📝 {rec.notes}
+                                            </span>
+                                          )}
+                                          <span className={cn(
+                                            "px-3.5 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest border shrink-0 text-center",
+                                            rec.status === "present" && "bg-blue-50 text-blue-700 border-blue-100",
+                                            rec.status === "late" && "bg-orange-50 text-orange-700 border-orange-100",
+                                            rec.status === "absent" && "bg-red-50 text-red-700 border-red-100",
+                                            rec.status === "leave" && "bg-indigo-50 text-indigo-700 border-indigo-100",
+                                            rec.status === "half-day" && "bg-yellow-50 text-yellow-700 border-yellow-10 border-yellow-110",
+                                            rec.status === "holiday" && "bg-emerald-50 text-emerald-700 border-emerald-100",
+                                          )}>
+                                            {rec.status}
+                                          </span>
+                                        </div>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              )}
+                            </div>
+                          </>
+                        );
+                      })()}
+                    </>
+                  )}
+                </motion.div>
+              )}
+
+              {profileTab === "financial" && (
+                <motion.div
+                  key="financial"
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -10 }}
+                  className="space-y-8"
+                >
+                  {/* Original Stats Grid */}
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm">
+                      <p className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-2 flex items-center gap-2">
+                        <Wallet className="w-4 h-4 text-blue-500" /> Basic Salary Contract
+                      </p>
+                      <p className="text-2xl font-black text-gray-900">{role === "admin" ? formatCurrency(viewingProfile.salary) : "***"}</p>
+                    </div>
+                    <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm">
+                      <p className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-2 flex items-center gap-2">
+                        <CreditCard className="w-4 h-4 text-green-500" /> Total Paid to Date
+                      </p>
+                      <p className="text-2xl font-black text-green-600">{role === "admin" ? formatCurrency(getEmployeeStats(viewingProfile.id!).totalPaid) : "***"}</p>
+                    </div>
+                    <div className="bg-white p-6 rounded-3xl border border-gray-150 shadow-sm">
+                      <p className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-2 flex items-center gap-2">
+                        <History className="w-4 h-4 text-orange-500" /> Outstanding Advance Balance
+                      </p>
+                      <p className="text-2xl font-black text-orange-600">{role === "admin" ? formatCurrency(getEmployeeStats(viewingProfile.id!).totalAdvance) : "***"}</p>
+                    </div>
+                  </div>
+
+                  {/* Transaction history */}
+                  <div className="space-y-4">
+                    <div className="flex justify-between items-center bg-transparent">
+                      <h3 className="font-bold text-gray-900 flex items-center gap-2">
+                        <History className="w-5 h-5 text-gray-400" /> Complete Financial Transaction History
+                      </h3>
+                      <span className="text-[10px] text-gray-400 font-extrabold uppercase bg-gray-100 px-3 py-1 rounded-full">
+                        Total operations: {transactions.filter(tx => tx.employeeId === viewingProfile.id).length}
+                      </span>
+                    </div>
+                    <div className="space-y-2 max-h-[350px] overflow-y-auto pr-2">
+                      {transactions
+                        .filter(tx => tx.employeeId === viewingProfile.id)
+                        .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+                        .map(tx => (
+                          <div key={tx.id} className="bg-white p-5 rounded-2xl flex items-center justify-between border border-gray-50 shadow-2xs hover:border-gray-200 transition-all">
+                            <div className="space-y-1">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className={cn(
+                                  "px-2 py-0.5 rounded text-[8px] font-black uppercase tracking-wider",
+                                  tx.category === "Staff Salary" ? "bg-green-100 text-green-700" : "bg-orange-100 text-orange-700"
+                                )}>
+                                  {tx.category}
+                                </span>
+                                <span className="text-xs font-black text-slate-800">{tx.subCategory || "Payout Details"}</span>
+                              </div>
+                              <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">{format(new Date(tx.date), "EEEE, MMMM dd, yyyy")}</p>
+                              {tx.notes && <p className="text-[11px] text-gray-500 italic font-medium">Memo: "{tx.notes}"</p>}
+                            </div>
+                            <div className="text-right">
+                              <p className="font-black text-base text-gray-900">-{role === "admin" ? formatCurrency(tx.amount) : "***"}</p>
+                              <span className="text-[9px] font-black text-gray-400 uppercase tracking-widest">{tx.paymentMethod || "Cash"} • Verified</span>
+                            </div>
+                          </div>
+                        ))}
+                      {!transactions.filter(tx => tx.employeeId === viewingProfile.id).length && (
+                        <div className="py-12 text-center bg-white rounded-2xl border-2 border-dashed border-gray-200 text-gray-400 font-medium italic">
+                          No historical transactions or salary pays logged for this personnel.
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
 
               {/* Actions Footer */}
               <div className="p-8 bg-white border-t border-gray-100 flex justify-end gap-4 flex-wrap">

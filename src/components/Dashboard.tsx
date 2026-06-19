@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { User } from "firebase/auth";
 import { collection, query, where, orderBy, limit, onSnapshot, getDocs } from "firebase/firestore";
 import { db, OperationType, handleFirestoreError } from "@/src/lib/firebase";
-import { Transaction, Bank, UserRole } from "@/src/types";
+import { Transaction, Bank, UserRole, Product } from "@/src/types";
 import { PurchaseModel } from "./Purchase";
 import { formatCurrency, cn } from "@/src/lib/utils";
 import { 
@@ -22,7 +22,9 @@ import {
   CalendarRange,
   Sparkles,
   BarChart4,
-  Printer
+  Printer,
+  AlertTriangle,
+  Bell
 } from "lucide-react";
 import { 
   XAxis, 
@@ -40,7 +42,15 @@ import {
 import { format, subDays, startOfDay, endOfDay } from "date-fns";
 import { useLanguage } from "../contexts/LanguageContext";
 
-export default function Dashboard({ user, role }: { user: User; role: UserRole }) {
+export default function Dashboard({ 
+  user, 
+  role,
+  onNavigate
+}: { 
+  user: User; 
+  role: UserRole;
+  onNavigate?: (view: string, extra?: any) => void;
+}) {
   const { language, t, formatCurrency, formatDate, formatNumber, translateValue } = useLanguage();
   const [recentTransactions, setRecentTransactions] = useState<Transaction[]>([]);
   const [banks, setBanks] = useState<Bank[]>([]);
@@ -74,11 +84,21 @@ export default function Dashboard({ user, role }: { user: User; role: UserRole }
   const [employeeSalesTotal, setEmployeeSalesTotal] = useState<any[]>([]);
   const [sevenDaysBarChartData, setSevenDaysBarChartData] = useState<any[]>([]);
   const [trendChartData, setTrendChartData] = useState<any[]>([]);
+  const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
   const [isMounted, setIsMounted] = useState(false);
 
   useEffect(() => {
     setIsMounted(true);
+  }, []);
+
+  useEffect(() => {
+    const unsubscribe = onSnapshot(collection(db, "products"), (snapshot) => {
+      const prods = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Product));
+      setProducts(prods);
+    }, (error) => handleFirestoreError(error, OperationType.LIST, "products"));
+
+    return () => unsubscribe();
   }, []);
 
   useEffect(() => {
@@ -382,11 +402,28 @@ export default function Dashboard({ user, role }: { user: User; role: UserRole }
 
   const totalBankLastCash = banks.reduce((sum, b) => sum + b.balance, 0);
 
+  // Compute products below user-defined or default threshold
+  const lowStockItems = products.filter(p => {
+    const threshold = p.minStock !== undefined ? p.minStock : 10;
+    return (p.stock || 0) <= threshold;
+  });
+
   return (
     <div className="space-y-8 animate-in fade-in duration-200">
       <header className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 border-b border-slate-100 pb-5">
         <div>
-          <h2 className="text-3xl font-black tracking-tight text-slate-900">{t("Dashboard Overview")}</h2>
+          <div className="flex items-center gap-2.5">
+            <h2 className="text-3xl font-black tracking-tight text-slate-900">{t("Dashboard Overview")}</h2>
+            {lowStockItems.length > 0 && (
+              <span 
+                className="flex h-6 min-w-6 items-center justify-center rounded-full bg-rose-600 px-1.5 text-xs font-black text-white shrink-0 shadow-sm animate-pulse cursor-pointer" 
+                title={`${lowStockItems.length} items below minimum stock threshold`}
+                onClick={() => onNavigate?.("inventory")}
+              >
+                {lowStockItems.length}
+              </span>
+            )}
+          </div>
           <p className="text-sm font-medium text-slate-500">
             {t("Welcome back,")} <strong className="text-slate-800">{user.displayName?.split(" ")[0]}</strong>. {t("Here's your shop's real-time performance matrix.")}
           </p>
@@ -399,6 +436,156 @@ export default function Dashboard({ user, role }: { user: User; role: UserRole }
           {t("Print Ledger Report")}
         </button>
       </header>
+
+      {/* Low Stock Notifications Alert Banner */}
+      {lowStockItems.length > 0 && (
+        <div className="print:hidden bg-amber-50/50 border border-amber-200 rounded-2xl p-5 space-y-3.5 shadow-2xs relative overflow-hidden bg-amber-50/40">
+          <div className="flex items-start sm:items-center justify-between gap-4 flex-col sm:flex-row">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 bg-amber-100 text-amber-700 rounded-xl flex items-center justify-center shrink-0 border border-amber-200 shadow-sm">
+                <AlertTriangle className="w-5 h-5 animate-bounce" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <h3 className="text-sm font-black text-amber-900 uppercase tracking-tight">
+                    {t("Critical Low Stock Notification")}
+                  </h3>
+                  <span className="bg-rose-100 border border-rose-200 text-rose-800 font-extrabold text-[10px] px-2 py-0.5 rounded-full uppercase tracking-wider">
+                    {lowStockItems.length} {t("SKUs Alert")}
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-500 font-medium">
+                  {t("These products have fallen below your custom minimum stock levels. Restock needed immediately.")}
+                </p>
+              </div>
+            </div>
+            
+            <button
+              onClick={() => onNavigate?.("inventory")}
+              className="px-3.5 py-1.5 bg-amber-600 text-white rounded-lg text-[10px] font-black uppercase tracking-wider hover:bg-amber-700 transition active:scale-95 cursor-pointer flex items-center gap-1.5 shrink-0 shadow-sm"
+            >
+              <span>{t("Go to Inventory")}</span>
+              <ArrowUpRight className="w-3.5 h-3.5" />
+            </button>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-3 pt-1">
+            {lowStockItems.map((p) => {
+              const threshold = p.minStock !== undefined ? p.minStock : 10;
+              const isOutOfStock = (p.stock || 0) === 0;
+              return (
+                <div 
+                  key={p.id} 
+                  className={cn(
+                    "p-3 rounded-xl border flex flex-col justify-between space-y-1.5 transition-colors bg-white hover:border-amber-400 group relative",
+                    isOutOfStock ? "border-red-200 bg-red-50/5" : "border-amber-250/70 border-amber-200 pb-2.5"
+                  )}
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <span className="font-extrabold text-xs text-slate-800 truncate block max-w-[150px]" title={p.name}>
+                      {p.name}
+                    </span>
+                    <span className={cn(
+                      "text-[8px] font-black uppercase px-2 py-0.5 rounded",
+                      isOutOfStock ? "bg-red-100 text-red-700" : "bg-amber-100 text-amber-700"
+                    )}>
+                      {isOutOfStock ? t("Deficit") : t("Restock")}
+                    </span>
+                  </div>
+                  
+                  <div className="flex items-center justify-between text-[11px] font-medium text-slate-500">
+                    <div>
+                      <span>Stock: </span>
+                      <strong className={cn(
+                        "font-mono font-bold text-xs",
+                        isOutOfStock ? "text-red-600 font-extrabold" : "text-amber-600 font-extrabold"
+                      )}>
+                        {p.stock}
+                      </strong>
+                      <span className="text-[10px] text-slate-400 font-semibold uppercase"> {p.unit}</span>
+                    </div>
+                    <div>
+                      <span>Limit: </span>
+                      <strong className="font-mono text-slate-700 font-bold bg-slate-100 px-1 rounded">
+                        {threshold}
+                      </strong>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Quick Actions Panel */}
+      <div className="print:hidden bg-slate-50 border border-slate-200/60 rounded-2xl p-5 space-y-4">
+        <div className="flex items-center gap-2">
+          <span className="w-1.5 h-6 bg-slate-900 rounded-full" />
+          <h3 className="text-base font-black text-slate-800 uppercase tracking-tight">{t("Quick Actions")}</h3>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <button
+            onClick={() => onNavigate?.("newSale")}
+            className="flex items-center justify-between p-4 bg-white hover:bg-slate-50 border border-slate-150 rounded-xl transition-all hover:scale-[1.01] active:scale-[0.99] cursor-pointer group shadow-xs"
+          >
+            <div className="flex items-center gap-3.5">
+              <div className="w-10 h-10 bg-emerald-50 text-emerald-600 rounded-lg flex items-center justify-center shrink-0 border border-emerald-100 group-hover:bg-emerald-100/50 transition-colors">
+                <ShoppingCart className="w-5 h-5" />
+              </div>
+              <div className="text-left">
+                <p className="font-extrabold text-slate-900 text-sm">{t("New Sale")}</p>
+                <p className="text-[11px] text-slate-400 font-semibold">{t("Register a fresh counter or digital sale")}</p>
+              </div>
+            </div>
+            <div className="text-slate-400 group-hover:translate-x-0.5 transition-transform">
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" className="w-4 h-4">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
+              </svg>
+            </div>
+          </button>
+
+          <button
+            onClick={() => onNavigate?.("transactions", { activeTab: "expense" })}
+            className="flex items-center justify-between p-4 bg-white hover:bg-slate-55 border border-slate-150 rounded-xl transition-all hover:scale-[1.01] active:scale-[0.99] cursor-pointer group shadow-xs"
+          >
+            <div className="flex items-center gap-3.5">
+              <div className="w-10 h-10 bg-rose-50 text-rose-600 rounded-lg flex items-center justify-center shrink-0 border border-rose-100 group-hover:bg-rose-100/50 transition-colors">
+                <TrendingDown className="w-5 h-5" />
+              </div>
+              <div className="text-left">
+                <p className="font-extrabold text-slate-900 text-sm">{t("Add Expense")}</p>
+                <p className="text-[11px] text-slate-400 font-semibold">{t("Log general expenses or business outflows")}</p>
+              </div>
+            </div>
+            <div className="text-slate-400 group-hover:translate-x-0.5 transition-transform">
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" className="w-4 h-4">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
+              </svg>
+            </div>
+          </button>
+
+          <button
+            onClick={() => onNavigate?.("salaryEntry")}
+            className="flex items-center justify-between p-4 bg-white hover:bg-slate-50 border border-slate-150 rounded-xl transition-all hover:scale-[1.01] active:scale-[0.99] cursor-pointer group shadow-xs"
+          >
+            <div className="flex items-center gap-3.5">
+              <div className="w-10 h-10 bg-indigo-50 text-indigo-600 rounded-lg flex items-center justify-center shrink-0 border border-indigo-100 group-hover:bg-indigo-100/50 transition-colors">
+                <Coins className="w-5 h-5" />
+              </div>
+              <div className="text-left">
+                <p className="font-extrabold text-slate-900 text-sm">{t("Register Salary")}</p>
+                <p className="text-[11px] text-slate-400 font-semibold">{t("Add staff payroll payout or advance entry")}</p>
+              </div>
+            </div>
+            <div className="text-slate-400 group-hover:translate-x-0.5 transition-transform">
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" className="w-4 h-4">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
+              </svg>
+            </div>
+          </button>
+        </div>
+      </div>
 
       {/* Daily Performance Section (Today) */}
       <div className="space-y-4">

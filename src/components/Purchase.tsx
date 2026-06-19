@@ -549,13 +549,12 @@ export default function Purchase({
 
       await addDoc(collection(db, "supplierTransactions"), returnTx);
 
-      // 2. Adjust balance
-      if (adjustType === "due") {
-        // Subtract return amount from Supplier's Due
-        await updateDoc(doc(db, "suppliers", supplierId), {
-          purchaseDue: increment(-amountVal)
-        });
-      } else {
+      // 2. Adjust balance (Always subtract the returned amount from the outstanding supplier due balance)
+      await updateDoc(doc(db, "suppliers", supplierId), {
+        purchaseDue: increment(-amountVal)
+      });
+
+      if (adjustType === "refund") {
         // Direct Refund: Create "income" Transaction in "transactions"
         const txDoc: Transaction = {
           date: new Date(date + "T12:00:00").toISOString(),
@@ -605,14 +604,14 @@ export default function Purchase({
     try {
       if (!tx.id) return;
 
-      // 1. Revert Supplier balance if it was due adjusted
-      if (tx.notes?.includes("Automatically adjusted from due") || tx.paymentMethod === "Due Adjusted") {
-        await updateDoc(doc(db, "suppliers", tx.supplierId), {
-          purchaseDue: increment(tx.totalAmount)
-        });
-      } else {
-        // Direct Refund: Revert cash/bank balance and delete companion income transaction
-        if (tx.paymentMethod && tx.paymentMethod !== "Cash") {
+      // 1. Revert Supplier balance (always adjusted from due)
+      await updateDoc(doc(db, "suppliers", tx.supplierId), {
+        purchaseDue: increment(tx.totalAmount)
+      });
+
+      // 2. Direct Refund: Revert cash/bank balance and delete companion income transaction if it was a refund
+      if (tx.paymentMethod && tx.paymentMethod !== "Due Adjusted") {
+        if (tx.paymentMethod !== "Cash") {
           const bank = banks.find(b => b.name === tx.paymentMethod);
           if (bank?.id) {
             await updateDoc(doc(db, "banks", bank.id), {

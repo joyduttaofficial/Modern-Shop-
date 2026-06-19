@@ -186,18 +186,10 @@ export default function Suppliers({
           }
         }
       } else if (sTx.type === "return") {
-        const wasAdjusted = sTx.notes?.includes("(Automatically adjusted from due)") || sTx.notes?.includes("Automatically adjusted from due");
-        if (wasAdjusted) {
-          // Put the due back
-          await updateDoc(doc(db, "suppliers", supplierId), {
-            purchaseDue: increment(sTx.totalAmount)
-          });
-        } else {
-          // Revert advance credit note
-          await updateDoc(doc(db, "suppliers", supplierId), {
-            advanceAmount: increment(-sTx.totalAmount)
-          });
-        }
+        // Put the due back (purchase returns are always automatically adjusted from due)
+        await updateDoc(doc(db, "suppliers", supplierId), {
+          purchaseDue: increment(sTx.totalAmount)
+        });
       }
 
       // Delete the actual doc
@@ -436,6 +428,7 @@ export default function Suppliers({
       remainingDue,
       openingBalanceINR: opBalINR,
       totalPurchasesINR,
+      grossPurchasesINR: totalPurchasesINR + opBalINR,
       totalReturnsINR,
       totalPaymentsINR,
       remainingDueINR
@@ -569,32 +562,23 @@ export default function Suppliers({
         });
 
       } else if (activeModal === "addReturn") {
-        // Recording a return
-        const adjustDue = modalAdjustDue; // Avoids sandbox-blocking window.confirm!
-        
+        // Recording a return (always automatically adjusted and subtracted from due)
         const returnTx: SupplierTransaction = {
           supplierId: modalSupplier.id,
           date: modalDate,
           type: "return",
           refNo: modalRefNo,
           totalAmount: amountVal,
-          notes: modalNotes + (adjustDue ? " (Automatically adjusted from due)" : ""),
+          notes: modalNotes + " (Automatically adjusted from due)",
           createdAt: new Date().toISOString()
         };
 
         await addDoc(collection(db, "supplierTransactions"), returnTx);
 
-        if (adjustDue) {
-          // Subtract from due
-          await updateDoc(doc(db, "suppliers", modalSupplier.id), {
-            purchaseDue: increment(-amountVal)
-          });
-        } else {
-          // Increase advance credits instead
-          await updateDoc(doc(db, "suppliers", modalSupplier.id), {
-            advanceAmount: increment(amountVal)
-          });
-        }
+        // Subtract from due
+        await updateDoc(doc(db, "suppliers", modalSupplier.id), {
+          purchaseDue: increment(-amountVal)
+        });
       }
 
       // Sync the selected supplier view in profile if active
@@ -1140,62 +1124,27 @@ export default function Suppliers({
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 mt-6">
                     <div className="p-4 rounded-2xl bg-indigo-50/70 border border-indigo-120 shadow-sm">
                       <p className="text-[10px] uppercase font-extrabold text-indigo-700 tracking-wider">Supplier Opening Balance Amount</p>
-                      {selectedSupplier.country === "India" ? (
-                        <>
-                          <h3 className="text-lg font-black mt-1.5 text-indigo-950">₹{(finances.openingBalanceINR || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</h3>
-                          <p className="text-[10px] text-indigo-700 font-bold mt-1">Converted: {formatCurrency(finances.openingBalance)}</p>
-                        </>
-                      ) : (
-                        <h3 className="text-xl font-black mt-1.5 text-indigo-950">{formatCurrency(finances.openingBalance)}</h3>
-                      )}
-                      <p className="text-[10px] text-gray-450 mt-1">Opening ledger balance</p>
+                      <h3 className="text-xl font-black mt-1.5 text-indigo-950">{formatCurrency(finances.openingBalance)}</h3>
+                      <p className="text-[10px] text-gray-455 mt-1">Opening ledger balance</p>
                     </div>
                     <div className="p-4 rounded-2xl bg-blue-50/70 border border-blue-120 shadow-sm">
-                      <p className="text-[10px] uppercase font-extrabold text-blue-700 tracking-wider">Total Purchase Amount</p>
-                      {selectedSupplier.country === "India" ? (
-                        <>
-                          <h3 className="text-lg font-black mt-1.5 text-blue-950">₹{(finances.totalPurchasesINR || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</h3>
-                          <p className="text-[10px] text-blue-700 font-bold mt-1">Converted: {formatCurrency(finances.totalPurchases)}</p>
-                        </>
-                      ) : (
-                        <h3 className="text-xl font-black mt-1.5 text-blue-950">{formatCurrency(finances.totalPurchases)}</h3>
-                      )}
-                      <p className="text-[10px] text-gray-455 mt-1">Excluding opening balance</p>
+                      <p className="text-[10px] uppercase font-extrabold text-blue-700 tracking-wider">Total Purchase</p>
+                      <h3 className="text-xl font-black mt-1.5 text-blue-950">{formatCurrency(finances.grossPurchases)}</h3>
+                      <p className="text-[10px] text-gray-455 mt-1">Opening Balance + Purchase amount</p>
                     </div>
                     <div className="p-4 rounded-2xl bg-green-50/70 border border-green-120 shadow-sm">
                       <p className="text-[10px] uppercase font-extrabold text-[#00a65a] tracking-wider">Total Payment Amount</p>
-                      {selectedSupplier.country === "India" ? (
-                        <>
-                          <h3 className="text-lg font-black mt-1.5 text-green-950">₹{(finances.totalPaymentsINR || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</h3>
-                          <p className="text-[10px] text-green-700 font-bold mt-1">Converted: {formatCurrency(finances.totalPayments)}</p>
-                        </>
-                      ) : (
-                        <h3 className="text-xl font-black mt-1.5 text-[#00a65a]">{formatCurrency(finances.totalPayments)}</h3>
-                      )}
+                      <h3 className="text-xl font-black mt-1.5 text-[#00a65a]">{formatCurrency(finances.totalPayments)}</h3>
                       <p className="text-[10px] text-gray-455 mt-1">Direct + purchase downpayments</p>
                     </div>
                     <div className="p-4 rounded-2xl bg-yellow-50/70 border border-yellow-120 shadow-sm">
                       <p className="text-[10px] uppercase font-extrabold text-amber-700 tracking-wider">Purchase Return Amount</p>
-                      {selectedSupplier.country === "India" ? (
-                        <>
-                          <h3 className="text-lg font-black mt-1.5 text-amber-950">₹{(finances.totalReturnsINR || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</h3>
-                          <p className="text-[10px] text-amber-700 font-bold mt-1">Converted: {formatCurrency(finances.totalReturns)}</p>
-                        </>
-                      ) : (
-                        <h3 className="text-xl font-black mt-1.5 text-amber-950">{formatCurrency(finances.totalReturns)}</h3>
-                      )}
+                      <h3 className="text-xl font-black mt-1.5 text-amber-950">{formatCurrency(finances.totalReturns)}</h3>
                       <p className="text-[10px] text-gray-455 mt-1">Items returned or adjusted</p>
                     </div>
                     <div className="p-4 rounded-2xl bg-red-50/70 border border-red-120 shadow-sm">
                       <p className="text-[10px] uppercase font-extrabold text-red-650 tracking-wider">Total Due Amount</p>
-                      {selectedSupplier.country === "India" ? (
-                        <>
-                          <h3 className="text-lg font-black mt-1.5 text-red-950">₹{(finances.remainingDueINR || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</h3>
-                          <p className="text-[10px] text-red-700 font-bold mt-1">Converted: {formatCurrency(finances.remainingDue)}</p>
-                        </>
-                      ) : (
-                        <h3 className="text-xl font-black mt-1.5 text-red-650">{formatCurrency(finances.remainingDue)}</h3>
-                      )}
+                      <h3 className="text-xl font-black mt-1.5 text-red-650">{formatCurrency(finances.remainingDue)}</h3>
                       <p className="text-[10px] text-gray-455 mt-1">Net pending due to supplier</p>
                     </div>
                   </div>
@@ -1644,16 +1593,16 @@ export default function Suppliers({
                         </div>
 
                         {activeModal === "addReturn" && (
-                          <div className="flex items-start gap-2.5 bg-sky-50 text-sky-800 font-medium text-xs p-3.5 rounded-2xl border border-sky-100">
+                          <div className="flex items-start gap-2.5 bg-sky-50 text-sky-850 font-medium text-xs p-3.5 rounded-2xl border border-sky-100 shadow-xs">
                             <input
                               type="checkbox"
                               id="modalAdjustDueCheckbox"
-                              checked={modalAdjustDue}
-                              onChange={(e) => setModalAdjustDue(e.target.checked)}
-                              className="mt-0.5 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer h-4 w-4"
+                              checked={true}
+                              disabled={true}
+                              className="mt-0.5 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-not-allowed h-4 w-4 opacity-75"
                             />
-                            <label htmlFor="modalAdjustDueCheckbox" className="cursor-pointer text-slate-700 leading-tight">
-                              <strong>Automatically adjust / deduct return:</strong> Check this to automatically subtract this transaction's return value from the supplier's outstanding due balance. If unchecked, it will be added as advance balance.
+                            <label htmlFor="modalAdjustDueCheckbox" className="cursor-not-allowed text-slate-700 leading-tight">
+                              <strong>Automatically subtracted from due:</strong> This return value is automatically adjusted and subtracted from the supplier's outstanding due balance.
                             </label>
                           </div>
                         )}

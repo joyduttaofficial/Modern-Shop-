@@ -104,8 +104,41 @@ export default function NewSale({
       const salesEmps = allEmps.filter(
         emp => emp.status === "active" && emp.department?.toLowerCase() === "sales"
       );
-      // Sort oldest created first
+      // Sort employees with section priority (Men's Section first, then Ladies' Section, then others)
       salesEmps.sort((a, b) => {
+        const getSectionScore = (emp: Employee) => {
+          const role = (emp.role || "").toLowerCase();
+          const name = (emp.name || "").toLowerCase();
+          const dept = (emp.department || "").toLowerCase();
+
+          // Check if Men's Section
+          const isMens = 
+            role.includes("men's") || role.includes("mens") ||
+            name.includes("men's") || name.includes("mens") ||
+            dept.includes("men's") || dept.includes("mens") ||
+            /\b(men|gents|gent)\b/i.test(role) || /\b(men|gents|gent)\b/i.test(name) || /\b(men|gents|gent)\b/i.test(dept);
+
+          if (isMens) return 1;
+
+          // Check if Ladies' Section
+          const isLadies = 
+            role.includes("ladies") || role.includes("women") || role.includes("lady") ||
+            name.includes("ladies") || name.includes("women") || name.includes("lady") ||
+            dept.includes("ladies") || dept.includes("women") || dept.includes("lady") ||
+            /\b(ladies|lady|women|woman|girls|girl)\b/i.test(role) || /\b(ladies|lady|women|woman|girls|girl)\b/i.test(name) || /\b(all-ladies)\b/i.test(dept);
+
+          if (isLadies) return 2;
+
+          return 3;
+        };
+
+        const scoreA = getSectionScore(a);
+        const scoreB = getSectionScore(b);
+
+        if (scoreA !== scoreB) {
+          return scoreA - scoreB;
+        }
+
         const dateA = a.joinedDate ? new Date(a.joinedDate).getTime() : 0;
         const dateB = b.joinedDate ? new Date(b.joinedDate).getTime() : 0;
         if (dateA !== dateB) return dateA - dateB;

@@ -126,6 +126,39 @@ export default function SalesList({ user, role, onEditSales, onNavigateToNewSale
     const unsubEmps = onSnapshot(collection(db, "employees"), (snapshot) => {
       const emps = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Employee));
       emps.sort((a, b) => {
+        const getSectionScore = (emp: Employee) => {
+          const role = (emp.role || "").toLowerCase();
+          const name = (emp.name || "").toLowerCase();
+          const dept = (emp.department || "").toLowerCase();
+
+          // Check if Men's Section
+          const isMens = 
+            role.includes("men's") || role.includes("mens") ||
+            name.includes("men's") || name.includes("mens") ||
+            dept.includes("men's") || dept.includes("mens") ||
+            /\b(men|gents|gent)\b/i.test(role) || /\b(men|gents|gent)\b/i.test(name) || /\b(men|gents|gent)\b/i.test(dept);
+
+          if (isMens) return 1;
+
+          // Check if Ladies' Section
+          const isLadies = 
+            role.includes("ladies") || role.includes("women") || role.includes("lady") ||
+            name.includes("ladies") || name.includes("women") || name.includes("lady") ||
+            dept.includes("ladies") || dept.includes("women") || dept.includes("lady") ||
+            /\b(ladies|lady|women|woman|girls|girl)\b/i.test(role) || /\b(ladies|lady|women|woman|girls|girl)\b/i.test(name) || /\b(all-ladies)\b/i.test(dept);
+
+          if (isLadies) return 2;
+
+          return 3;
+        };
+
+        const scoreA = getSectionScore(a);
+        const scoreB = getSectionScore(b);
+
+        if (scoreA !== scoreB) {
+          return scoreA - scoreB;
+        }
+
         const dateA = a.joinedDate ? new Date(a.joinedDate).getTime() : 0;
         const dateB = b.joinedDate ? new Date(b.joinedDate).getTime() : 0;
         if (dateA !== dateB) return dateA - dateB;
@@ -601,9 +634,56 @@ export default function SalesList({ user, role, onEditSales, onNavigateToNewSale
       }
     });
 
-    // Compute grand totals for each daily block
+    // Compute grand totals and sort employee breakdowns for each daily block
     Object.values(groups).forEach(g => {
       g.grandTotal = g.totalEmployeeSales + g.totalWholesaleSales - g.totalDeposit;
+
+      // Sort employeeBreakdown: Men's Section first, then Ladies' Section next, then others
+      g.employeeBreakdown.sort((a, b) => {
+        const empA = employees.find(e => e.id === a.employeeId);
+        const empB = employees.find(e => e.id === b.employeeId);
+
+        const getSectionScore = (emp: Employee | undefined, nameFallback: string) => {
+          if (!emp) {
+            const nf = nameFallback.toLowerCase();
+            if (nf.includes("men's") || nf.includes("mens") || /\b(men|gents|gent)\b/i.test(nf)) return 1;
+            if (nf.includes("ladies") || nf.includes("women") || nf.includes("lady") || /\b(ladies|lady|women|woman|girls|girl)\b/i.test(nf)) return 2;
+            return 3;
+          }
+          const role = (emp.role || "").toLowerCase();
+          const name = (emp.name || "").toLowerCase();
+          const dept = (emp.department || "").toLowerCase();
+
+          // Check if Men's Section
+          const isMens = 
+            role.includes("men's") || role.includes("mens") ||
+            name.includes("men's") || name.includes("mens") ||
+            dept.includes("men's") || dept.includes("mens") ||
+            /\b(men|gents|gent)\b/i.test(role) || /\b(men|gents|gent)\b/i.test(name) || /\b(men|gents|gent)\b/i.test(dept);
+
+          if (isMens) return 1;
+
+          // Check if Ladies' Section
+          const isLadies = 
+            role.includes("ladies") || role.includes("women") || role.includes("lady") ||
+            name.includes("ladies") || name.includes("women") || name.includes("lady") ||
+            dept.includes("ladies") || dept.includes("women") || dept.includes("lady") ||
+            /\b(ladies|lady|women|woman|girls|girl)\b/i.test(role) || /\b(ladies|lady|women|woman|girls|girl)\b/i.test(name) || /\b(all-ladies)\b/i.test(dept);
+
+          if (isLadies) return 2;
+
+          return 3;
+        };
+
+        const scoreA = getSectionScore(empA, a.employeeName);
+        const scoreB = getSectionScore(empB, b.employeeName);
+
+        if (scoreA !== scoreB) {
+          return scoreA - scoreB;
+        }
+
+        return a.employeeName.localeCompare(b.employeeName);
+      });
     });
 
     return Object.values(groups);

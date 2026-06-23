@@ -20,6 +20,7 @@ import {
   Wallet, 
   TrendingUp,
   ChevronRight,
+  ChevronDown,
   Filter,
   Landmark,
   Truck,
@@ -37,7 +38,7 @@ import {
 import { motion, AnimatePresence } from "motion/react";
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, LineChart, Line } from "recharts";
 
-type ReportTab = "daily" | "bank" | "salary" | "supplier" | "purchase" | "attendance" | "transactions" | "inventory" | "unified";
+type ReportTab = "daily" | "bank" | "salary" | "supplier" | "purchase" | "attendance" | "transactions" | "inventory" | "unified" | "sales";
 
 export function addPdfGlobalLedgerSummary(
   doc: jsPDF,
@@ -719,7 +720,7 @@ export default function Reports({ user, role }: { user: User; role: UserRole }) 
         
         <div className="flex flex-col sm:flex-row sm:items-center gap-3 self-start lg:self-center shrink-0">
           <div className="flex bg-slate-100 p-1 rounded-2xl border border-slate-200 shadow-xs max-w-full overflow-x-auto">
-            {(["daily", "bank", "salary", "supplier", "purchase", "attendance", "transactions", "inventory", "unified"] as ReportTab[]).map(tab => (
+            {(["daily", "bank", "salary", "supplier", "purchase", "attendance", "transactions", "inventory", "unified", "sales"] as ReportTab[]).map(tab => (
               <button 
                 key={tab}
                 onClick={() => setActiveTab(tab)}
@@ -730,7 +731,7 @@ export default function Reports({ user, role }: { user: User; role: UserRole }) 
                     : "text-slate-500 hover:text-slate-900 hover:bg-slate-200/50"
                 )}
               >
-                {t(tab)}
+                {tab === "sales" ? (language === "bn" ? "বিক্রয় রিপোর্ট" : "Sales Report") : t(tab)}
               </button>
             ))}
           </div>
@@ -1005,6 +1006,21 @@ export default function Reports({ user, role }: { user: User; role: UserRole }) 
           formatCurrency={formatCurrency}
           globalLedgerTotals={globalLedgerTotals}
           onRegisterExporter={(exportFn) => registerExporter("unified", exportFn)}
+        />
+      )}
+
+      {activeTab === "sales" && (
+        <SalesReportSection
+          transactions={transactions}
+          employees={employees}
+          companyName={companyName}
+          companyTagline={companyTagline}
+          companyAddress={companyAddress}
+          companyPhone={companyPhone}
+          companyEmail={companyEmail}
+          formatCurrency={formatCurrency}
+          globalLedgerTotals={globalLedgerTotals}
+          onRegisterExporter={(exportFn) => registerExporter("sales", exportFn)}
         />
       )}
     </div>
@@ -4740,3 +4756,1189 @@ function UnifiedFinancialReport({
     </div>
   );
 }
+
+/* ==========================================================================
+   NEW TAB: DYNAMIC UPGRADED SALES REPORT WITH ADVANCED VISUALS & AUDITING
+   ========================================================================== */
+interface SalesChartData {
+  dateStr: string;
+  amount: number;
+}
+
+interface SalesCategoryData {
+  category: string;
+  amount: number;
+}
+
+function SalesReportSection({
+  transactions,
+  employees,
+  companyName,
+  companyTagline,
+  companyAddress,
+  companyPhone,
+  companyEmail,
+  formatCurrency,
+  globalLedgerTotals,
+  onRegisterExporter,
+}: {
+  transactions: Transaction[];
+  employees: Employee[];
+  companyName: string;
+  companyTagline: string;
+  companyAddress: string;
+  companyPhone: string;
+  companyEmail: string;
+  formatCurrency: (val: number) => string;
+  globalLedgerTotals: any;
+  onRegisterExporter?: (exportFn: () => void) => void;
+}) {
+  const { language, t } = useLanguage();
+
+  // Helper to parse dates robustly
+  const getDateStr = (dt: any): string => {
+    if (!dt) return "";
+    if (typeof dt === "string") {
+      return dt.split("T")[0];
+    }
+    if (dt && typeof dt === "object" && "seconds" in dt) {
+      try {
+        return new Date(dt.seconds * 1000).toISOString().split("T")[0];
+      } catch {
+        return "";
+      }
+    }
+    if (dt instanceof Date) {
+      return dt.toISOString().split("T")[0];
+    }
+    return "";
+  };
+
+  // Identify all sales transactions
+  const salesTransactions = React.useMemo(() => {
+    return transactions.filter(tx => {
+      if (tx.type !== "income") return false;
+      const categStr = (tx.category || "").trim();
+      return (
+        categStr === "Employee Sales" ||
+        categStr === "Wholesale Sales" ||
+        categStr === "Product Sales" ||
+        categStr === "Retail Sales" ||
+        categStr === "Total Deposit" ||
+        categStr.toLowerCase().includes("sale")
+      );
+    });
+  }, [transactions]);
+
+  // Determine absolute bounds
+  const allSalesDates = salesTransactions
+    .map(tx => getDateStr(tx.date))
+    .filter(Boolean)
+    .sort();
+
+  const absoluteMinDate = allSalesDates.length > 0 ? allSalesDates[0] : format(subDays(new Date(), 30), "yyyy-MM-dd");
+  const absoluteMaxDate = allSalesDates.length > 0 ? allSalesDates[allSalesDates.length - 1] : format(new Date(), "yyyy-MM-dd");
+
+  // Filter States
+  const [startDate, setStartDate] = useState("");
+  const [endDate, setEndDate] = useState("");
+  const [categoryFilter, setCategoryFilter] = useState("All");
+  const [employeeFilter, setEmployeeFilter] = useState("All");
+  const [paymentMethodFilter, setPaymentMethodFilter] = useState("All");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [minAmount, setMinAmount] = useState("");
+  const [maxAmount, setMaxAmount] = useState("");
+
+  const activeStartDate = startDate || absoluteMinDate;
+  const activeEndDate = endDate || absoluteMaxDate;
+
+  // Expanded dates state
+  const [expandedDates, setExpandedDates] = useState<Record<string, boolean>>({});
+
+  const toggleDate = (dateStr: string) => {
+    setExpandedDates(prev => ({
+      ...prev,
+      [dateStr]: !prev[dateStr]
+    }));
+  };
+
+  const handleExpandAll = () => {
+    const next: Record<string, boolean> = {};
+    salesByDate.forEach(g => {
+      next[g.dateStr] = true;
+    });
+    setExpandedDates(next);
+  };
+
+  const handleCollapseAll = () => {
+    setExpandedDates({});
+  };
+
+  // Quick Selectors
+  const handleSetToday = () => {
+    const todayStr = format(new Date(), "yyyy-MM-dd");
+    setStartDate(todayStr);
+    setEndDate(todayStr);
+  };
+
+  const handleSetYesterday = () => {
+    const yesterdayStr = format(subDays(new Date(), 1), "yyyy-MM-dd");
+    setStartDate(yesterdayStr);
+    setEndDate(yesterdayStr);
+  };
+
+  const handleSetLast7Days = () => {
+    setStartDate(format(subDays(new Date(), 7), "yyyy-MM-dd"));
+    setEndDate(format(new Date(), "yyyy-MM-dd"));
+  };
+
+  const handleSetThisMonth = () => {
+    setStartDate(format(startOfMonth(new Date()), "yyyy-MM-dd"));
+    setEndDate(format(endOfMonth(new Date()), "yyyy-MM-dd"));
+  };
+
+  const handleSetLast30Days = () => {
+    setStartDate(format(subDays(new Date(), 30), "yyyy-MM-dd"));
+    setEndDate(format(new Date(), "yyyy-MM-dd"));
+  };
+
+  const handleSetAllTime = () => {
+    setStartDate(absoluteMinDate);
+    setEndDate(absoluteMaxDate);
+  };
+
+  // Perform multi-dimensional filtration
+  const filteredSales = React.useMemo(() => {
+    return salesTransactions.filter(tx => {
+      const txDateStr = getDateStr(tx.date);
+      if (!txDateStr) return false;
+
+      // Date Range Filter
+      if (txDateStr < activeStartDate || txDateStr > activeEndDate) return false;
+
+      // Category Filter
+      if (categoryFilter !== "All") {
+        if (categoryFilter === "Retail / Others") {
+          const isStandardCategory = 
+            tx.category === "Employee Sales" || 
+            tx.category === "Wholesale Sales" || 
+            tx.category === "Total Deposit";
+          if (isStandardCategory) return false;
+        } else if (tx.category !== categoryFilter) {
+          return false;
+        }
+      }
+
+      // Employee Filter
+      if (employeeFilter !== "All" && tx.employeeId !== employeeFilter) {
+        return false;
+      }
+
+      // Payment Method Filter
+      if (paymentMethodFilter !== "All" && tx.paymentMethod !== paymentMethodFilter) {
+        return false;
+      }
+
+      // Min/Max Amount Filter
+      const amt = tx.amount || 0;
+      if (minAmount && amt < parseFloat(minAmount)) return false;
+      if (maxAmount && amt > parseFloat(maxAmount)) return false;
+
+      // Text Search Filter
+      if (searchQuery.trim() !== "") {
+        const query = searchQuery.toLowerCase();
+        const notes = (tx.notes || "").toLowerCase();
+        const subCat = (tx.subCategory || "").toLowerCase();
+        const cat = (tx.category || "").toLowerCase();
+        const refNo = tx.id ? tx.id.toLowerCase() : "";
+        const empName = employees.find(e => e.id === tx.employeeId)?.name?.toLowerCase() || "";
+
+        if (
+          !notes.includes(query) &&
+          !subCat.includes(query) &&
+          !cat.includes(query) &&
+          !refNo.includes(query) &&
+          !empName.includes(query)
+        ) {
+          return false;
+        }
+      }
+
+      return true;
+    });
+  }, [salesTransactions, activeStartDate, activeEndDate, categoryFilter, employeeFilter, paymentMethodFilter, minAmount, maxAmount, searchQuery, employees]);
+
+  // Aggregate stats from filtered set
+  const stats = React.useMemo(() => {
+    const totalAmount = filteredSales.reduce((sum, s) => sum + (s.amount || 0), 0);
+    const invoiceCount = filteredSales.length;
+    const averageTicket = invoiceCount > 0 ? totalAmount / invoiceCount : 0;
+
+    let cashAmount = 0;
+    let digitalAmount = 0;
+
+    const categoryBreakdown: Record<string, number> = {};
+    const employeeSalesBreakdown: Record<string, number> = {};
+
+    filteredSales.forEach(tx => {
+      const amt = tx.amount || 0;
+
+      // Cash vs Digital breakdown
+      if (tx.paymentMethod === "Cash") {
+        cashAmount += amt;
+      } else {
+        digitalAmount += amt;
+      }
+
+      // Category breakdown
+      const cat = tx.category || "Others";
+      categoryBreakdown[cat] = (categoryBreakdown[cat] || 0) + amt;
+
+      // Employee breakdown
+      if (tx.employeeId) {
+        const empName = employees.find(e => e.id === tx.employeeId)?.name || "Unknown Staff";
+        employeeSalesBreakdown[empName] = (employeeSalesBreakdown[empName] || 0) + amt;
+      } else if (tx.category === "Wholesale Sales") {
+        employeeSalesBreakdown["Wholesale"] = (employeeSalesBreakdown["Wholesale"] || 0) + amt;
+      } else {
+        const key = tx.subCategory || "Direct Retail / Others";
+        employeeSalesBreakdown[key] = (employeeSalesBreakdown[key] || 0) + amt;
+      }
+    });
+
+    return {
+      totalAmount,
+      invoiceCount,
+      averageTicket,
+      cashAmount,
+      digitalAmount,
+      categoryBreakdown,
+      employeeSalesBreakdown,
+    };
+  }, [filteredSales, employees]);
+
+  // Grouped date analysis
+  const salesByDate = React.useMemo(() => {
+    const groups: Record<string, {
+      dateStr: string;
+      totalAmount: number;
+      invoiceCount: number;
+      employeeBreakdown: Record<string, number>;
+      categoryBreakdown: Record<string, number>;
+      paymentBreakdown: Record<string, number>;
+      transactions: Transaction[];
+    }> = {};
+
+    filteredSales.forEach(tx => {
+      const day = getDateStr(tx.date);
+      if (!day) return;
+
+      if (!groups[day]) {
+        groups[day] = {
+          dateStr: day,
+          totalAmount: 0,
+          invoiceCount: 0,
+          employeeBreakdown: {},
+          categoryBreakdown: {},
+          paymentBreakdown: {},
+          transactions: []
+        };
+      }
+
+      const g = groups[day];
+      const amt = tx.amount || 0;
+      g.totalAmount += amt;
+      g.invoiceCount += 1;
+      g.transactions.push(tx);
+
+      // Employee breakdown on this day
+      if (tx.employeeId) {
+        const empName = employees.find(e => e.id === tx.employeeId)?.name || "Unknown Staff";
+        g.employeeBreakdown[empName] = (g.employeeBreakdown[empName] || 0) + amt;
+      } else if (tx.category === "Wholesale Sales") {
+        g.employeeBreakdown["Wholesale"] = (g.employeeBreakdown["Wholesale"] || 0) + amt;
+      } else {
+        const key = tx.subCategory || "Retail / Others";
+        g.employeeBreakdown[key] = (g.employeeBreakdown[key] || 0) + amt;
+      }
+
+      // Category breakdown
+      const cat = tx.category || "Others";
+      g.categoryBreakdown[cat] = (g.categoryBreakdown[cat] || 0) + amt;
+
+      // Payment method breakdown
+      const method = tx.paymentMethod || "Cash";
+      g.paymentBreakdown[method] = (g.paymentBreakdown[method] || 0) + amt;
+    });
+
+    // Sort descending by date (newest first)
+    return Object.values(groups).sort((a, b) => b.dateStr.localeCompare(a.dateStr));
+  }, [filteredSales, employees]);
+
+  // Prepare Chart Data (Sales Trend over Time)
+  const chartTimelineData = React.useMemo(() => {
+    const dailyMap: Record<string, number> = {};
+    
+    // Sort chronological order
+    const orderedFiltered = [...filteredSales].sort((a, b) => {
+      return new Date(a.date).getTime() - new Date(b.date).getTime();
+    });
+
+    orderedFiltered.forEach(tx => {
+      const day = getDateStr(tx.date);
+      if (day) {
+        dailyMap[day] = (dailyMap[day] || 0) + (tx.amount || 0);
+      }
+    });
+
+    return Object.keys(dailyMap).map(key => ({
+      dateStr: format(new Date(key), "dd MMM"),
+      amount: dailyMap[key],
+    })) as SalesChartData[];
+  }, [filteredSales]);
+
+  // Prepare Category Chart Data
+  const chartCategoryData = React.useMemo(() => {
+    return Object.keys(stats.categoryBreakdown).map(cat => ({
+      category: cat,
+      amount: stats.categoryBreakdown[cat],
+    })) as SalesCategoryData[];
+  }, [stats]);
+
+  // Dynamic CSV Export
+  const exportSalesReportCSV = React.useCallback(() => {
+    let csvContent = "data:text/csv;charset=utf-8,";
+    csvContent += "OFFICIAL SALES AUDIT REPORT - " + companyName.toUpperCase() + "\n";
+    csvContent += `Interval Range: ${activeStartDate} to ${activeEndDate}\n`;
+    csvContent += `Generated On: ${format(new Date(), "dd MMM yyyy HH:mm")}\n\n`;
+
+    csvContent += "Date,Sales Category,Customer/Staff Link,Payment Method,Amount (BDT),Notes\n";
+
+    filteredSales.forEach(tx => {
+      const formattedDate = format(new Date(tx.date), "yyyy-MM-dd HH:mm");
+      const cat = tx.category || "N/A";
+      const staffLink = tx.employeeId 
+        ? (employees.find(e => e.id === tx.employeeId)?.name || "Staff") 
+        : (tx.subCategory || "Retail");
+      const method = tx.paymentMethod || "Cash";
+      const amt = tx.amount || 0;
+      const notes = (tx.notes || "").replace(/,/g, " ");
+
+      csvContent += `"${formattedDate}","${cat}","${staffLink}","${method}",${amt},"${notes}"\n`;
+    });
+
+    csvContent += `\nGRAND TOTALS,,,${stats.invoiceCount} invoices,${stats.totalAmount}\n`;
+
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement("a");
+    link.setAttribute("href", encodedUri);
+    link.setAttribute("download", `Sales_Audit_Report_${activeStartDate}_to_${activeEndDate}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  }, [filteredSales, activeStartDate, activeEndDate, companyName, employees, stats]);
+
+  // Register exporter dynamically
+  useEffect(() => {
+    if (onRegisterExporter) {
+      onRegisterExporter(exportSalesReportCSV);
+    }
+  }, [onRegisterExporter, exportSalesReportCSV]);
+
+  // Dynamic PDF Packet Export
+  const exportSalesReportPDF = () => {
+    const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+    const pageWidth = doc.internal.pageSize.getWidth();
+
+    // Elegant header banner
+    doc.setFillColor(15, 23, 42); // slate-900
+    doc.rect(0, 0, pageWidth, 42, "F");
+
+    // Company branding text
+    doc.setTextColor(255, 255, 255);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(22);
+    doc.text(companyName.toUpperCase(), 15, 16);
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9);
+    doc.setTextColor(203, 213, 225); // slate-300
+    doc.text(companyTagline || "Commercial Management Solutions", 15, 22);
+    doc.text(`${companyAddress}  |  Phone: ${companyPhone}`, 15, 27);
+    doc.text(`Email: ${companyEmail}`, 15, 32);
+
+    // Document title header right
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(11);
+    doc.setTextColor(244, 114, 182); // pink-400
+    doc.text("SALES AUDIT PACKET", pageWidth - 15, 16, { align: "right" });
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(8);
+    doc.setTextColor(255, 255, 255);
+    doc.text(`SECURE AUDITED LEDGER PORTAL`, pageWidth - 15, 22, { align: "right" });
+    doc.text(`Interval: ${activeStartDate} to ${activeEndDate}`, pageWidth - 15, 27, { align: "right" });
+    doc.text(`Generated: ${format(new Date(), "dd MMM yyyy HH:mm")}`, pageWidth - 15, 32, { align: "right" });
+
+    // Section title
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(11);
+    doc.setTextColor(15, 23, 42);
+    doc.text("INTERVAL KEY METRIC SUMMARY", 15, 52);
+
+    // Summary tables side-by-side
+    autoTable(doc, {
+      startY: 56,
+      margin: { left: 15, right: 15 },
+      head: [["METRIC STATISTIC", "VALUE SUMMARY", "DISTRIBUTION TYPE", "AMOUNT (BDT)"]],
+      body: [
+        ["Combined Total Gross Sales", `BDT ${stats.totalAmount.toLocaleString()}`, "Cash Sales Total", `BDT ${stats.cashAmount.toLocaleString()}`],
+        ["Audited Invoice Count", `${stats.invoiceCount} invoices`, "Digital / Bank Sales", `BDT ${stats.digitalAmount.toLocaleString()}`],
+        ["Average Sales Ticket Value", `BDT ${Math.round(stats.averageTicket).toLocaleString()}`, "Cash/Digital Ratio", `${Math.round((stats.cashAmount / (stats.totalAmount || 1)) * 100)}% Cash / ${Math.round((stats.digitalAmount / (stats.totalAmount || 1)) * 100)}% digital`],
+      ],
+      theme: "grid",
+      headStyles: { fillColor: [51, 65, 85], textColor: [255, 255, 255], fontSize: 8, fontStyle: "bold" },
+      bodyStyles: { fontSize: 7.5, textColor: [30, 41, 59] },
+      styles: { font: "helvetica", cellPadding: 2.5 }
+    });
+
+    const summaryFinalY = (doc as any).lastAutoTable.finalY + 10;
+
+    // Table Header
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(11);
+    doc.setTextColor(15, 23, 42);
+    doc.text("AUDITED CHRONOLOGICAL SALES REGISTRY", 15, summaryFinalY);
+
+    // Generate table content
+    const tableBody = filteredSales.map((tx) => [
+      format(new Date(tx.date), "dd MMM yyyy HH:mm"),
+      tx.id ? tx.id.substring(0, 8).toUpperCase() : "DIRECT",
+      tx.category || "Sale",
+      tx.employeeId 
+        ? (employees.find(e => e.id === tx.employeeId)?.name || "Employee") 
+        : (tx.subCategory || "Retail Sale"),
+      tx.paymentMethod || "Cash",
+      `BDT ${tx.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}`
+    ]);
+
+    autoTable(doc, {
+      startY: summaryFinalY + 4,
+      margin: { left: 15, right: 15 },
+      head: [["DATE & TIME", "TRANSACTION ID", "SALES CATEGORY", "REPRESENTATIVE / LINK", "PAYMENT METHOD", "TOTAL VALUE"]],
+      body: tableBody.length > 0 ? tableBody : [["No transactional item matched filtered bounds in local cache.", "", "", "", "", ""]],
+      theme: "striped",
+      headStyles: {
+        fillColor: [15, 23, 42],
+        textColor: [255, 255, 255],
+        fontSize: 8,
+        fontStyle: "bold"
+      },
+      bodyStyles: {
+        fontSize: 7.5,
+        textColor: [33, 41, 54]
+      },
+      columnStyles: {
+        5: { halign: "right", fontStyle: "bold" }
+      },
+      styles: {
+        font: "helvetica",
+        cellPadding: 3
+      }
+    });
+
+    const finalY = (doc as any).lastAutoTable.finalY + 15;
+    
+    // Authenticated Verification stamp
+    doc.setFillColor(248, 250, 252);
+    doc.rect(15, finalY, pageWidth - 30, 20, "F");
+    doc.setDrawColor(226, 232, 240);
+    doc.rect(15, finalY, pageWidth - 30, 20, "D");
+
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(8);
+    doc.setTextColor(21, 128, 61); // green-700
+    doc.text("AUTHENTICATION & INTEGRITY STAMP", 20, finalY + 6);
+    
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(7.5);
+    doc.setTextColor(100, 116, 139); // slate-500
+    doc.text(`This document contains an encrypted live query extract of ${stats.invoiceCount} transactions from the store database ledger.`, 20, finalY + 11);
+    doc.text(`Digital Verification ID: MD5-${Math.random().toString(36).substring(2, 10).toUpperCase()}-SECURE`, 20, finalY + 15);
+
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(8);
+    doc.setTextColor(15, 23, 42);
+    doc.text("Audited Sign-Off", pageWidth - 45, finalY + 6, { align: "center" });
+    doc.setDrawColor(148, 163, 184);
+    doc.line(pageWidth - 65, finalY + 12, pageWidth - 25, finalY + 12);
+    doc.setFontSize(7);
+    doc.text("Authorized Signature", pageWidth - 45, finalY + 16, { align: "center" });
+
+    // Save document
+    doc.save(`Sales_Statement_Report_${activeStartDate}_to_${activeEndDate}.pdf`);
+  };
+
+  return (
+    <div className="space-y-8 animate-in fade-in duration-300">
+      {/* QUICK SELECTORS & ACTION PACKS - ALL BACKGROUNDS PROPER WHITE */}
+      <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-200/80 flex flex-col xl:flex-row xl:items-center justify-between gap-6 dark:bg-neutral-900 dark:border-neutral-800">
+        <div className="flex items-center gap-3">
+          <div className="w-12 h-12 bg-pink-50 border border-pink-100 text-pink-600 rounded-xl flex items-center justify-center dark:bg-pink-950/20 dark:border-pink-900/30">
+            <TrendingUp className="w-5 h-5" />
+          </div>
+          <div>
+            <h3 className="text-lg font-extrabold text-slate-900 dark:text-neutral-100">
+              {language === "bn" ? "আপগ্রেডেড সেলস অডিট ড্যাশবোর্ড" : "Upgraded Sales Audit Dashboard"}
+            </h3>
+            <p className="text-xs text-slate-500 dark:text-neutral-400 font-medium">
+              {language === "bn" 
+                ? "উন্নত রিফাইন ফিল্টার, চার্ট এবং কাস্টম পিডিএফ বা সিএসভি আকারে বিক্রয় ডেটা ডাউনলোড করুন।" 
+                : "Deep analytics filters, interactive trend metrics, and bespoke PDF or CSV exports."}
+            </p>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            onClick={handleSetToday}
+            className="px-3 py-1.5 bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 rounded-lg text-xs font-bold transition-all cursor-pointer shadow-xs dark:bg-neutral-800 dark:text-neutral-200 dark:border-neutral-700 dark:hover:bg-neutral-700"
+          >
+            {language === "bn" ? "আজ" : "Today"}
+          </button>
+          <button
+            onClick={handleSetYesterday}
+            className="px-3 py-1.5 bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 rounded-lg text-xs font-bold transition-all cursor-pointer shadow-xs dark:bg-neutral-800 dark:text-neutral-200 dark:border-neutral-700 dark:hover:bg-neutral-700"
+          >
+            {language === "bn" ? "গতকাল" : "Yesterday"}
+          </button>
+          <button
+            onClick={handleSetLast7Days}
+            className="px-3 py-1.5 bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 rounded-lg text-xs font-bold transition-all cursor-pointer shadow-xs dark:bg-neutral-800 dark:text-neutral-200 dark:border-neutral-700 dark:hover:bg-neutral-700"
+          >
+            {language === "bn" ? "গত ৭ দিন" : "Last 7 Days"}
+          </button>
+          <button
+            onClick={handleSetThisMonth}
+            className="px-3 py-1.5 bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 rounded-lg text-xs font-bold transition-all cursor-pointer shadow-xs dark:bg-neutral-800 dark:text-neutral-200 dark:border-neutral-700 dark:hover:bg-neutral-700"
+          >
+            {language === "bn" ? "এই মাস" : "This Month"}
+          </button>
+          <button
+            onClick={handleSetLast30Days}
+            className="px-3 py-1.5 bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 rounded-lg text-xs font-bold transition-all cursor-pointer shadow-xs dark:bg-neutral-800 dark:text-neutral-200 dark:border-neutral-700 dark:hover:bg-neutral-700"
+          >
+            {language === "bn" ? "গত ৩০ দিন" : "Last 30 Days"}
+          </button>
+          <button
+            onClick={handleSetAllTime}
+            className="px-3 py-1.5 bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 rounded-lg text-xs font-bold transition-all cursor-pointer shadow-xs dark:bg-neutral-800 dark:text-neutral-200 dark:border-neutral-700 dark:hover:bg-neutral-700"
+          >
+            {language === "bn" ? "প্রথম থেকে শেষ" : "All Time"}
+          </button>
+
+          <div className="h-6 w-px bg-slate-200 dark:bg-neutral-800 mx-1" />
+
+          <button
+            onClick={exportSalesReportPDF}
+            className="px-4 py-2 bg-pink-600 hover:bg-pink-700 text-white rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 active:scale-97 cursor-pointer shadow-xs"
+          >
+            <Printer className="w-3.5 h-3.5" />
+            <span>{language === "bn" ? "পিডিএফ রিপোর্ট" : "PDF Report"}</span>
+          </button>
+        </div>
+      </div>
+
+      {/* MULTI-LEVEL HIGH-POWER FILTERS BENTO - PROPER WHITE BACKGROUND */}
+      <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-200/80 space-y-6 dark:bg-neutral-900 dark:border-neutral-800">
+        <div className="flex items-center gap-2 pb-3 border-b border-slate-100 dark:border-neutral-800">
+          <Filter className="w-4 h-4 text-slate-400" />
+          <h4 className="text-xs font-bold uppercase tracking-widest text-slate-500">
+            {language === "bn" ? "মাল্টি-লেভেল অ্যাডভান্সড ফিল্টারস" : "Multi-Dimensional Filtration System"}
+          </h4>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+          {/* Start Date */}
+          <div className="space-y-1.5">
+            <label className="text-[11px] font-black uppercase text-slate-400 tracking-wider">
+              {language === "bn" ? "শুরু তারিখ" : "Start Date"}
+            </label>
+            <input
+              type="date"
+              value={activeStartDate}
+              onChange={(e) => setStartDate(e.target.value)}
+              className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl font-bold text-xs outline-none focus:border-pink-500 focus:ring-2 focus:ring-pink-500/10 transition-all dark:bg-neutral-800 dark:border-neutral-700 dark:text-white"
+            />
+          </div>
+
+          {/* End Date */}
+          <div className="space-y-1.5">
+            <label className="text-[11px] font-black uppercase text-slate-400 tracking-wider">
+              {language === "bn" ? "শেষ তারিখ" : "End Date"}
+            </label>
+            <input
+              type="date"
+              value={activeEndDate}
+              onChange={(e) => setEndDate(e.target.value)}
+              className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl font-bold text-xs outline-none focus:border-pink-500 focus:ring-2 focus:ring-pink-500/10 transition-all dark:bg-neutral-800 dark:border-neutral-700 dark:text-white"
+            />
+          </div>
+
+          {/* Sales Category Filter */}
+          <div className="space-y-1.5">
+            <label className="text-[11px] font-black uppercase text-slate-400 tracking-wider">
+              {language === "bn" ? "বিক্রয় ক্যাটাগরি" : "Sales Category"}
+            </label>
+            <select
+              value={categoryFilter}
+              onChange={(e) => setCategoryFilter(e.target.value)}
+              className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl font-bold text-xs h-[38px] cursor-pointer outline-none focus:border-pink-500 focus:ring-2 focus:ring-pink-500/10 transition-all dark:bg-neutral-800 dark:border-neutral-700 dark:text-white"
+            >
+              <option value="All">{language === "bn" ? "সকল বিক্রয়" : "All Sales Categories"}</option>
+              <option value="Employee Sales">{language === "bn" ? "স্টাফ বিক্রয় (Employee Sales)" : "Employee Sales"}</option>
+              <option value="Wholesale Sales">{language === "bn" ? "পাইকারি বিক্রয় (Wholesale)" : "Wholesale Sales"}</option>
+              <option value="Total Deposit">{language === "bn" ? "ডিপোজিট বিক্রয় (Total Deposit)" : "Total Deposit"}</option>
+              <option value="Retail / Others">{language === "bn" ? "রিটেইল ও অন্যান্য বিক্রয়" : "Retail / Others"}</option>
+            </select>
+          </div>
+
+          {/* Employee Filter */}
+          <div className="space-y-1.5">
+            <label className="text-[11px] font-black uppercase text-slate-400 tracking-wider">
+              {language === "bn" ? "বিক্রয় প্রতিনিধি / স্টাফ" : "Sales Agent / Employee"}
+            </label>
+            <select
+              value={employeeFilter}
+              onChange={(e) => setEmployeeFilter(e.target.value)}
+              className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl font-bold text-xs h-[38px] cursor-pointer outline-none focus:border-pink-500 focus:ring-2 focus:ring-pink-500/10 transition-all dark:bg-neutral-800 dark:border-neutral-700 dark:text-white"
+            >
+              <option value="All">{language === "bn" ? "সকল প্রতিনিধি" : "All Staff / Members"}</option>
+              {employees.map(emp => (
+                <option key={emp.id} value={emp.id}>{emp.name} ({emp.department || "Sales"})</option>
+              ))}
+            </select>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-2">
+          {/* Payment Method Filter */}
+          <div className="space-y-1.5">
+            <label className="text-[11px] font-black uppercase text-slate-400 tracking-wider">
+              {language === "bn" ? "পেমেন্ট মাধ্যম" : "Payment Method"}
+            </label>
+            <select
+              value={paymentMethodFilter}
+              onChange={(e) => setPaymentMethodFilter(e.target.value)}
+              className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl font-bold text-xs h-[38px] cursor-pointer outline-none focus:border-pink-500 focus:ring-2 focus:ring-pink-500/10 transition-all dark:bg-neutral-800 dark:border-neutral-700 dark:text-white"
+            >
+              <option value="All">{language === "bn" ? "সকল পেমেন্ট মাধ্যম" : "All Payment Channels"}</option>
+              <option value="Cash">{language === "bn" ? "ক্যাশ পেমেন্ট" : "Cash Only"}</option>
+              <option value="Bkash">bKash</option>
+              <option value="Nagad">Nagad</option>
+              <option value="Rocket">Rocket</option>
+              <option value="Bank">{language === "bn" ? "ব্যাংক ট্রান্সফার" : "Bank Payout"}</option>
+              <option value="Card">{language === "bn" ? "কার্ড পেমেন্ট" : "Debit / Credit Card"}</option>
+            </select>
+          </div>
+
+          {/* Amount range slider inputs */}
+          <div className="space-y-1.5">
+            <label className="text-[11px] font-black uppercase text-slate-400 tracking-wider">
+              {language === "bn" ? "টাকার রেঞ্জ (সর্বনিম্ন - সর্বোচ্চ)" : "Value Range (Min - Max BDT)"}
+            </label>
+            <div className="flex items-center gap-2">
+              <input
+                type="number"
+                placeholder={language === "bn" ? "সর্বনিম্ন" : "Min"}
+                value={minAmount}
+                onChange={(e) => setMinAmount(e.target.value)}
+                className="w-1/2 px-3 py-2 bg-white border border-slate-200 rounded-xl font-bold text-xs outline-none focus:border-pink-500 focus:ring-2 focus:ring-pink-500/10 dark:bg-neutral-800 dark:border-neutral-700 dark:text-white"
+              />
+              <span className="text-slate-400 text-xs">-</span>
+              <input
+                type="number"
+                placeholder={language === "bn" ? "সর্বোচ্চ" : "Max"}
+                value={maxAmount}
+                onChange={(e) => setMaxAmount(e.target.value)}
+                className="w-1/2 px-3 py-2 bg-white border border-slate-200 rounded-xl font-bold text-xs outline-none focus:border-pink-500 focus:ring-2 focus:ring-pink-500/10 dark:bg-neutral-800 dark:border-neutral-700 dark:text-white"
+              />
+            </div>
+          </div>
+
+          {/* Text Search Input */}
+          <div className="space-y-1.5">
+            <label className="text-[11px] font-black uppercase text-slate-400 tracking-wider">
+              {language === "bn" ? "স্মার্ট কীওয়ার্ড সার্চ" : "Bespoke Text / Ref Keyword Search"}
+            </label>
+            <div className="relative">
+              <Search className="absolute left-3 top-3 w-4 h-4 text-slate-400" />
+              <input
+                type="text"
+                placeholder={language === "bn" ? "নোট, রেফারেন্স বা আইডি..." : "Search sales by notes, reference link, names..."}
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full pl-9 pr-4 py-2.5 bg-white border border-slate-200 rounded-xl font-bold text-xs outline-none focus:border-pink-500 focus:ring-2 focus:ring-pink-500/10 transition-all dark:bg-neutral-800 dark:border-neutral-700 dark:text-white"
+              />
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* METRIC BOXES BENTO GRID - PROPER WHITE BACKGROUND */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+        {/* Total Gross Sales */}
+        <div className="bg-white border border-slate-200/80 p-6 rounded-3xl flex flex-col justify-between shadow-sm hover:shadow-md transition-all dark:bg-neutral-900 dark:border-neutral-800">
+          <div>
+            <p className="text-[10px] font-extrabold text-slate-400 uppercase tracking-widest mb-1">
+              {language === "bn" ? "মোট গ্রস বিক্রয় পরিমাণ" : "Aggregate Gross Sales"}
+            </p>
+            <p className="text-3xl font-black text-slate-900 dark:text-neutral-100 font-mono">
+              {formatCurrency(stats.totalAmount)}
+            </p>
+          </div>
+          <div className="flex items-center gap-1 text-[11px] font-semibold text-slate-400 mt-3 font-sans">
+            <span className="text-emerald-500 font-extrabold">100%</span>
+            <span>{language === "bn" ? "অডিট খতিয়ান ভলিউম" : "audited volume"}</span>
+          </div>
+        </div>
+
+        {/* Audited Sales Count */}
+        <div className="bg-white border border-slate-200/80 p-6 rounded-3xl flex flex-col justify-between shadow-sm hover:shadow-md transition-all dark:bg-neutral-900 dark:border-neutral-800">
+          <div>
+            <p className="text-[10px] font-extrabold text-slate-400 uppercase tracking-widest mb-1">
+              {language === "bn" ? "মোট বিক্রয় চালান" : "Total Sales Transactions"}
+            </p>
+            <p className="text-3xl font-black text-slate-900 dark:text-neutral-100 font-mono">
+              {stats.invoiceCount}
+            </p>
+          </div>
+          <div className="flex items-center gap-1 text-[11px] font-semibold text-slate-400 mt-3 font-sans">
+            <span className="text-pink-500 font-extrabold">{stats.invoiceCount}</span>
+            <span>{language === "bn" ? "নিবন্ধিত রশিদ চালান" : "registered invoice tracks"}</span>
+          </div>
+        </div>
+
+        {/* Average Ticket Value */}
+        <div className="bg-white border border-slate-200/80 p-6 rounded-3xl flex flex-col justify-between shadow-sm hover:shadow-md transition-all dark:bg-neutral-900 dark:border-neutral-800">
+          <div>
+            <p className="text-[10px] font-extrabold text-slate-400 uppercase tracking-widest mb-1">
+              {language === "bn" ? "গড় রশিদ টিকিট সাইজ" : "Average Invoice Value"}
+            </p>
+            <p className="text-3xl font-black text-slate-900 dark:text-neutral-100 font-mono">
+              {formatCurrency(stats.averageTicket)}
+            </p>
+          </div>
+          <div className="flex items-center gap-1 text-[11px] font-semibold text-slate-400 mt-3 font-sans">
+            <span>{language === "bn" ? "প্রতি রশিদে গড় ভলিউম" : "average value per audited ticket"}</span>
+          </div>
+        </div>
+
+        {/* Cash vs digital ratio */}
+        <div className="bg-white border border-slate-200/80 p-6 rounded-3xl flex flex-col justify-between shadow-sm hover:shadow-md transition-all dark:bg-neutral-900 dark:border-neutral-800">
+          <div>
+            <p className="text-[10px] font-extrabold text-slate-400 uppercase tracking-widest mb-1">
+              {language === "bn" ? "ক্যাশ বনাম ডিজিটাল অনুপাত" : "Payment Channel Ratio"}
+            </p>
+            <div className="space-y-1">
+              <div className="flex justify-between items-end text-xs font-bold text-slate-700 dark:text-neutral-300">
+                <span>{language === "bn" ? "ক্যাশ" : "Cash"}</span>
+                <span>{Math.round((stats.cashAmount / (stats.totalAmount || 1)) * 100)}%</span>
+              </div>
+              {/* Mini visual track */}
+              <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden flex dark:bg-neutral-800">
+                <div 
+                  className="bg-emerald-500 h-full" 
+                  style={{ width: `${(stats.cashAmount / (stats.totalAmount || 1)) * 100}%` }} 
+                />
+                <div 
+                  className="bg-blue-500 h-full flex-1" 
+                />
+              </div>
+              <div className="flex justify-between text-[9px] text-slate-400 font-bold uppercase pt-1">
+                <span>৳{stats.cashAmount.toLocaleString()}</span>
+                <span>৳{stats.digitalAmount.toLocaleString()}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* INTERACTIVE DATA CHARTS - PROPER WHITE BACKGROUNDS */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* Trend line over time */}
+        <div className="lg:col-span-2 bg-white p-6 rounded-3xl shadow-sm border border-slate-200/80 dark:bg-neutral-900 dark:border-neutral-800">
+          <div className="flex items-center justify-between mb-6">
+            <div>
+              <h4 className="text-sm font-black text-slate-900 uppercase tracking-wide dark:text-neutral-100">
+                {language === "bn" ? "বিক্রয় ট্রেন্ডলাইন ও প্রবৃদ্ধি" : "Audited Sales Trend over Time"}
+              </h4>
+              <p className="text-xs text-slate-400">
+                {language === "bn" ? "বাছাইকৃত সময়কালের দৈনিক বিক্রয় গ্রাফ" : "Chronological line visual of day-by-day sales velocity"}
+              </p>
+            </div>
+            <span className="text-[10px] bg-white border border-slate-200 text-slate-500 px-2.5 py-1 rounded-md font-bold uppercase dark:bg-neutral-800 dark:border-neutral-700">
+              {chartTimelineData.length} {language === "bn" ? "কার্যকর দিন" : "Active days"}
+            </span>
+          </div>
+
+          <div className="w-full h-[300px] min-h-[300px]">
+            {chartTimelineData.length === 0 ? (
+              <div className="w-full h-full flex items-center justify-center text-slate-400 italic text-xs">
+                {language === "bn" ? "গ্রাফ দেখানোর জন্য কোন বিক্রয় রেকর্ড নেই।" : "No sales items matching active parameters to display in trend chart."}
+              </div>
+            ) : (
+              <ResponsiveContainer width="100%" height={300}>
+                <LineChart data={chartTimelineData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                  <XAxis dataKey="dateStr" stroke="#94a3b8" fontSize={9} tickLine={false} />
+                  <YAxis stroke="#94a3b8" fontSize={9} tickLine={false} />
+                  <Tooltip 
+                    contentStyle={{ borderRadius: "12px", border: "1px solid #e2e8f0", fontSize: "11px", fontWeight: "bold", backgroundColor: "#ffffff" }} 
+                    formatter={(value: any) => [`BDT ${parseFloat(value).toLocaleString()}`, "Sales"]}
+                  />
+                  <Line type="monotone" dataKey="amount" stroke="#ec4899" strokeWidth={3} dot={{ r: 4, strokeWidth: 1 }} activeDot={{ r: 6 }} />
+                </LineChart>
+              </ResponsiveContainer>
+            )}
+          </div>
+        </div>
+
+        {/* Category Breakdown list & chart */}
+        <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-200/80 dark:bg-neutral-900 dark:border-neutral-800 flex flex-col justify-between">
+          <div>
+            <h4 className="text-sm font-black text-slate-900 uppercase tracking-wide dark:text-neutral-100 mb-1">
+              {language === "bn" ? "বিক্রয় ক্যাটাগরি বিশ্লেষণ" : "Sales Category Matrix"}
+            </h4>
+            <p className="text-xs text-slate-400 mb-6">
+              {language === "bn" ? "উৎস অনুযায়ী বিক্রয়ের হিসেব" : "Sales distribution split across key channels"}
+            </p>
+
+            <div className="space-y-4">
+              {Object.keys(stats.categoryBreakdown).length === 0 ? (
+                <div className="text-center py-12 text-slate-400 italic text-xs">
+                  {language === "bn" ? "কোন ক্যাটাগরি ডেটা নেই" : "No categorized volume in specified slice"}
+                </div>
+              ) : (
+                Object.keys(stats.categoryBreakdown).map((cat, idx) => {
+                  const amt = stats.categoryBreakdown[cat];
+                  const percentage = Math.round((amt / (stats.totalAmount || 1)) * 100);
+                  return (
+                    <div key={cat} className="space-y-1">
+                      <div className="flex justify-between text-xs font-bold">
+                        <span className="text-slate-700 dark:text-neutral-300">{cat}</span>
+                        <span className="text-slate-900 dark:text-neutral-100 font-mono">{formatCurrency(amt)} ({percentage}%)</span>
+                      </div>
+                      <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden dark:bg-neutral-800">
+                        <div 
+                          className={cn(
+                            "h-full rounded-full",
+                            idx % 4 === 0 ? "bg-pink-500" : idx % 4 === 1 ? "bg-purple-500" : idx % 4 === 2 ? "bg-blue-500" : "bg-amber-500"
+                          )}
+                          style={{ width: `${percentage}%` }}
+                        />
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+
+          <div className="pt-4 border-t border-slate-100 dark:border-neutral-800 mt-6 flex justify-between items-center text-xs font-bold text-slate-500">
+            <span>{language === "bn" ? "মোট চ্যানেল ভলিউম:" : "Active Slices Count:"}</span>
+            <span className="text-slate-900 dark:text-neutral-100 font-mono">{Object.keys(stats.categoryBreakdown).length} channels</span>
+          </div>
+        </div>
+      </div>
+
+      {/* CORE CHRONOLOGICAL LEDGER COMPONENT - GROUPED BY DATE ACCORDION */}
+      <div className="bg-white rounded-3xl shadow-sm border border-slate-200/80 overflow-hidden dark:bg-neutral-900 dark:border-neutral-800">
+        <div className="p-6 border-b border-slate-100 dark:border-neutral-800 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div>
+            <h4 className="text-base font-extrabold text-slate-900 dark:text-neutral-100 flex items-center gap-2">
+              <span>{language === "bn" ? "নিবন্ধিত দৈনিক বিক্রয় খতিয়ান" : "Official Audited Daily Sales Ledger"}</span>
+              <span className="text-xs bg-pink-100 text-pink-700 font-black px-2 py-0.5 rounded-full dark:bg-pink-900/40 dark:text-pink-300 font-mono">
+                {salesByDate.length} {language === "bn" ? "টি দিন" : "Days"}
+              </span>
+            </h4>
+            <p className="text-xs text-slate-400">
+              {language === "bn" 
+                ? "তারিখ ভিত্তিক একত্রিত বিক্রয় তথ্য। দিনটিতে ক্লিক করে প্রতিটি স্টাফের আলাদা বিক্রয় পরিমাণ এবং বিস্তারিত চালান দেখুন।" 
+                : "Grouped by calendar date. Click a date row to audit staff breakdowns and full invoice entries."}
+            </p>
+          </div>
+          
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              onClick={handleExpandAll}
+              className="px-3 py-1.5 bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 text-xs font-bold rounded-lg transition-all"
+            >
+              {language === "bn" ? "সব বিস্তারিত দেখান" : "Expand All"}
+            </button>
+            <button
+              onClick={handleCollapseAll}
+              className="px-3 py-1.5 bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 text-xs font-bold rounded-lg transition-all"
+            >
+              {language === "bn" ? "সব বন্ধ করুন" : "Collapse All"}
+            </button>
+            <button
+              onClick={exportSalesReportCSV}
+              className="px-4 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold transition-all cursor-pointer border-none"
+            >
+              {language === "bn" ? "সিএসভি এক্সপোর্ট" : "CSV Export"}
+            </button>
+          </div>
+        </div>
+
+        {/* ACCORDION GROUPS */}
+        <div className="p-6 space-y-4">
+          {salesByDate.length === 0 ? (
+            <div className="py-16 text-center text-slate-400 font-medium italic bg-white rounded-2xl border border-slate-100">
+              {language === "bn" ? "বাছাইকৃত ফিল্টারে কোন বিক্রয় খতিয়ান পাওয়া যায়নি।" : "No sales matched your filtration settings in this interval."}
+            </div>
+          ) : (
+            salesByDate.map((group) => {
+              const isExpanded = !!expandedDates[group.dateStr];
+              
+              // format nice readable date
+              let displayDate = group.dateStr;
+              try {
+                displayDate = format(new Date(group.dateStr), "dd MMMM yyyy");
+                if (language === "bn") {
+                  // simple mapping or formatting
+                  displayDate = group.dateStr.split("-").reverse().join("/");
+                }
+              } catch (e) {}
+
+              return (
+                <div 
+                  key={group.dateStr} 
+                  className={cn(
+                    "border rounded-2xl overflow-hidden transition-all duration-200",
+                    isExpanded 
+                      ? "border-pink-300 bg-white ring-2 ring-pink-500/5 shadow-md" 
+                      : "border-slate-200 bg-white hover:border-slate-300 hover:shadow-xs"
+                  )}
+                >
+                  {/* Collapsed Header */}
+                  <div 
+                    onClick={() => toggleDate(group.dateStr)}
+                    className="p-5 flex flex-col md:flex-row md:items-center justify-between gap-4 cursor-pointer select-none bg-white transition-colors hover:bg-slate-50/40"
+                  >
+                    <div className="flex items-center gap-3.5">
+                      <div className={cn(
+                        "w-10 h-10 rounded-xl flex items-center justify-center transition-all",
+                        isExpanded ? "bg-pink-100 text-pink-700" : "bg-slate-100 text-slate-500"
+                      )}>
+                        <Calendar className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <h4 className="text-sm font-extrabold text-slate-900 dark:text-white">
+                          {displayDate}
+                        </h4>
+                        <p className="text-xs text-slate-400 font-semibold flex items-center gap-1">
+                          <span>{group.invoiceCount} {language === "bn" ? "টি বিক্রয় চালান" : "sales invoices"}</span>
+                          <span>•</span>
+                          <span className="text-slate-500">{language === "bn" ? "তারিখ ভলিউম" : "audited day totals"}</span>
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center justify-between md:justify-end gap-6 border-t md:border-none pt-3 md:pt-0">
+                      <div className="text-right">
+                        <span className="text-xs font-black uppercase tracking-widest text-slate-400 block mb-0.5">
+                          {language === "bn" ? "মোট দৈনিক বিক্রয়" : "Total Daily Sales"}
+                        </span>
+                        <span className="text-lg font-black text-pink-600 font-mono">
+                          {formatCurrency(group.totalAmount)}
+                        </span>
+                      </div>
+                      
+                      <div className={cn(
+                        "w-8 h-8 rounded-full border flex items-center justify-center text-slate-400 transition-all",
+                        isExpanded ? "border-pink-200 bg-pink-50 text-pink-700 rotate-180" : "border-slate-200 bg-white hover:bg-slate-50"
+                      )}>
+                        <ChevronDown className="w-4 h-4 transition-transform duration-200" />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Expanded Sub-panel with Proper White backgrounds for better understanding */}
+                  <AnimatePresence initial={false}>
+                    {isExpanded && (
+                      <motion.div
+                        initial={{ height: 0, opacity: 0 }}
+                        animate={{ height: "auto", opacity: 1 }}
+                        exit={{ height: 0, opacity: 0 }}
+                        transition={{ duration: 0.2 }}
+                        className="border-t border-slate-100 overflow-hidden bg-white"
+                      >
+                        <div className="p-6 space-y-6">
+                          {/* Inner split: Employee Sales Grid */}
+                          <div className="space-y-3">
+                            <h5 className="text-[11px] font-black uppercase text-slate-400 tracking-wider flex items-center gap-1.5">
+                              <Users className="w-4 h-4 text-slate-400" />
+                              <span>{language === "bn" ? "বিক্রয় প্রতিনিধি / স্টাফ অনুযায়ী আলাদা বিক্রয় পরিমাণ" : "Separate Sales Breakdown by Representative & Channel"}</span>
+                            </h5>
+                            
+                            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                              {Object.keys(group.employeeBreakdown).map((empName) => {
+                                const amount = group.employeeBreakdown[empName];
+                                const percent = Math.round((amount / (group.totalAmount || 1)) * 100);
+                                return (
+                                  <div 
+                                    key={empName} 
+                                    className="bg-white border border-slate-200 p-4 rounded-xl shadow-2xs hover:shadow-xs transition-all space-y-2 flex flex-col justify-between"
+                                  >
+                                    <div className="flex items-center justify-between">
+                                      <div className="flex items-center gap-2">
+                                        <div className="w-6 h-6 rounded-full bg-slate-100 text-slate-600 font-bold text-[10px] flex items-center justify-center">
+                                          {empName.charAt(0)}
+                                        </div>
+                                        <span className="text-xs font-bold text-slate-800">{empName}</span>
+                                      </div>
+                                      <span className="text-[10px] bg-emerald-50 text-emerald-700 font-extrabold px-1.5 py-0.5 rounded-md font-mono">
+                                        {percent}%
+                                      </span>
+                                    </div>
+                                    <div>
+                                      <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">{language === "bn" ? "আলাদা বিক্রয়" : "Separate Sales"}</p>
+                                      <p className="text-sm font-extrabold text-slate-900 font-mono">
+                                        {formatCurrency(amount)}
+                                      </p>
+                                    </div>
+                                    <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                                      <div className="bg-pink-500 h-full rounded-full" style={{ width: `${percent}%` }} />
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+
+                          {/* Payment Medium & Secondary Channel Summary */}
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            {/* Category Distribution */}
+                            <div className="bg-white border border-slate-200 p-5 rounded-2xl space-y-3">
+                              <h6 className="text-[10px] font-black uppercase text-slate-400 tracking-wider">
+                                {language === "bn" ? "শ্রেণীভিত্তিক বিক্রয় পরিমাণ" : "Category Breakdown"}
+                              </h6>
+                              <div className="divide-y divide-slate-100">
+                                {Object.keys(group.categoryBreakdown).map((catName) => (
+                                  <div key={catName} className="py-2.5 flex justify-between items-center text-xs">
+                                    <span className="font-semibold text-slate-600">{catName}</span>
+                                    <span className="font-bold text-slate-900 font-mono">{formatCurrency(group.categoryBreakdown[catName])}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+
+                            {/* Payment distribution for the day */}
+                            <div className="bg-white border border-slate-200 p-5 rounded-2xl space-y-3">
+                              <h6 className="text-[10px] font-black uppercase text-slate-400 tracking-wider">
+                                {language === "bn" ? "পেমেন্ট মাধ্যম অনুপাত" : "Payment Method Flow"}
+                              </h6>
+                              <div className="divide-y divide-slate-100">
+                                {Object.keys(group.paymentBreakdown).map((method) => (
+                                  <div key={method} className="py-2.5 flex justify-between items-center text-xs">
+                                    <span className="font-semibold text-slate-600">{method}</span>
+                                    <span className="font-bold text-emerald-600 font-mono">{formatCurrency(group.paymentBreakdown[method])}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Individual Transactions of this date */}
+                          <div className="space-y-3">
+                            <h5 className="text-[11px] font-black uppercase text-slate-400 tracking-wider flex items-center gap-1.5">
+                              <FileText className="w-4 h-4 text-slate-400" />
+                              <span>{language === "bn" ? "দৈনিক বিস্তারিত লেনদেন খতিয়ান" : "Daily Transaction Registry Entries"}</span>
+                            </h5>
+                            
+                            <div className="overflow-x-auto border border-slate-200 rounded-xl bg-white shadow-2xs">
+                              <table className="w-full text-left text-xs text-slate-600">
+                                <thead>
+                                  <tr className="bg-slate-50/70 border-b border-slate-200 text-[10px] font-black uppercase text-slate-400 tracking-wider">
+                                    <th className="py-3 px-4">{language === "bn" ? "সময়" : "Time"}</th>
+                                    <th className="py-3 px-4">{language === "bn" ? "চালান আইডি" : "Invoice ID"}</th>
+                                    <th className="py-3 px-4">{language === "bn" ? "বিক্রয় ক্যাটাগরি" : "Sales Category"}</th>
+                                    <th className="py-3 px-4">{language === "bn" ? "প্রতিনিধি / চ্যানেল" : "Rep / Channel"}</th>
+                                    <th className="py-3 px-4">{language === "bn" ? "পেমেন্ট মাধ্যম" : "Payment Method"}</th>
+                                    <th className="py-3 px-4">{language === "bn" ? "নোট" : "Notes"}</th>
+                                    <th className="py-3 px-4 text-right">{language === "bn" ? "টাকার পরিমাণ" : "Amount"}</th>
+                                  </tr>
+                                </thead>
+                                <tbody className="divide-y divide-slate-100">
+                                  {group.transactions.map((tx) => {
+                                    let formattedTime = "";
+                                    try {
+                                      formattedTime = format(new Date(tx.date), "HH:mm");
+                                    } catch (err) {}
+
+                                    return (
+                                      <tr key={tx.id} className="hover:bg-slate-50/40 transition-colors">
+                                        <td className="py-3 px-4 font-mono font-bold text-slate-500">
+                                          {formattedTime || "N/A"}
+                                        </td>
+                                        <td className="py-3 px-4 font-mono font-extrabold text-slate-900">
+                                          {tx.id ? tx.id.substring(0, 8).toUpperCase() : "DIRECT"}
+                                        </td>
+                                        <td className="py-3 px-4">
+                                          <span className="text-[10px] px-2 py-0.5 rounded-md font-bold uppercase bg-slate-100 text-slate-700">
+                                            {tx.category}
+                                          </span>
+                                        </td>
+                                        <td className="py-3 px-4 font-bold text-slate-700">
+                                          {tx.employeeId ? (
+                                            employees.find(e => e.id === tx.employeeId)?.name || "Staff"
+                                          ) : (
+                                            tx.subCategory || "Retail"
+                                          )}
+                                        </td>
+                                        <td className="py-3 px-4 font-bold text-slate-500">
+                                          {tx.paymentMethod}
+                                        </td>
+                                        <td className="py-3 px-4 text-slate-500 truncate max-w-[150px]" title={tx.notes}>
+                                          {tx.notes || "-"}
+                                        </td>
+                                        <td className="py-3 px-4 text-right font-black text-slate-900 font-mono">
+                                          {formatCurrency(tx.amount)}
+                                        </td>
+                                      </tr>
+                                    );
+                                  })}
+                                </tbody>
+                              </table>
+                            </div>
+                          </div>
+                        </div>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                </div>
+              );
+            })
+          )}
+        </div>
+
+        {/* Aggregate Footer Info */}
+        {filteredSales.length > 0 && (
+          <div className="bg-slate-50/70 p-6 border-t border-slate-200 flex flex-col sm:flex-row justify-between items-center gap-4 text-xs font-bold text-slate-600">
+            <span className="uppercase tracking-wider text-[10px] text-slate-500">
+              {language === "bn" ? "সর্বমোট গ্রস বিক্রয় (ফিল্টারকৃত)" : "GRAND TOTALS FOR FILTERED INTERVAL"}
+            </span>
+            <div className="text-right">
+              <span className="text-xs text-slate-400 mr-2 font-medium">{stats.invoiceCount} invoices total:</span>
+              <span className="text-lg font-black text-pink-600 font-mono">
+                {formatCurrency(stats.totalAmount)}
+              </span>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+

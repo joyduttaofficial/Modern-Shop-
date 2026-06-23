@@ -100,10 +100,27 @@ export default function NewSale({
     setLoadingEmployees(true);
     const unsub = onSnapshot(collection(db, "employees"), (snap) => {
       const allEmps = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Employee));
-      // Filter for active employees in specified Sales department
-      const salesEmps = allEmps.filter(
-        emp => emp.status === "active" && emp.department?.toLowerCase() === "sales"
-      );
+      // Filter for active employees in specified target sales departments/sections
+      const salesEmps = allEmps.filter(emp => {
+        if (emp.status !== "active") return false;
+        const dept = (emp.department || "").toLowerCase().trim();
+        return (
+          dept === "sales" ||
+          dept === "fast accountant" ||
+          dept === "men's section" ||
+          dept === "mens section" ||
+          dept === "men section" ||
+          dept === "sales ladies' section" ||
+          dept === "sales ladies section" ||
+          dept === "ladies' section" ||
+          dept === "ladies section" ||
+          dept.includes("sales") ||
+          dept.includes("men's") ||
+          dept.includes("mens") ||
+          dept.includes("ladies") ||
+          dept.includes("accountant")
+        );
+      });
       // Sort employees with section priority (Men's Section first, then Ladies' Section, then others)
       salesEmps.sort((a, b) => {
         const getSectionScore = (emp: Employee) => {
@@ -602,9 +619,9 @@ export default function NewSale({
                 </div>
               ) : employees.length === 0 ? (
                 <div className="p-16 text-center text-gray-400 bg-gray-50/50 italic">
-                  {t("No active employees exist in the \"Sales\" department.")}
+                  {t("No active employees exist in the designated sales departments.")}
                   <p className="not-italic text-xs text-gray-500 mt-2 font-medium">
-                    {t("Go to the Employees tab and set their department to Sales.")}
+                    {t("Go to the Employees tab and set their department to one of: Sales, Fast Accountant, Men's Section, or Sales Ladies' Section.")}
                   </p>
                 </div>
               ) : (

@@ -58,6 +58,7 @@ export interface Attendance {
   checkIn?: string; // HH:mm
   lunchOut?: string; // HH:mm
   lunchIn?: string; // HH:mm
+  checkOut?: string; // HH:mm
   notes?: string;
 }
 

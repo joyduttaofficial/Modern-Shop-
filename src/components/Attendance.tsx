@@ -78,6 +78,7 @@ export default function AttendancePage({
   const [modalCheckIn, setModalCheckIn] = useState("09:00");
   const [modalLunchOut, setModalLunchOut] = useState("13:00");
   const [modalLunchIn, setModalLunchIn] = useState("14:00");
+  const [modalCheckOut, setModalCheckOut] = useState("");
   const [modalNotes, setModalNotes] = useState("");
   
   // List view specific states
@@ -200,22 +201,32 @@ export default function AttendancePage({
     const existing = getAttendanceForDay(empId, selectedDate);
     const dateStr = selectedDate.toISOString();
     
-    const currentIn = existing?.checkIn || "09:00";
-    const currentLunchOut = existing?.lunchOut || "";
-    const currentLunchIn = existing?.lunchIn || "";
-    const finalStatus = computeStatus(currentIn, status, currentLunchOut, currentLunchIn);
+    const isOffDuty = status === "absent" || status === "leave" || status === "holiday";
+    const currentIn = isOffDuty ? "" : (existing?.checkIn || "09:00");
+    const currentLunchOut = isOffDuty ? "" : (existing?.lunchOut || "");
+    const currentLunchIn = isOffDuty ? "" : (existing?.lunchIn || "");
+    const currentCheckOut = isOffDuty ? "" : (existing?.checkOut || "");
+    const finalStatus = isOffDuty ? status : computeStatus(currentIn, status, currentLunchOut, currentLunchIn);
 
     try {
       if (existing) {
         if (existing.id) {
-          await updateDoc(doc(db, "attendance", existing.id), { status: finalStatus });
+          await updateDoc(doc(db, "attendance", existing.id), { 
+            status: finalStatus,
+            checkIn: currentIn,
+            lunchOut: currentLunchOut,
+            lunchIn: currentLunchIn,
+            checkOut: currentCheckOut
+          });
         }
       } else {
-        let defaultIn = "09:00";
-        if (finalStatus === "half-day") {
-          defaultIn = "12:00";
-        } else if (finalStatus === "late") {
-          defaultIn = "10:15";
+        let defaultIn = isOffDuty ? "" : "09:00";
+        if (!isOffDuty) {
+          if (finalStatus === "half-day") {
+            defaultIn = "12:00";
+          } else if (finalStatus === "late") {
+            defaultIn = "10:15";
+          }
         }
 
         await addDoc(collection(db, "attendance"), {
@@ -225,6 +236,7 @@ export default function AttendancePage({
           checkIn: defaultIn,
           lunchOut: "",
           lunchIn: "",
+          checkOut: "",
           notes: ""
         });
       }
@@ -306,6 +318,7 @@ export default function AttendancePage({
     setModalCheckIn(record?.checkIn || "09:00");
     setModalLunchOut(record?.lunchOut || "");
     setModalLunchIn(record?.lunchIn || "");
+    setModalCheckOut(record?.checkOut || "");
     setModalNotes(record?.notes || "");
   };
 
@@ -325,6 +338,7 @@ export default function AttendancePage({
           checkIn: modalCheckIn,
           lunchOut: modalLunchOut,
           lunchIn: modalLunchIn,
+          checkOut: modalCheckOut,
           notes: modalNotes
         });
       } else {
@@ -335,6 +349,7 @@ export default function AttendancePage({
           checkIn: modalCheckIn,
           lunchOut: modalLunchOut,
           lunchIn: modalLunchIn,
+          checkOut: modalCheckOut,
           notes: modalNotes
         });
       }
@@ -346,16 +361,17 @@ export default function AttendancePage({
     }
   };
 
-  const handleTimeFieldChange = async (empId: string, field: "checkIn" | "lunchOut" | "lunchIn", value: string) => {
+  const handleTimeFieldChange = async (empId: string, field: "checkIn" | "lunchOut" | "lunchIn" | "checkOut", value: string) => {
     const existing = getAttendanceForDay(empId, selectedDate);
     const dateStr = selectedDate.toISOString();
 
     try {
       if (existing && existing.id) {
         const updates: any = { [field]: value };
-        const checkIn = field === "checkIn" ? value : (existing.checkIn || "09:00");
-        const lunchOut = field === "lunchOut" ? value : (existing.lunchOut || "");
-        const lunchIn = field === "lunchIn" ? value : (existing.lunchIn || "");
+        const checkIn = field === "checkIn" ? value : (existing.checkIn ?? "");
+        const lunchOut = field === "lunchOut" ? value : (existing.lunchOut ?? "");
+        const lunchIn = field === "lunchIn" ? value : (existing.lunchIn ?? "");
+        const checkOut = field === "checkOut" ? value : (existing.checkOut ?? "");
         
         if (existing.status === "present" || existing.status === "late" || existing.status === "half-day") {
           updates.status = computeStatus(checkIn, existing.status, lunchOut, lunchIn);
@@ -365,6 +381,7 @@ export default function AttendancePage({
         const checkIn = field === "checkIn" ? value : "09:00";
         const lunchOut = field === "lunchOut" ? value : "";
         const lunchIn = field === "lunchIn" ? value : "";
+        const checkOut = field === "checkOut" ? value : "";
         const finalStatus = computeStatus(checkIn, "present", lunchOut, lunchIn);
 
         await addDoc(collection(db, "attendance"), {
@@ -374,6 +391,7 @@ export default function AttendancePage({
           checkIn,
           lunchOut,
           lunchIn,
+          checkOut,
           notes: ""
         });
       }
@@ -987,32 +1005,92 @@ export default function AttendancePage({
                       {/* Shift schedule info */}
                       <td className="px-6 py-5">
                         <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-                          <div className="flex items-center gap-1">
-                            <span className="text-[10px] font-bold text-gray-400 uppercase">In:</span>
-                            <input 
-                              type="time" 
-                              value={record?.checkIn || ""} 
-                              onChange={async (e) => await handleTimeFieldChange(emp.id!, "checkIn", e.target.value)}
-                              className="bg-gray-50 border-none rounded-lg text-xs font-bold p-1 w-18 focus:ring-1 focus:ring-blue-100 focus:bg-white outline-none cursor-pointer"
-                            />
-                          </div>
+                          <div className="flex flex-wrap items-center gap-1.5 bg-gray-50 p-1.5 rounded-xl border border-gray-100">
+                            {/* In Time */}
+                            <div className="flex items-center gap-0.5">
+                              <span className="text-[9px] font-black text-gray-400 uppercase">In:</span>
+                              <input 
+                                type="time" 
+                                value={record?.checkIn || ""} 
+                                onChange={async (e) => await handleTimeFieldChange(emp.id!, "checkIn", e.target.value)}
+                                className="bg-transparent border-none text-xs font-bold p-0.5 w-16 focus:ring-0 outline-none cursor-pointer"
+                              />
+                              {record?.checkIn && (
+                                <button
+                                  onClick={async () => await handleTimeFieldChange(emp.id!, "checkIn", "")}
+                                  className="text-gray-350 hover:text-red-500 transition-colors p-0.5 cursor-pointer"
+                                  title="Clear check-in time"
+                                >
+                                  <X className="w-3 h-3" />
+                                </button>
+                              )}
+                            </div>
 
-                          <div className="flex items-center gap-1">
-                            <span className="text-[10px] font-bold text-gray-400 uppercase">L.Out:</span>
-                            <input 
-                              type="time" 
-                              value={record?.lunchOut || ""} 
-                              onChange={async (e) => await handleTimeFieldChange(emp.id!, "lunchOut", e.target.value)}
-                              className="bg-gray-50 border-none rounded-lg text-xs font-bold p-1 w-18 focus:ring-1 focus:ring-blue-100 focus:bg-white outline-none cursor-pointer"
-                            />
-                            <span className="text-gray-350 text-[10px]">-</span>
-                            <span className="text-[10px] font-bold text-gray-400 uppercase">In:</span>
-                            <input 
-                              type="time" 
-                              value={record?.lunchIn || ""} 
-                              onChange={async (e) => await handleTimeFieldChange(emp.id!, "lunchIn", e.target.value)}
-                              className="bg-gray-50 border-none rounded-lg text-xs font-bold p-1 w-18 focus:ring-1 focus:ring-blue-100 focus:bg-white outline-none cursor-pointer"
-                            />
+                            <span className="text-gray-200">|</span>
+
+                            {/* Lunch Out */}
+                            <div className="flex items-center gap-0.5">
+                              <span className="text-[9px] font-black text-gray-400 uppercase">L.Out:</span>
+                              <input 
+                                type="time" 
+                                value={record?.lunchOut || ""} 
+                                onChange={async (e) => await handleTimeFieldChange(emp.id!, "lunchOut", e.target.value)}
+                                className="bg-transparent border-none text-xs font-bold p-0.5 w-16 focus:ring-0 outline-none cursor-pointer"
+                              />
+                              {record?.lunchOut && (
+                                <button
+                                  onClick={async () => await handleTimeFieldChange(emp.id!, "lunchOut", "")}
+                                  className="text-gray-350 hover:text-red-500 transition-colors p-0.5 cursor-pointer"
+                                  title="Clear lunch out time"
+                                >
+                                  <X className="w-3 h-3" />
+                                </button>
+                              )}
+                            </div>
+
+                            <span className="text-gray-200">-</span>
+
+                            {/* Lunch In */}
+                            <div className="flex items-center gap-0.5">
+                              <span className="text-[9px] font-black text-gray-400 uppercase">L.In:</span>
+                              <input 
+                                type="time" 
+                                value={record?.lunchIn || ""} 
+                                onChange={async (e) => await handleTimeFieldChange(emp.id!, "lunchIn", e.target.value)}
+                                className="bg-transparent border-none text-xs font-bold p-0.5 w-16 focus:ring-0 outline-none cursor-pointer"
+                              />
+                              {record?.lunchIn && (
+                                <button
+                                  onClick={async () => await handleTimeFieldChange(emp.id!, "lunchIn", "")}
+                                  className="text-gray-350 hover:text-red-500 transition-colors p-0.5 cursor-pointer"
+                                  title="Clear lunch in time"
+                                >
+                                  <X className="w-3 h-3" />
+                                </button>
+                              )}
+                            </div>
+
+                            <span className="text-gray-200">|</span>
+
+                            {/* Clock Out */}
+                            <div className="flex items-center gap-0.5">
+                              <span className="text-[9px] font-black text-gray-400 uppercase">Out:</span>
+                              <input 
+                                type="time" 
+                                value={record?.checkOut || ""} 
+                                onChange={async (e) => await handleTimeFieldChange(emp.id!, "checkOut", e.target.value)}
+                                className="bg-transparent border-none text-xs font-bold p-0.5 w-16 focus:ring-0 outline-none cursor-pointer"
+                              />
+                              {record?.checkOut && (
+                                <button
+                                  onClick={async () => await handleTimeFieldChange(emp.id!, "checkOut", "")}
+                                  className="text-gray-350 hover:text-red-500 transition-colors p-0.5 cursor-pointer"
+                                  title="Clear clock out time"
+                                >
+                                  <X className="w-3 h-3" />
+                                </button>
+                              )}
+                            </div>
                           </div>
 
                           {/* Submit / detailed time edit shortcut indicator/button */}
@@ -1269,36 +1347,107 @@ export default function AttendancePage({
                 </div>
 
                 {/* 2. Shift & Lunch time selectors */}
-                <div className="grid grid-cols-3 gap-3">
+                <div className="grid grid-cols-2 gap-3">
                   <div className="flex flex-col gap-1.5">
-                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1 block">In Time</label>
+                    <div className="flex items-center justify-between">
+                      <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1 block">In Time</label>
+                      {modalCheckIn && (
+                        <button 
+                          type="button"
+                          onClick={() => setModalCheckIn("")}
+                          className="text-[9px] font-bold text-red-500 hover:underline cursor-pointer"
+                        >
+                          Clear
+                        </button>
+                      )}
+                    </div>
                     <input 
                       type="time" 
                       value={modalCheckIn}
                       onChange={(e) => setModalCheckIn(e.target.value)}
-                      className="px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold text-xs focus:ring-2 focus:ring-blue-105 outline-none cursor-pointer"
+                      className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl font-bold text-xs focus:ring-2 focus:ring-blue-105 outline-none cursor-pointer"
                     />
                   </div>
 
                   <div className="flex flex-col gap-1.5">
-                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1 block">Lunch Out</label>
+                    <div className="flex items-center justify-between">
+                      <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1 block">Lunch Out</label>
+                      {modalLunchOut && (
+                        <button 
+                          type="button"
+                          onClick={() => setModalLunchOut("")}
+                          className="text-[9px] font-bold text-red-500 hover:underline cursor-pointer"
+                        >
+                          Clear
+                        </button>
+                      )}
+                    </div>
                     <input 
                       type="time" 
                       value={modalLunchOut}
                       onChange={(e) => setModalLunchOut(e.target.value)}
-                      className="px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold text-xs focus:ring-2 focus:ring-blue-105 outline-none cursor-pointer"
+                      className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl font-bold text-xs focus:ring-2 focus:ring-blue-105 outline-none cursor-pointer"
                     />
                   </div>
 
                   <div className="flex flex-col gap-1.5">
-                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1 block">Lunch In</label>
+                    <div className="flex items-center justify-between">
+                      <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1 block">Lunch In</label>
+                      {modalLunchIn && (
+                        <button 
+                          type="button"
+                          onClick={() => setModalLunchIn("")}
+                          className="text-[9px] font-bold text-red-500 hover:underline cursor-pointer"
+                        >
+                          Clear
+                        </button>
+                      )}
+                    </div>
                     <input 
                       type="time" 
                       value={modalLunchIn}
                       onChange={(e) => setModalLunchIn(e.target.value)}
-                      className="px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold text-xs focus:ring-2 focus:ring-blue-105 outline-none cursor-pointer"
+                      className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl font-bold text-xs focus:ring-2 focus:ring-blue-105 outline-none cursor-pointer"
                     />
                   </div>
+
+                  <div className="flex flex-col gap-1.5">
+                    <div className="flex items-center justify-between">
+                      <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1 block">Clock Out</label>
+                      {modalCheckOut && (
+                        <button 
+                          type="button"
+                          onClick={() => setModalCheckOut("")}
+                          className="text-[9px] font-bold text-red-500 hover:underline cursor-pointer"
+                        >
+                          Clear
+                        </button>
+                      )}
+                    </div>
+                    <input 
+                      type="time" 
+                      value={modalCheckOut}
+                      onChange={(e) => setModalCheckOut(e.target.value)}
+                      className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl font-bold text-xs focus:ring-2 focus:ring-blue-105 outline-none cursor-pointer"
+                    />
+                  </div>
+                </div>
+
+                {/* Clear All Times helper */}
+                <div className="flex justify-between items-center bg-slate-50/50 p-2 rounded-xl border border-dashed border-slate-200">
+                  <span className="text-[10px] font-bold text-slate-450 italic">Need to clear all records?</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setModalCheckIn("");
+                      setModalLunchOut("");
+                      setModalLunchIn("");
+                      setModalCheckOut("");
+                    }}
+                    className="text-[10px] font-black text-red-600 bg-red-50 hover:bg-red-100 px-3 py-1.5 rounded-lg transition-all uppercase tracking-wider cursor-pointer"
+                  >
+                    Clear All Times
+                  </button>
                 </div>
 
                 {/* Overtime violation hint */}

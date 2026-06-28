@@ -5282,16 +5282,16 @@ function SalesReportSection({
   return (
     <div className="space-y-8 animate-in fade-in duration-300">
       {/* QUICK SELECTORS & ACTION PACKS - ALL BACKGROUNDS PROPER WHITE */}
-      <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-200/80 flex flex-col xl:flex-row xl:items-center justify-between gap-6 dark:bg-neutral-900 dark:border-neutral-800">
+      <div className="bg-white p-6 rounded-3xl shadow-md border border-slate-200/80 flex flex-col xl:flex-row xl:items-center justify-between gap-6">
         <div className="flex items-center gap-3">
-          <div className="w-12 h-12 bg-pink-50 border border-pink-100 text-pink-600 rounded-xl flex items-center justify-center dark:bg-pink-950/20 dark:border-pink-900/30">
+          <div className="w-12 h-12 bg-pink-50 border border-pink-100 text-pink-600 rounded-xl flex items-center justify-center">
             <TrendingUp className="w-5 h-5" />
           </div>
           <div>
-            <h3 className="text-lg font-extrabold text-slate-900 dark:text-neutral-100">
+            <h3 className="text-lg font-extrabold text-slate-900">
               {language === "bn" ? "আপগ্রেডেড সেলস অডিট ড্যাশবোর্ড" : "Upgraded Sales Audit Dashboard"}
             </h3>
-            <p className="text-xs text-slate-500 dark:text-neutral-400 font-medium">
+            <p className="text-xs text-slate-500 font-medium">
               {language === "bn" 
                 ? "উন্নত রিফাইন ফিল্টার, চার্ট এবং কাস্টম পিডিএফ বা সিএসভি আকারে বিক্রয় ডেটা ডাউনলোড করুন।" 
                 : "Deep analytics filters, interactive trend metrics, and bespoke PDF or CSV exports."}
@@ -5302,42 +5302,42 @@ function SalesReportSection({
         <div className="flex flex-wrap items-center gap-2">
           <button
             onClick={handleSetToday}
-            className="px-3 py-1.5 bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 rounded-lg text-xs font-bold transition-all cursor-pointer shadow-xs dark:bg-neutral-800 dark:text-neutral-200 dark:border-neutral-700 dark:hover:bg-neutral-700"
+            className="px-3 py-1.5 bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 rounded-lg text-xs font-bold transition-all cursor-pointer shadow-xs"
           >
             {language === "bn" ? "আজ" : "Today"}
           </button>
           <button
             onClick={handleSetYesterday}
-            className="px-3 py-1.5 bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 rounded-lg text-xs font-bold transition-all cursor-pointer shadow-xs dark:bg-neutral-800 dark:text-neutral-200 dark:border-neutral-700 dark:hover:bg-neutral-700"
+            className="px-3 py-1.5 bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 rounded-lg text-xs font-bold transition-all cursor-pointer shadow-xs"
           >
             {language === "bn" ? "গতকাল" : "Yesterday"}
           </button>
           <button
             onClick={handleSetLast7Days}
-            className="px-3 py-1.5 bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 rounded-lg text-xs font-bold transition-all cursor-pointer shadow-xs dark:bg-neutral-800 dark:text-neutral-200 dark:border-neutral-700 dark:hover:bg-neutral-700"
+            className="px-3 py-1.5 bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 rounded-lg text-xs font-bold transition-all cursor-pointer shadow-xs"
           >
             {language === "bn" ? "গত ৭ দিন" : "Last 7 Days"}
           </button>
           <button
             onClick={handleSetThisMonth}
-            className="px-3 py-1.5 bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 rounded-lg text-xs font-bold transition-all cursor-pointer shadow-xs dark:bg-neutral-800 dark:text-neutral-200 dark:border-neutral-700 dark:hover:bg-neutral-700"
+            className="px-3 py-1.5 bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 rounded-lg text-xs font-bold transition-all cursor-pointer shadow-xs"
           >
             {language === "bn" ? "এই মাস" : "This Month"}
           </button>
           <button
             onClick={handleSetLast30Days}
-            className="px-3 py-1.5 bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 rounded-lg text-xs font-bold transition-all cursor-pointer shadow-xs dark:bg-neutral-800 dark:text-neutral-200 dark:border-neutral-700 dark:hover:bg-neutral-700"
+            className="px-3 py-1.5 bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 rounded-lg text-xs font-bold transition-all cursor-pointer shadow-xs"
           >
             {language === "bn" ? "গত ৩০ দিন" : "Last 30 Days"}
           </button>
           <button
             onClick={handleSetAllTime}
-            className="px-3 py-1.5 bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 rounded-lg text-xs font-bold transition-all cursor-pointer shadow-xs dark:bg-neutral-800 dark:text-neutral-200 dark:border-neutral-700 dark:hover:bg-neutral-700"
+            className="px-3 py-1.5 bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 rounded-lg text-xs font-bold transition-all cursor-pointer shadow-xs"
           >
             {language === "bn" ? "প্রথম থেকে শেষ" : "All Time"}
           </button>
 
-          <div className="h-6 w-px bg-slate-200 dark:bg-neutral-800 mx-1" />
+          <div className="h-6 w-px bg-slate-200 mx-1" />
 
           <button
             onClick={exportSalesReportPDF}
@@ -5350,8 +5350,8 @@ function SalesReportSection({
       </div>
 
       {/* MULTI-LEVEL HIGH-POWER FILTERS BENTO - PROPER WHITE BACKGROUND */}
-      <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-200/80 space-y-6 dark:bg-neutral-900 dark:border-neutral-800">
-        <div className="flex items-center gap-2 pb-3 border-b border-slate-100 dark:border-neutral-800">
+      <div className="bg-white p-6 rounded-3xl shadow-md border border-slate-200/80 space-y-6">
+        <div className="flex items-center gap-2 pb-3 border-b border-slate-100">
           <Filter className="w-4 h-4 text-slate-400" />
           <h4 className="text-xs font-bold uppercase tracking-widest text-slate-500">
             {language === "bn" ? "মাল্টি-লেভেল অ্যাডভান্সড ফিল্টারস" : "Multi-Dimensional Filtration System"}
@@ -5368,7 +5368,7 @@ function SalesReportSection({
               type="date"
               value={activeStartDate}
               onChange={(e) => setStartDate(e.target.value)}
-              className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl font-bold text-xs outline-none focus:border-pink-500 focus:ring-2 focus:ring-pink-500/10 transition-all dark:bg-neutral-800 dark:border-neutral-700 dark:text-white"
+              className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl font-bold text-xs outline-none focus:border-pink-500 focus:ring-2 focus:ring-pink-500/10 transition-all text-slate-900"
             />
           </div>
 
@@ -5381,7 +5381,7 @@ function SalesReportSection({
               type="date"
               value={activeEndDate}
               onChange={(e) => setEndDate(e.target.value)}
-              className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl font-bold text-xs outline-none focus:border-pink-500 focus:ring-2 focus:ring-pink-500/10 transition-all dark:bg-neutral-800 dark:border-neutral-700 dark:text-white"
+              className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl font-bold text-xs outline-none focus:border-pink-500 focus:ring-2 focus:ring-pink-500/10 transition-all text-slate-900"
             />
           </div>
 
@@ -5393,7 +5393,7 @@ function SalesReportSection({
             <select
               value={categoryFilter}
               onChange={(e) => setCategoryFilter(e.target.value)}
-              className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl font-bold text-xs h-[38px] cursor-pointer outline-none focus:border-pink-500 focus:ring-2 focus:ring-pink-500/10 transition-all dark:bg-neutral-800 dark:border-neutral-700 dark:text-white"
+              className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl font-bold text-xs h-[38px] cursor-pointer outline-none focus:border-pink-500 focus:ring-2 focus:ring-pink-500/10 transition-all text-slate-900"
             >
               <option value="All">{language === "bn" ? "সকল বিক্রয়" : "All Sales Categories"}</option>
               <option value="Employee Sales">{language === "bn" ? "স্টাফ বিক্রয় (Employee Sales)" : "Employee Sales"}</option>
@@ -5411,7 +5411,7 @@ function SalesReportSection({
             <select
               value={employeeFilter}
               onChange={(e) => setEmployeeFilter(e.target.value)}
-              className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl font-bold text-xs h-[38px] cursor-pointer outline-none focus:border-pink-500 focus:ring-2 focus:ring-pink-500/10 transition-all dark:bg-neutral-800 dark:border-neutral-700 dark:text-white"
+              className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl font-bold text-xs h-[38px] cursor-pointer outline-none focus:border-pink-500 focus:ring-2 focus:ring-pink-500/10 transition-all text-slate-900"
             >
               <option value="All">{language === "bn" ? "সকল প্রতিনিধি" : "All Staff / Members"}</option>
               {employees.map(emp => (
@@ -5430,7 +5430,7 @@ function SalesReportSection({
             <select
               value={paymentMethodFilter}
               onChange={(e) => setPaymentMethodFilter(e.target.value)}
-              className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl font-bold text-xs h-[38px] cursor-pointer outline-none focus:border-pink-500 focus:ring-2 focus:ring-pink-500/10 transition-all dark:bg-neutral-800 dark:border-neutral-700 dark:text-white"
+              className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl font-bold text-xs h-[38px] cursor-pointer outline-none focus:border-pink-500 focus:ring-2 focus:ring-pink-500/10 transition-all text-slate-900"
             >
               <option value="All">{language === "bn" ? "সকল পেমেন্ট মাধ্যম" : "All Payment Channels"}</option>
               <option value="Cash">{language === "bn" ? "ক্যাশ পেমেন্ট" : "Cash Only"}</option>
@@ -5453,7 +5453,7 @@ function SalesReportSection({
                 placeholder={language === "bn" ? "সর্বনিম্ন" : "Min"}
                 value={minAmount}
                 onChange={(e) => setMinAmount(e.target.value)}
-                className="w-1/2 px-3 py-2 bg-white border border-slate-200 rounded-xl font-bold text-xs outline-none focus:border-pink-500 focus:ring-2 focus:ring-pink-500/10 dark:bg-neutral-800 dark:border-neutral-700 dark:text-white"
+                className="w-1/2 px-3 py-2 bg-white border border-slate-200 rounded-xl font-bold text-xs outline-none focus:border-pink-500 focus:ring-2 focus:ring-pink-500/10 text-slate-900"
               />
               <span className="text-slate-400 text-xs">-</span>
               <input
@@ -5461,7 +5461,7 @@ function SalesReportSection({
                 placeholder={language === "bn" ? "সর্বোচ্চ" : "Max"}
                 value={maxAmount}
                 onChange={(e) => setMaxAmount(e.target.value)}
-                className="w-1/2 px-3 py-2 bg-white border border-slate-200 rounded-xl font-bold text-xs outline-none focus:border-pink-500 focus:ring-2 focus:ring-pink-500/10 dark:bg-neutral-800 dark:border-neutral-700 dark:text-white"
+                className="w-1/2 px-3 py-2 bg-white border border-slate-200 rounded-xl font-bold text-xs outline-none focus:border-pink-500 focus:ring-2 focus:ring-pink-500/10 text-slate-900"
               />
             </div>
           </div>
@@ -5478,7 +5478,7 @@ function SalesReportSection({
                 placeholder={language === "bn" ? "নোট, রেফারেন্স বা আইডি..." : "Search sales by notes, reference link, names..."}
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full pl-9 pr-4 py-2.5 bg-white border border-slate-200 rounded-xl font-bold text-xs outline-none focus:border-pink-500 focus:ring-2 focus:ring-pink-500/10 transition-all dark:bg-neutral-800 dark:border-neutral-700 dark:text-white"
+                className="w-full pl-9 pr-4 py-2.5 bg-white border border-slate-200 rounded-xl font-bold text-xs outline-none focus:border-pink-500 focus:ring-2 focus:ring-pink-500/10 transition-all text-slate-900"
               />
             </div>
           </div>
@@ -5488,12 +5488,12 @@ function SalesReportSection({
       {/* METRIC BOXES BENTO GRID - PROPER WHITE BACKGROUND */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         {/* Total Gross Sales */}
-        <div className="bg-white border border-slate-200/80 p-6 rounded-3xl flex flex-col justify-between shadow-sm hover:shadow-md transition-all dark:bg-neutral-900 dark:border-neutral-800">
+        <div className="bg-white border border-slate-200/80 p-6 rounded-3xl flex flex-col justify-between shadow-md hover:shadow-lg transition-all duration-300">
           <div>
             <p className="text-[10px] font-extrabold text-slate-400 uppercase tracking-widest mb-1">
               {language === "bn" ? "মোট গ্রস বিক্রয় পরিমাণ" : "Aggregate Gross Sales"}
             </p>
-            <p className="text-3xl font-black text-slate-900 dark:text-neutral-100 font-mono">
+            <p className="text-3xl font-black text-slate-900 font-mono">
               {formatCurrency(stats.totalAmount)}
             </p>
           </div>
@@ -5504,12 +5504,12 @@ function SalesReportSection({
         </div>
 
         {/* Audited Sales Count */}
-        <div className="bg-white border border-slate-200/80 p-6 rounded-3xl flex flex-col justify-between shadow-sm hover:shadow-md transition-all dark:bg-neutral-900 dark:border-neutral-800">
+        <div className="bg-white border border-slate-200/80 p-6 rounded-3xl flex flex-col justify-between shadow-md hover:shadow-lg transition-all duration-300">
           <div>
             <p className="text-[10px] font-extrabold text-slate-400 uppercase tracking-widest mb-1">
               {language === "bn" ? "মোট বিক্রয় চালান" : "Total Sales Transactions"}
             </p>
-            <p className="text-3xl font-black text-slate-900 dark:text-neutral-100 font-mono">
+            <p className="text-3xl font-black text-slate-900 font-mono">
               {stats.invoiceCount}
             </p>
           </div>
@@ -5520,12 +5520,12 @@ function SalesReportSection({
         </div>
 
         {/* Average Ticket Value */}
-        <div className="bg-white border border-slate-200/80 p-6 rounded-3xl flex flex-col justify-between shadow-sm hover:shadow-md transition-all dark:bg-neutral-900 dark:border-neutral-800">
+        <div className="bg-white border border-slate-200/80 p-6 rounded-3xl flex flex-col justify-between shadow-md hover:shadow-lg transition-all duration-300">
           <div>
             <p className="text-[10px] font-extrabold text-slate-400 uppercase tracking-widest mb-1">
               {language === "bn" ? "গড় রশিদ টিকিট সাইজ" : "Average Invoice Value"}
             </p>
-            <p className="text-3xl font-black text-slate-900 dark:text-neutral-100 font-mono">
+            <p className="text-3xl font-black text-slate-900 font-mono">
               {formatCurrency(stats.averageTicket)}
             </p>
           </div>
@@ -5535,18 +5535,18 @@ function SalesReportSection({
         </div>
 
         {/* Cash vs digital ratio */}
-        <div className="bg-white border border-slate-200/80 p-6 rounded-3xl flex flex-col justify-between shadow-sm hover:shadow-md transition-all dark:bg-neutral-900 dark:border-neutral-800">
+        <div className="bg-white border border-slate-200/80 p-6 rounded-3xl flex flex-col justify-between shadow-md hover:shadow-lg transition-all duration-300">
           <div>
             <p className="text-[10px] font-extrabold text-slate-400 uppercase tracking-widest mb-1">
               {language === "bn" ? "ক্যাশ বনাম ডিজিটাল অনুপাত" : "Payment Channel Ratio"}
             </p>
             <div className="space-y-1">
-              <div className="flex justify-between items-end text-xs font-bold text-slate-700 dark:text-neutral-300">
+              <div className="flex justify-between items-end text-xs font-bold text-slate-700">
                 <span>{language === "bn" ? "ক্যাশ" : "Cash"}</span>
                 <span>{Math.round((stats.cashAmount / (stats.totalAmount || 1)) * 100)}%</span>
               </div>
               {/* Mini visual track */}
-              <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden flex dark:bg-neutral-800">
+              <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden flex">
                 <div 
                   className="bg-emerald-500 h-full" 
                   style={{ width: `${(stats.cashAmount / (stats.totalAmount || 1)) * 100}%` }} 
@@ -5567,17 +5567,17 @@ function SalesReportSection({
       {/* INTERACTIVE DATA CHARTS - PROPER WHITE BACKGROUNDS */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Trend line over time */}
-        <div className="lg:col-span-2 bg-white p-6 rounded-3xl shadow-sm border border-slate-200/80 dark:bg-neutral-900 dark:border-neutral-800">
+        <div className="lg:col-span-2 bg-white p-6 rounded-3xl shadow-md border border-slate-200/80">
           <div className="flex items-center justify-between mb-6">
             <div>
-              <h4 className="text-sm font-black text-slate-900 uppercase tracking-wide dark:text-neutral-100">
+              <h4 className="text-sm font-black text-slate-900 uppercase tracking-wide">
                 {language === "bn" ? "বিক্রয় ট্রেন্ডলাইন ও প্রবৃদ্ধি" : "Audited Sales Trend over Time"}
               </h4>
               <p className="text-xs text-slate-400">
                 {language === "bn" ? "বাছাইকৃত সময়কালের দৈনিক বিক্রয় গ্রাফ" : "Chronological line visual of day-by-day sales velocity"}
               </p>
             </div>
-            <span className="text-[10px] bg-white border border-slate-200 text-slate-500 px-2.5 py-1 rounded-md font-bold uppercase dark:bg-neutral-800 dark:border-neutral-700">
+            <span className="text-[10px] bg-white border border-slate-200 text-slate-500 px-2.5 py-1 rounded-md font-bold uppercase">
               {chartTimelineData.length} {language === "bn" ? "কার্যকর দিন" : "Active days"}
             </span>
           </div>
@@ -5605,9 +5605,9 @@ function SalesReportSection({
         </div>
 
         {/* Category Breakdown list & chart */}
-        <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-200/80 dark:bg-neutral-900 dark:border-neutral-800 flex flex-col justify-between">
+        <div className="bg-white p-6 rounded-3xl shadow-md border border-slate-200/80 flex flex-col justify-between">
           <div>
-            <h4 className="text-sm font-black text-slate-900 uppercase tracking-wide dark:text-neutral-100 mb-1">
+            <h4 className="text-sm font-black text-slate-900 uppercase tracking-wide mb-1">
               {language === "bn" ? "বিক্রয় ক্যাটাগরি বিশ্লেষণ" : "Sales Category Matrix"}
             </h4>
             <p className="text-xs text-slate-400 mb-6">
@@ -5624,12 +5624,12 @@ function SalesReportSection({
                   const amt = stats.categoryBreakdown[cat];
                   const percentage = Math.round((amt / (stats.totalAmount || 1)) * 100);
                   return (
-                    <div key={cat} className="space-y-1">
+                     <div key={cat} className="space-y-1">
                       <div className="flex justify-between text-xs font-bold">
-                        <span className="text-slate-700 dark:text-neutral-300">{cat}</span>
-                        <span className="text-slate-900 dark:text-neutral-100 font-mono">{formatCurrency(amt)} ({percentage}%)</span>
+                        <span className="text-slate-700">{cat}</span>
+                        <span className="text-slate-900 font-mono">{formatCurrency(amt)} ({percentage}%)</span>
                       </div>
-                      <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden dark:bg-neutral-800">
+                      <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden">
                         <div 
                           className={cn(
                             "h-full rounded-full",
@@ -5645,20 +5645,20 @@ function SalesReportSection({
             </div>
           </div>
 
-          <div className="pt-4 border-t border-slate-100 dark:border-neutral-800 mt-6 flex justify-between items-center text-xs font-bold text-slate-500">
+          <div className="pt-4 border-t border-slate-100 mt-6 flex justify-between items-center text-xs font-bold text-slate-500">
             <span>{language === "bn" ? "মোট চ্যানেল ভলিউম:" : "Active Slices Count:"}</span>
-            <span className="text-slate-900 dark:text-neutral-100 font-mono">{Object.keys(stats.categoryBreakdown).length} channels</span>
+            <span className="text-slate-900 font-mono">{Object.keys(stats.categoryBreakdown).length} channels</span>
           </div>
         </div>
       </div>
 
       {/* CORE CHRONOLOGICAL LEDGER COMPONENT - GROUPED BY DATE ACCORDION */}
-      <div className="bg-white rounded-3xl shadow-sm border border-slate-200/80 overflow-hidden dark:bg-neutral-900 dark:border-neutral-800">
-        <div className="p-6 border-b border-slate-100 dark:border-neutral-800 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      <div className="bg-white rounded-3xl shadow-md border border-slate-200/80 overflow-hidden">
+        <div className="p-6 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div>
-            <h4 className="text-base font-extrabold text-slate-900 dark:text-neutral-100 flex items-center gap-2">
+            <h4 className="text-base font-extrabold text-slate-900 flex items-center gap-2">
               <span>{language === "bn" ? "নিবন্ধিত দৈনিক বিক্রয় খতিয়ান" : "Official Audited Daily Sales Ledger"}</span>
-              <span className="text-xs bg-pink-100 text-pink-700 font-black px-2 py-0.5 rounded-full dark:bg-pink-900/40 dark:text-pink-300 font-mono">
+              <span className="text-xs bg-pink-100 text-pink-700 font-black px-2 py-0.5 rounded-full font-mono">
                 {salesByDate.length} {language === "bn" ? "টি দিন" : "Days"}
               </span>
             </h4>

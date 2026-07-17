@@ -5652,6 +5652,83 @@ function SalesReportSection({
         </div>
       </div>
 
+      {/* REPRESENTATIVE & STAFF COUNTER SALES BREAKDOWN */}
+      <div className="bg-white p-6 rounded-3xl shadow-md border border-slate-200/80">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6 pb-4 border-b border-slate-100">
+          <div>
+            <h4 className="text-sm font-black text-slate-900 uppercase tracking-wide flex items-center gap-2">
+              <Users className="w-4 h-4 text-pink-500" />
+              <span>{language === "bn" ? "প্রতিনিধি ও স্টাফ কাউন্টার বিক্রয় র্যাঙ্কিং" : "Representative & Staff Counter Sales Leaderboard"}</span>
+            </h4>
+            <p className="text-xs text-slate-400 mt-1">
+              {language === "bn" 
+                ? "বাছাইকৃত সময়কালের জন্য স্টাফ ও প্রতিনিধিবর্গের সর্বোচ্চ থেকে সর্বনিম্ন বিক্রয়ের বিবরণী।" 
+                : "Performance leaderboard sorted from highest volume generation to lowest sales processed."}
+            </p>
+          </div>
+          <span className="text-xs bg-slate-50 text-slate-700 font-extrabold px-3 py-1 rounded-xl border border-slate-200 font-mono self-start sm:self-auto">
+            {Object.keys(stats.employeeSalesBreakdown).length} {language === "bn" ? "টি সক্রিয় চ্যানেল" : "Active Channels"}
+          </span>
+        </div>
+
+        {Object.keys(stats.employeeSalesBreakdown).length === 0 ? (
+          <div className="text-center py-12 text-slate-400 italic text-xs">
+            {language === "bn" ? "কোন স্টাফ সেলস ডেটা পাওয়া যায়নি" : "No counter sales recorded in this selected interval."}
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+            {Object.keys(stats.employeeSalesBreakdown)
+              .sort((a, b) => stats.employeeSalesBreakdown[b] - stats.employeeSalesBreakdown[a])
+              .map((empName, index) => {
+                const amt = stats.employeeSalesBreakdown[empName];
+                const percentage = Math.round((amt / (stats.totalAmount || 1)) * 100);
+                return (
+                  <div 
+                    key={empName} 
+                    className="bg-white border border-slate-200 p-4 rounded-2xl flex flex-col justify-between hover:border-pink-300 hover:shadow-xs transition-all duration-300"
+                  >
+                    <div className="flex items-center justify-between mb-3">
+                      <div className="flex items-center gap-2">
+                        <div className={cn(
+                          "w-8 h-8 rounded-full font-bold text-xs flex items-center justify-center font-mono",
+                          index === 0 ? "bg-amber-100 text-amber-700 ring-2 ring-amber-400/20" :
+                          index === 1 ? "bg-slate-100 text-slate-700 ring-2 ring-slate-400/20" :
+                          index === 2 ? "bg-amber-50 text-amber-800 ring-2 ring-amber-700/20" :
+                          "bg-slate-50 text-slate-500"
+                        )}>
+                          {index === 0 ? "🥇" : index === 1 ? "🥈" : index === 2 ? "🥉" : `${index + 1}`}
+                        </div>
+                        <div className="flex flex-col">
+                          <span className="text-xs font-extrabold text-slate-900 truncate max-w-[120px]">
+                            {empName}
+                          </span>
+                        </div>
+                      </div>
+                      <span className="text-[10px] bg-pink-50 text-pink-700 font-black px-2 py-0.5 rounded-md font-mono">
+                        {percentage}%
+                      </span>
+                    </div>
+
+                    <div className="space-y-2 mt-2">
+                      <div className="flex justify-between items-end">
+                        <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">
+                          {language === "bn" ? "মোট বিক্রয় পরিমাণ" : "Volume Contributed"}
+                        </span>
+                        <span className="text-xs font-black text-slate-900 font-mono">
+                          {formatCurrency(amt)}
+                        </span>
+                      </div>
+                      <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                        <div className="bg-pink-500 h-full rounded-full" style={{ width: `${percentage}%` }} />
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+          </div>
+        )}
+      </div>
+
       {/* CORE CHRONOLOGICAL LEDGER COMPONENT - GROUPED BY DATE ACCORDION */}
       <div className="bg-white rounded-3xl shadow-md border border-slate-200/80 overflow-hidden">
         <div className="p-6 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -5783,7 +5860,9 @@ function SalesReportSection({
                             </h5>
                             
                             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                              {Object.keys(group.employeeBreakdown).map((empName) => {
+                              {Object.keys(group.employeeBreakdown)
+                                .sort((a, b) => group.employeeBreakdown[b] - group.employeeBreakdown[a])
+                                .map((empName) => {
                                 const amount = group.employeeBreakdown[empName];
                                 const percent = Math.round((amount / (group.totalAmount || 1)) * 100);
                                 return (

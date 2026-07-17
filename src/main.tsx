@@ -273,33 +273,65 @@ window.alert = function (message?: any): void {
 };
 
 // Suppress benign WebSocket/HMR errors to prevent full-screen unhandled rejection popups
+const isBenignError = (str: string) => {
+  if (!str) return false;
+  const lower = str.toLowerCase();
+  return (
+    lower.includes('websocket') ||
+    lower.includes('vite') ||
+    lower.includes('hmr') ||
+    lower.includes('socket') ||
+    lower.includes('closed without opened') ||
+    lower.includes('connection')
+  );
+};
+
 window.addEventListener('error', (event) => {
-  const msg = event?.message || "";
-  if (
-    msg.includes('WebSocket') ||
-    msg.includes('websocket') ||
-    msg.includes('vite') ||
-    msg.includes('HMR')
-  ) {
+  const msg = String(event?.message || event?.error?.message || event?.error || "");
+  if (isBenignError(msg)) {
     event.preventDefault();
+    event.stopPropagation();
   }
-});
+}, true);
 
 window.addEventListener('unhandledrejection', (event) => {
   const reason = event?.reason;
   if (reason) {
-    const msg = typeof reason === 'string' ? reason : (reason.message || '');
-    if (
-      msg.includes('WebSocket') ||
-      msg.includes('websocket') ||
-      msg.includes('vite') ||
-      msg.includes('HMR')
-    ) {
+    const msg = String(reason?.message || reason?.description || reason || "");
+    if (isBenignError(msg)) {
       event.preventDefault();
       event.stopPropagation();
     }
   }
-});
+}, true);
+
+// Monkey-patch console methods to swallow benign WebSocket/HMR connection logs and errors
+const originalConsoleError = console.error;
+console.error = function (...args: any[]) {
+  const argStr = args.map(a => String(a?.message || a || '')).join(" ");
+  if (isBenignError(argStr)) {
+    return;
+  }
+  originalConsoleError.apply(console, args);
+};
+
+const originalConsoleWarn = console.warn;
+console.warn = function (...args: any[]) {
+  const argStr = args.map(a => String(a?.message || a || '')).join(" ");
+  if (isBenignError(argStr)) {
+    return;
+  }
+  originalConsoleWarn.apply(console, args);
+};
+
+const originalConsoleLog = console.log;
+console.log = function (...args: any[]) {
+  const argStr = args.map(a => String(a?.message || a || '')).join(" ");
+  if (isBenignError(argStr)) {
+    return;
+  }
+  originalConsoleLog.apply(console, args);
+};
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

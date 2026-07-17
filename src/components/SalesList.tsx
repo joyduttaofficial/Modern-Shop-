@@ -639,52 +639,8 @@ export default function SalesList({ user, role, onEditSales, onNavigateToNewSale
     Object.values(groups).forEach(g => {
       g.grandTotal = g.totalEmployeeSales + g.totalWholesaleSales - g.totalDeposit;
 
-      // Sort employeeBreakdown: Men's Section first, then Ladies' Section next, then others
-      g.employeeBreakdown.sort((a, b) => {
-        const empA = employees.find(e => e.id === a.employeeId);
-        const empB = employees.find(e => e.id === b.employeeId);
-
-        const getSectionScore = (emp: Employee | undefined, nameFallback: string) => {
-          if (!emp) {
-            const nf = nameFallback.toLowerCase();
-            if (nf.includes("men's") || nf.includes("mens") || /\b(men|gents|gent)\b/i.test(nf)) return 1;
-            if (nf.includes("ladies") || nf.includes("women") || nf.includes("lady") || /\b(ladies|lady|women|woman|girls|girl)\b/i.test(nf)) return 2;
-            return 3;
-          }
-          const role = (emp.role || "").toLowerCase();
-          const name = (emp.name || "").toLowerCase();
-          const dept = (emp.department || "").toLowerCase();
-
-          // Check if Men's Section
-          const isMens = 
-            role.includes("men's") || role.includes("mens") ||
-            name.includes("men's") || name.includes("mens") ||
-            dept.includes("men's") || dept.includes("mens") ||
-            /\b(men|gents|gent)\b/i.test(role) || /\b(men|gents|gent)\b/i.test(name) || /\b(men|gents|gent)\b/i.test(dept);
-
-          if (isMens) return 1;
-
-          // Check if Ladies' Section
-          const isLadies = 
-            role.includes("ladies") || role.includes("women") || role.includes("lady") ||
-            name.includes("ladies") || name.includes("women") || name.includes("lady") ||
-            dept.includes("ladies") || dept.includes("women") || dept.includes("lady") ||
-            /\b(ladies|lady|women|woman|girls|girl)\b/i.test(role) || /\b(ladies|lady|women|woman|girls|girl)\b/i.test(name) || /\b(all-ladies)\b/i.test(dept);
-
-          if (isLadies) return 2;
-
-          return 3;
-        };
-
-        const scoreA = getSectionScore(empA, a.employeeName);
-        const scoreB = getSectionScore(empB, b.employeeName);
-
-        if (scoreA !== scoreB) {
-          return scoreA - scoreB;
-        }
-
-        return a.employeeName.localeCompare(b.employeeName);
-      });
+      // Sort employeeBreakdown: Highest sales amount first (descending order)
+      g.employeeBreakdown.sort((a, b) => b.amount - a.amount);
     });
 
     return Object.values(groups);
@@ -1075,7 +1031,7 @@ export default function SalesList({ user, role, onEditSales, onNavigateToNewSale
                               </p>
                             ) : (
                               <div className="bg-white border rounded-2xl divide-y divide-gray-50 shadow-sm overflow-hidden">
-                                {group.employeeBreakdown.map((empCell) => {
+                                {group.employeeBreakdown.map((empCell, index) => {
                                   // Resolve real-time image and role metadata of Employee
                                   const matchingDoc = employees.find(e => e.id === empCell.employeeId);
                                   const avatarData = matchingDoc?.documents?.find(d => d.type.startsWith("image/"));
@@ -1084,26 +1040,47 @@ export default function SalesList({ user, role, onEditSales, onNavigateToNewSale
                                   return (
                                     <div 
                                       key={empCell.employeeId || empCell.employeeName} 
-                                      className="flex justify-between items-center p-4 hover:bg-slate-50/55 transition-all"
+                                      className={cn(
+                                        "flex justify-between items-center p-4 hover:bg-slate-50/55 transition-all",
+                                        index === 0 && "bg-amber-50/30 hover:bg-amber-50/50"
+                                      )}
                                     >
                                       {/* Left block: Icon, Name and Designation */}
                                       <div className="flex items-center gap-3">
-                                        <div className="w-10 h-10 rounded-full bg-blue-50 border border-blue-100 flex items-center justify-center overflow-hidden shrink-0">
+                                        <div className={cn(
+                                          "w-10 h-10 rounded-full flex items-center justify-center overflow-hidden shrink-0",
+                                          index === 0 ? "bg-amber-100 border border-amber-200" : "bg-blue-50 border border-blue-100"
+                                        )}>
                                           {avatarData ? (
                                             <img src={avatarData.data} alt="" className="w-full h-full object-cover" />
                                           ) : (
-                                            <UserCircle className="w-6 h-6 text-blue-400" />
+                                            <UserCircle className={cn("w-6 h-6", index === 0 ? "text-amber-500" : "text-blue-400")} />
                                           )}
                                         </div>
                                         <div>
-                                          <p className="font-bold text-gray-900 text-sm">{empCell.employeeName}</p>
-                                          <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wide leading-none mt-0.5">{employeeRole}</p>
+                                          <div className="flex items-center gap-1.5 flex-wrap">
+                                            <p className="font-bold text-gray-900 text-sm">{empCell.employeeName}</p>
+                                            {index === 0 && (
+                                              <span className="bg-amber-100 text-amber-800 text-[9px] font-extrabold uppercase px-2 py-0.5 rounded-full border border-amber-200 flex items-center gap-0.5">
+                                                <span>👑</span>
+                                                <span>{language === "bn" ? "সেরা বিক্রেতা" : "Top Seller"}</span>
+                                              </span>
+                                            )}
+                                          </div>
+                                          <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wide leading-none mt-1">{employeeRole}</p>
                                         </div>
                                       </div>
 
                                       {/* Right block: Amount */}
-                                      <div className="text-right font-mono font-bold text-gray-800 text-sm">
-                                        {formatCurrency(empCell.amount)}
+                                      <div className="text-right flex flex-col items-end gap-1">
+                                        <span className="font-mono font-black text-gray-950 text-sm">
+                                          {formatCurrency(empCell.amount)}
+                                        </span>
+                                        {index === 0 && (
+                                          <span className="text-[9px] font-extrabold text-amber-700 uppercase tracking-widest bg-amber-100/50 px-1.5 py-0.5 rounded-md">
+                                            {language === "bn" ? "দিনের সর্বোচ্চ" : "Daily Highest"}
+                                          </span>
+                                        )}
                                       </div>
                                     </div>
                                   );

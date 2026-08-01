@@ -3,8 +3,8 @@ import { User } from "firebase/auth";
 import { collection, onSnapshot, addDoc, deleteDoc, doc, query, orderBy, where, getDocs } from "firebase/firestore";
 import { db, OperationType, handleFirestoreError, updateDoc } from "@/src/lib/firebase";
 import { Employee, Transaction, UserRole, Bank } from "@/src/types";
-import { cn, formatCurrency } from "@/src/lib/utils";
-import { Users, Plus, Trash2, UserPlus, CreditCard, History, Wallet, UserCircle, Landmark, X, FileText, FilePlus, Image, Eye, Pencil, ExternalLink, Download, ShieldCheck, Printer, FileDown } from "lucide-react";
+import { cn, formatCurrency, compressImage } from "@/src/lib/utils";
+import { Users, Plus, Trash2, UserPlus, CreditCard, History, Wallet, UserCircle, Landmark, X, FileText, FilePlus, Image, Eye, Pencil, ExternalLink, Download, ShieldCheck, Printer, FileDown, Loader2, CheckCircle2, AlertCircle } from "lucide-react";
 import { format, startOfYear, endOfYear } from "date-fns";
 import { increment, setDoc } from "firebase/firestore";
 import { motion, AnimatePresence } from "motion/react";
@@ -41,6 +41,11 @@ export default function Employees({
   const [editingEmployee, setEditingEmployee] = useState<Employee | null>(null);
   const [viewingProfile, setViewingProfile] = useState<Employee | null>(null);
   const [viewingAttendance, setViewingAttendance] = useState<Employee | null>(null);
+
+  // Form Saving & Compression States
+  const [isSaving, setIsSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [isCompressing, setIsCompressing] = useState(false);
 
   // Profile Detail Extra states
   const [profileTab, setProfileTab] = useState<"kyc" | "attendance" | "financial">("kyc");
@@ -265,19 +270,43 @@ export default function Employees({
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
-    if (!files) return;
+    if (!files || files.length === 0) return;
 
-    for (let i = 0; i < files.length; i++) {
-      const file = files[i];
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setEmployeeDocuments(prev => [...prev, {
-          name: file.name,
-          type: file.type,
-          data: reader.result as string
-        }]);
-      };
-      reader.readAsDataURL(file);
+    setIsCompressing(true);
+    try {
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        if (file.type.startsWith('image/')) {
+          const compressedData = await compressImage(file, 1000, 1000, 0.75);
+          setEmployeeDocuments(prev => [...prev, {
+            name: file.name,
+            type: file.type,
+            data: compressedData
+          }]);
+        } else {
+          if (file.size > 700 * 1024) {
+            alert("File is too large! Please upload a PDF smaller than 700KB.");
+            continue;
+          }
+          const reader = new FileReader();
+          await new Promise<void>((resolve) => {
+            reader.onloadend = () => {
+              setEmployeeDocuments(prev => [...prev, {
+                name: file.name,
+                type: file.type,
+                data: reader.result as string
+              }]);
+              resolve();
+            };
+            reader.readAsDataURL(file);
+          });
+        }
+      }
+    } catch (err) {
+      console.error("Error processing documents:", err);
+    } finally {
+      setIsCompressing(false);
+      e.target.value = "";
     }
   };
 
@@ -285,22 +314,32 @@ export default function Employees({
     setEmployeeDocuments(prev => prev.filter((_, i) => i !== index));
   };
 
-  const handlePhotoUpload = (e: React.ChangeEvent<HTMLInputElement>, target: "nidFront" | "nidBack" | "birth") => {
+  const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>, target: "nidFront" | "nidBack" | "birth") => {
     const file = e.target.files?.[0];
     if (!file) return;
-    const reader = new FileReader();
-    reader.onloadend = () => {
-      const base64Data = reader.result as string;
-      if (target === "nidFront") setNidFrontPhoto(base64Data);
-      else if (target === "nidBack") setNidBackPhoto(base64Data);
-      else if (target === "birth") setBirthCertificatePhoto(base64Data);
-    };
-    reader.readAsDataURL(file);
+
+    setIsCompressing(true);
+    try {
+      const compressedData = await compressImage(file, 1000, 1000, 0.75);
+      if (target === "nidFront") setNidFrontPhoto(compressedData);
+      else if (target === "nidBack") setNidBackPhoto(compressedData);
+      else if (target === "birth") setBirthCertificatePhoto(compressedData);
+    } catch (err) {
+      console.error("Failed to compress photo:", err);
+      alert("Failed to process photo.");
+    } finally {
+      setIsCompressing(false);
+      e.target.value = "";
+    }
   };
 
   const handleAddEmployee = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim()) return;
+
+    setIsSaving(true);
+    setSaveError(null);
+
     try {
       const employeeData: any = {
         name: name.trim(),
@@ -329,8 +368,18 @@ export default function Employees({
       if (onSuccess) {
         onSuccess();
       }
-    } catch (e) {
+    } catch (e: any) {
+      console.error("Error saving employee to Firestore:", e);
+      let msg = "Failed to save employee profile. ";
+      if (e?.message?.includes("exceeds maximum size") || e?.code === "invalid-argument") {
+        msg += "Attached images or files are too large for database limits. Please remove or re-upload smaller images.";
+      } else {
+        msg += e?.message || "Please check database connection and try again.";
+      }
+      setSaveError(msg);
       handleFirestoreError(e, editingEmployee ? OperationType.UPDATE : OperationType.CREATE, "employees");
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -349,6 +398,9 @@ export default function Employees({
     setEmployeeIdCode("");
     setShowForm(mode === "new");
     setEditingEmployee(null);
+    setSaveError(null);
+    setIsSaving(false);
+    setIsCompressing(false);
   };
 
   const startEdit = (emp: Employee) => {
@@ -365,6 +417,7 @@ export default function Employees({
     setNidBackPhoto(emp.nidBackPhoto || null);
     setBirthCertificatePhoto(emp.birthCertificatePhoto || null);
     setEmployeeIdCode(emp.employeeIdCode || "");
+    setSaveError(null);
     setShowForm(true);
   };
 
@@ -1107,262 +1160,317 @@ export default function Employees({
         </div>
       )}
 
-      {showForm && (
-        <motion.div 
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="bg-white p-8 rounded-[32px] border border-gray-100 shadow-xl max-w-4xl"
-        >
-          <h3 className="text-xl font-bold mb-6 flex items-center gap-2">
-            {editingEmployee ? <Pencil className="w-5 h-5" /> : <UserPlus className="w-5 h-5" />}
-            {editingEmployee ? "Edit Employee Profile" : "New Employee Registration"}
-          </h3>
-          <form onSubmit={handleAddEmployee} className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            <div className="space-y-1.5">
-              <label className="text-xs font-bold text-gray-400 uppercase tracking-widest pl-1 flex items-center gap-1.5">
-                Employee ID
-                <span className="text-[9px] font-bold text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded font-mono">Auto generated</span>
-              </label>
-              <input 
-                placeholder="e.g. MCS 01"
-                value={employeeIdCode}
-                onChange={e => setEmployeeIdCode(e.target.value)}
-                className="w-full px-4 py-4 bg-gray-50 rounded-2xl border-none focus:ring-2 focus:ring-gray-200 font-bold font-mono"
-              />
-            </div>
-            <div className="space-y-1.5 md:col-span-2 lg:col-span-2">
-              <label className="text-xs font-bold text-gray-400 uppercase tracking-widest pl-1">Full Name *</label>
-              <input 
-                required
-                placeholder="Employee Name"
-                value={name}
-                onChange={e => setName(e.target.value)}
-                className="w-full px-4 py-4 bg-gray-50 rounded-2xl border-none focus:ring-2 focus:ring-gray-200 font-medium"
-              />
-            </div>
-            <div className="space-y-1.5">
-              <label className="text-xs font-bold text-gray-400 uppercase tracking-widest pl-1">Phone Number</label>
-              <input 
-                type="tel"
-                placeholder="e.g. 017XXXXXXXX"
-                value={phone}
-                onChange={e => setPhone(e.target.value)}
-                className="w-full px-4 py-4 bg-gray-50 rounded-2xl border-none focus:ring-2 focus:ring-gray-200 font-medium font-mono"
-              />
-            </div>
-            <div className="space-y-1.5">
-              <label className="text-xs font-bold text-gray-400 uppercase tracking-widest pl-1">Email Address</label>
-              <input 
-                type="email"
-                placeholder="e.g. employee@company.com"
-                value={email}
-                onChange={e => setEmail(e.target.value)}
-                className="w-full px-4 py-4 bg-gray-50 rounded-2xl border-none focus:ring-2 focus:ring-gray-200 font-medium"
-              />
-            </div>
-
-            <div className="space-y-1.5">
-              <label className="text-xs font-bold text-gray-400 uppercase tracking-widest pl-1">Designation / Role</label>
-              <input 
-                placeholder="e.g. Sales Officer, Manager"
-                value={empRole}
-                onChange={e => setEmpRole(e.target.value)}
-                className="w-full px-4 py-4 bg-gray-50 rounded-2xl border-none focus:ring-2 focus:ring-gray-200 font-medium"
-              />
-            </div>
-
-            <div className="space-y-1.5">
-              <label className="text-xs font-bold text-gray-400 uppercase tracking-widest pl-1">Monthly Salary (BDT)</label>
-              <input 
-                type="number"
-                placeholder="0.00"
-                value={salary}
-                onChange={e => setSalary(e.target.value)}
-                className="w-full px-4 py-4 bg-gray-50 rounded-2xl border-none focus:ring-2 focus:ring-gray-200 font-medium font-mono"
-              />
-            </div>
-
-            <div className="space-y-1.5">
-              <label className="text-xs font-bold text-gray-400 uppercase tracking-widest pl-1">Employment Status</label>
-              <select
-                value={status}
-                onChange={e => setStatus(e.target.value as "active" | "inactive")}
-                className="w-full px-4 py-4 bg-gray-50 rounded-2xl border-none focus:ring-2 focus:ring-gray-200 font-medium"
-              >
-                <option value="active">Active Staff</option>
-                <option value="inactive">Resigned / Inactive</option>
-              </select>
-            </div>
-
-            <div className="space-y-1.5">
-              <label className="text-xs font-bold text-gray-400 uppercase tracking-widest pl-1">Department</label>
-              <select
-                value={department}
-                onChange={e => setDepartment(e.target.value)}
-                className="w-full px-4 py-4 bg-gray-50 rounded-2xl border-none focus:ring-2 focus:ring-gray-200 font-medium"
-              >
-                {customDepts.length > 0 ? (
-                  customDepts.map(d => (
-                    <option key={d.id || d.name} value={d.name}>{d.name}</option>
-                  ))
-                ) : (
-                  <>
-                    <option value="Sales">Sales</option>
-                    <option value="Accounts">Accounts</option>
-                    <option value="Marketing">Marketing</option>
-                    <option value="IT / Support">IT / Support</option>
-                    <option value="Management">Management</option>
-                    <option value="Delivery">Delivery</option>
-                    <option value="Others">Others</option>
-                  </>
-                )}
-              </select>
-            </div>
-
-            {/* Custom NID Photo & Birth Certificate Photo Upload Panels */}
-            <div className="md:col-span-2 lg:col-span-3 grid grid-cols-1 md:grid-cols-3 gap-6">
-              {/* NID Front */}
-              <div className="space-y-1.5">
-                <label className="text-xs font-bold text-gray-400 uppercase tracking-widest pl-1">NID Card Front Photo</label>
-                <div className="relative border-2 border-dashed border-gray-200 rounded-3xl p-4 flex flex-col items-center justify-center min-h-[140px] hover:border-blue-400 hover:bg-blue-50/20 transition-all group">
-                  {nidFrontPhoto ? (
-                    <div className="relative w-full h-full flex flex-col items-center justify-center">
-                      <img src={nidFrontPhoto} alt="NID Front" className="max-h-[100px] object-contain rounded-xl mb-2" />
-                      <button 
-                        type="button" 
-                        onClick={() => setNidFrontPhoto(null)}
-                        className="text-xs text-red-500 font-bold hover:underline"
-                      >
-                        Remove Photo
-                      </button>
-                    </div>
-                  ) : (
-                    <label className="w-full h-full flex flex-col items-center justify-center cursor-pointer text-gray-450 hover:text-blue-500 transition-colors">
-                      <Image className="w-8 h-8 mb-2 text-gray-300 group-hover:text-blue-400" />
-                      <span className="text-xs font-black uppercase tracking-wider">Upload Front Side</span>
-                      <span className="text-[10px] text-gray-400 mt-0.5">Click or drag image</span>
-                      <input 
-                        type="file" 
-                        accept="image/*" 
-                        className="hidden" 
-                        onChange={(e) => handlePhotoUpload(e, "nidFront")} 
-                      />
-                    </label>
-                  )}
+      <AnimatePresence>
+        {showForm && (
+          <div className="fixed inset-0 z-[80] bg-black/60 backdrop-blur-md flex items-center justify-center p-3 sm:p-6 overflow-y-auto animate-in fade-in duration-200">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95, y: 10 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 10 }}
+              className="bg-white w-full max-w-4xl rounded-[32px] border border-gray-100 shadow-2xl overflow-hidden my-auto"
+            >
+              {/* Modal Header */}
+              <div className="p-6 bg-gradient-to-r from-gray-900 to-slate-800 text-white flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="w-12 h-12 rounded-2xl bg-white/10 flex items-center justify-center text-blue-400 font-bold border border-white/10 shrink-0">
+                    {editingEmployee ? <Pencil className="w-6 h-6" /> : <UserPlus className="w-6 h-6" />}
+                  </div>
+                  <div>
+                    <h3 className="text-xl font-black tracking-tight">
+                      {editingEmployee ? `Edit Profile: ${editingEmployee.name}` : "New Employee Registration"}
+                    </h3>
+                    <p className="text-xs text-gray-300 font-medium">
+                      {editingEmployee ? `Employee ID: ${editingEmployee.employeeIdCode || editingEmployee.id}` : "Fill in staff credentials and official documents"}
+                    </p>
+                  </div>
                 </div>
+                <button 
+                  type="button" 
+                  onClick={resetForm}
+                  className="p-2 text-gray-400 hover:text-white hover:bg-white/10 rounded-xl transition-all cursor-pointer"
+                >
+                  <X className="w-6 h-6" />
+                </button>
               </div>
 
-              {/* NID Back */}
-              <div className="space-y-1.5">
-                <label className="text-xs font-bold text-gray-400 uppercase tracking-widest pl-1">NID Card Back Photo</label>
-                <div className="relative border-2 border-dashed border-gray-200 rounded-3xl p-4 flex flex-col items-center justify-center min-h-[140px] hover:border-blue-400 hover:bg-blue-50/20 transition-all group">
-                  {nidBackPhoto ? (
-                    <div className="relative w-full h-full flex flex-col items-center justify-center">
-                      <img src={nidBackPhoto} alt="NID Back" className="max-h-[100px] object-contain rounded-xl mb-2" />
-                      <button 
-                        type="button" 
-                        onClick={() => setNidBackPhoto(null)}
-                        className="text-xs text-red-500 font-bold hover:underline"
-                      >
-                        Remove Photo
-                      </button>
-                    </div>
-                  ) : (
-                    <label className="w-full h-full flex flex-col items-center justify-center cursor-pointer text-gray-450 hover:text-blue-500 transition-colors">
-                      <Image className="w-8 h-8 mb-2 text-gray-300 group-hover:text-blue-400" />
-                      <span className="text-xs font-black uppercase tracking-wider">Upload Back Side</span>
-                      <span className="text-[10px] text-gray-400 mt-0.5">Click or drag image</span>
-                      <input 
-                        type="file" 
-                        accept="image/*" 
-                        className="hidden" 
-                        onChange={(e) => handlePhotoUpload(e, "nidBack")} 
-                      />
-                    </label>
-                  )}
-                </div>
-              </div>
-
-              {/* Birth Certificate */}
-              <div className="space-y-1.5">
-                <label className="text-xs font-bold text-gray-400 uppercase tracking-widest pl-1">Birth Certificate Photo</label>
-                <div className="relative border-2 border-dashed border-gray-200 rounded-3xl p-4 flex flex-col items-center justify-center min-h-[140px] hover:border-blue-400 hover:bg-blue-50/20 transition-all group">
-                  {birthCertificatePhoto ? (
-                    <div className="relative w-full h-full flex flex-col items-center justify-center">
-                      <img src={birthCertificatePhoto} alt="Birth Certificate" className="max-h-[100px] object-contain rounded-xl mb-2" />
-                      <button 
-                        type="button" 
-                        onClick={() => setBirthCertificatePhoto(null)}
-                        className="text-xs text-red-500 font-bold hover:underline"
-                      >
-                        Remove Photo
-                      </button>
-                    </div>
-                  ) : (
-                    <label className="w-full h-full flex flex-col items-center justify-center cursor-pointer text-gray-450 hover:text-blue-500 transition-colors">
-                      <Image className="w-8 h-8 mb-2 text-gray-300 group-hover:text-blue-400" />
-                      <span className="text-xs font-black uppercase tracking-wider">Upload Certificate</span>
-                      <span className="text-[10px] text-gray-400 mt-0.5">Click or drag image</span>
-                      <input 
-                        type="file" 
-                        accept="image/*" 
-                        className="hidden" 
-                        onChange={(e) => handlePhotoUpload(e, "birth")} 
-                      />
-                    </label>
-                  )}
-                </div>
-              </div>
-            </div>
-
-            <div className="md:col-span-2 lg:col-span-2 space-y-1.5">
-              <label className="text-xs font-bold text-gray-400 uppercase tracking-widest pl-1">Documents (Photo/ID/PDF)</label>
-              <div className="flex flex-wrap gap-3">
-                <label className="w-24 h-24 border-2 border-dashed border-gray-200 rounded-2xl flex flex-col items-center justify-center cursor-pointer hover:border-blue-400 hover:bg-blue-50 transition-all text-gray-400 hover:text-blue-500">
-                  <FilePlus className="w-6 h-6 mb-1" />
-                  <span className="text-[10px] font-bold uppercase">Upload</span>
-                  <input type="file" multiple className="hidden" onChange={handleFileChange} accept="image/*,.pdf" />
-                </label>
-                {employeeDocuments.map((doc, idx) => (
-                  <div key={idx} className="relative w-24 h-24 bg-gray-50 rounded-2xl border border-gray-100 flex items-center justify-center p-2 group overflow-hidden">
-                    {doc.type.startsWith('image/') ? (
-                      <img src={doc.data} alt={doc.name} className="w-full h-full object-cover rounded-lg" />
-                    ) : (
-                      <FileText className="w-8 h-8 text-blue-500" />
-                    )}
-                    <button 
-                      type="button"
-                      onClick={() => removeDocument(idx)}
-                      className="absolute top-1 right-1 bg-red-500 text-white rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity"
-                    >
-                      <X className="w-3 h-3" />
-                    </button>
-                    <div className="absolute bottom-0 left-0 right-0 bg-black/50 text-white text-[8px] p-1 truncate text-center">
-                      {doc.name}
+              {/* Form Body */}
+              <form onSubmit={handleAddEmployee} className="p-6 sm:p-8 space-y-6 max-h-[78vh] overflow-y-auto">
+                {saveError && (
+                  <div className="p-4 bg-red-50 border border-red-200 rounded-2xl flex items-start gap-3 text-red-700 text-sm font-medium animate-in fade-in">
+                    <AlertCircle className="w-5 h-5 text-red-500 shrink-0 mt-0.5" />
+                    <div>
+                      <p className="font-bold">Save Failed</p>
+                      <p>{saveError}</p>
                     </div>
                   </div>
-                ))}
-              </div>
-            </div>
+                )}
 
-            <div className="md:col-span-2 lg:col-span-3 pt-4 flex gap-4">
-              <button 
-                type="submit"
-                className="flex-1 py-4 bg-blue-600 text-white rounded-2xl font-bold text-lg hover:bg-blue-700 transition-all shadow-lg active:scale-95"
-              >
-                {editingEmployee ? "Update Employee Details" : "Register Employee"}
-              </button>
-              <button 
-                type="button"
-                onClick={resetForm}
-                className="px-8 py-4 bg-gray-100 text-gray-500 rounded-2xl font-bold hover:bg-gray-200 transition-all"
-              >
-                Cancel
-              </button>
-            </div>
-          </form>
-        </motion.div>
-      )}
+                {isCompressing && (
+                  <div className="p-3 bg-blue-50 border border-blue-200 rounded-2xl flex items-center gap-3 text-blue-700 text-xs font-bold animate-pulse">
+                    <Loader2 className="w-4 h-4 animate-spin text-blue-600 shrink-0" />
+                    <span>Compressing & optimizing photo uploads...</span>
+                  </div>
+                )}
+
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-gray-400 uppercase tracking-widest pl-1 flex items-center gap-1.5">
+                      Employee ID
+                      <span className="text-[9px] font-bold text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded font-mono">Auto generated</span>
+                    </label>
+                    <input 
+                      placeholder="e.g. MCS 01"
+                      value={employeeIdCode}
+                      onChange={e => setEmployeeIdCode(e.target.value)}
+                      className="w-full px-4 py-4 bg-gray-50 rounded-2xl border-none focus:ring-2 focus:ring-gray-200 font-bold font-mono"
+                    />
+                  </div>
+                  <div className="space-y-1.5 md:col-span-2 lg:col-span-2">
+                    <label className="text-xs font-bold text-gray-400 uppercase tracking-widest pl-1">Full Name *</label>
+                    <input 
+                      required
+                      placeholder="Employee Name"
+                      value={name}
+                      onChange={e => setName(e.target.value)}
+                      className="w-full px-4 py-4 bg-gray-50 rounded-2xl border-none focus:ring-2 focus:ring-gray-200 font-medium"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-gray-400 uppercase tracking-widest pl-1">Phone Number</label>
+                    <input 
+                      type="tel"
+                      placeholder="e.g. 017XXXXXXXX"
+                      value={phone}
+                      onChange={e => setPhone(e.target.value)}
+                      className="w-full px-4 py-4 bg-gray-50 rounded-2xl border-none focus:ring-2 focus:ring-gray-200 font-medium font-mono"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-gray-400 uppercase tracking-widest pl-1">Email Address</label>
+                    <input 
+                      type="email"
+                      placeholder="e.g. employee@company.com"
+                      value={email}
+                      onChange={e => setEmail(e.target.value)}
+                      className="w-full px-4 py-4 bg-gray-50 rounded-2xl border-none focus:ring-2 focus:ring-gray-200 font-medium"
+                    />
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-gray-400 uppercase tracking-widest pl-1">Designation / Role</label>
+                    <input 
+                      placeholder="e.g. Sales Officer, Manager"
+                      value={empRole}
+                      onChange={e => setEmpRole(e.target.value)}
+                      className="w-full px-4 py-4 bg-gray-50 rounded-2xl border-none focus:ring-2 focus:ring-gray-200 font-medium"
+                    />
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-gray-400 uppercase tracking-widest pl-1">Monthly Salary (BDT)</label>
+                    <input 
+                      type="number"
+                      placeholder="0.00"
+                      value={salary}
+                      onChange={e => setSalary(e.target.value)}
+                      className="w-full px-4 py-4 bg-gray-50 rounded-2xl border-none focus:ring-2 focus:ring-gray-200 font-medium font-mono"
+                    />
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-gray-400 uppercase tracking-widest pl-1">Employment Status</label>
+                    <select
+                      value={status}
+                      onChange={e => setStatus(e.target.value as "active" | "inactive")}
+                      className="w-full px-4 py-4 bg-gray-50 rounded-2xl border-none focus:ring-2 focus:ring-gray-200 font-medium"
+                    >
+                      <option value="active">Active Staff</option>
+                      <option value="inactive">Resigned / Inactive</option>
+                    </select>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-gray-400 uppercase tracking-widest pl-1">Department</label>
+                    <select
+                      value={department}
+                      onChange={e => setDepartment(e.target.value)}
+                      className="w-full px-4 py-4 bg-gray-50 rounded-2xl border-none focus:ring-2 focus:ring-gray-200 font-medium"
+                    >
+                      {customDepts.length > 0 ? (
+                        customDepts.map(d => (
+                          <option key={d.id || d.name} value={d.name}>{d.name}</option>
+                        ))
+                      ) : (
+                        <>
+                          <option value="Sales">Sales</option>
+                          <option value="Accounts">Accounts</option>
+                          <option value="Marketing">Marketing</option>
+                          <option value="IT / Support">IT / Support</option>
+                          <option value="Management">Management</option>
+                          <option value="Delivery">Delivery</option>
+                          <option value="Others">Others</option>
+                        </>
+                      )}
+                    </select>
+                  </div>
+
+                  {/* Custom NID Photo & Birth Certificate Photo Upload Panels */}
+                  <div className="md:col-span-2 lg:col-span-3 grid grid-cols-1 md:grid-cols-3 gap-6">
+                    {/* NID Front */}
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-bold text-gray-400 uppercase tracking-widest pl-1">NID Card Front Photo</label>
+                      <div className="relative border-2 border-dashed border-gray-200 rounded-3xl p-4 flex flex-col items-center justify-center min-h-[140px] hover:border-blue-400 hover:bg-blue-50/20 transition-all group">
+                        {nidFrontPhoto ? (
+                          <div className="relative w-full h-full flex flex-col items-center justify-center">
+                            <img src={nidFrontPhoto} alt="NID Front" className="max-h-[100px] object-contain rounded-xl mb-2" />
+                            <button 
+                              type="button" 
+                              onClick={() => setNidFrontPhoto(null)}
+                              className="text-xs text-red-500 font-bold hover:underline cursor-pointer"
+                            >
+                              Remove Photo
+                            </button>
+                          </div>
+                        ) : (
+                          <label className="w-full h-full flex flex-col items-center justify-center cursor-pointer text-gray-450 hover:text-blue-500 transition-colors">
+                            <Image className="w-8 h-8 mb-2 text-gray-300 group-hover:text-blue-400" />
+                            <span className="text-xs font-black uppercase tracking-wider">Upload Front Side</span>
+                            <span className="text-[10px] text-gray-400 mt-0.5">Click or camera photo</span>
+                            <input 
+                              type="file" 
+                              accept="image/*" 
+                              className="hidden" 
+                              onChange={(e) => handlePhotoUpload(e, "nidFront")} 
+                            />
+                          </label>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* NID Back */}
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-bold text-gray-400 uppercase tracking-widest pl-1">NID Card Back Photo</label>
+                      <div className="relative border-2 border-dashed border-gray-200 rounded-3xl p-4 flex flex-col items-center justify-center min-h-[140px] hover:border-blue-400 hover:bg-blue-50/20 transition-all group">
+                        {nidBackPhoto ? (
+                          <div className="relative w-full h-full flex flex-col items-center justify-center">
+                            <img src={nidBackPhoto} alt="NID Back" className="max-h-[100px] object-contain rounded-xl mb-2" />
+                            <button 
+                              type="button" 
+                              onClick={() => setNidBackPhoto(null)}
+                              className="text-xs text-red-500 font-bold hover:underline cursor-pointer"
+                            >
+                              Remove Photo
+                            </button>
+                          </div>
+                        ) : (
+                          <label className="w-full h-full flex flex-col items-center justify-center cursor-pointer text-gray-450 hover:text-blue-500 transition-colors">
+                            <Image className="w-8 h-8 mb-2 text-gray-300 group-hover:text-blue-400" />
+                            <span className="text-xs font-black uppercase tracking-wider">Upload Back Side</span>
+                            <span className="text-[10px] text-gray-400 mt-0.5">Click or camera photo</span>
+                            <input 
+                              type="file" 
+                              accept="image/*" 
+                              className="hidden" 
+                              onChange={(e) => handlePhotoUpload(e, "nidBack")} 
+                            />
+                          </label>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Birth Certificate */}
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-bold text-gray-400 uppercase tracking-widest pl-1">Birth Certificate Photo</label>
+                      <div className="relative border-2 border-dashed border-gray-200 rounded-3xl p-4 flex flex-col items-center justify-center min-h-[140px] hover:border-blue-400 hover:bg-blue-50/20 transition-all group">
+                        {birthCertificatePhoto ? (
+                          <div className="relative w-full h-full flex flex-col items-center justify-center">
+                            <img src={birthCertificatePhoto} alt="Birth Certificate" className="max-h-[100px] object-contain rounded-xl mb-2" />
+                            <button 
+                              type="button" 
+                              onClick={() => setBirthCertificatePhoto(null)}
+                              className="text-xs text-red-500 font-bold hover:underline cursor-pointer"
+                            >
+                              Remove Photo
+                            </button>
+                          </div>
+                        ) : (
+                          <label className="w-full h-full flex flex-col items-center justify-center cursor-pointer text-gray-450 hover:text-blue-500 transition-colors">
+                            <Image className="w-8 h-8 mb-2 text-gray-300 group-hover:text-blue-400" />
+                            <span className="text-xs font-black uppercase tracking-wider">Upload Certificate</span>
+                            <span className="text-[10px] text-gray-400 mt-0.5">Click or camera photo</span>
+                            <input 
+                              type="file" 
+                              accept="image/*" 
+                              className="hidden" 
+                              onChange={(e) => handlePhotoUpload(e, "birth")} 
+                            />
+                          </label>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="md:col-span-2 lg:col-span-2 space-y-1.5">
+                    <label className="text-xs font-bold text-gray-400 uppercase tracking-widest pl-1">Documents (Photo/ID/PDF)</label>
+                    <div className="flex flex-wrap gap-3">
+                      <label className="w-24 h-24 border-2 border-dashed border-gray-200 rounded-2xl flex flex-col items-center justify-center cursor-pointer hover:border-blue-400 hover:bg-blue-50 transition-all text-gray-400 hover:text-blue-500">
+                        <FilePlus className="w-6 h-6 mb-1" />
+                        <span className="text-[10px] font-bold uppercase">Upload</span>
+                        <input type="file" multiple className="hidden" onChange={handleFileChange} accept="image/*,.pdf" />
+                      </label>
+                      {employeeDocuments.map((doc, idx) => (
+                        <div key={idx} className="relative w-24 h-24 bg-gray-50 rounded-2xl border border-gray-100 flex items-center justify-center p-2 group overflow-hidden">
+                          {doc.type.startsWith('image/') ? (
+                            <img src={doc.data} alt={doc.name} className="w-full h-full object-cover rounded-lg" />
+                          ) : (
+                            <FileText className="w-8 h-8 text-blue-500" />
+                          )}
+                          <button 
+                            type="button"
+                            onClick={() => removeDocument(idx)}
+                            className="absolute top-1 right-1 bg-red-500 text-white rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer"
+                          >
+                            <X className="w-3 h-3" />
+                          </button>
+                          <div className="absolute bottom-0 left-0 right-0 bg-black/50 text-white text-[8px] p-1 truncate text-center">
+                            {doc.name}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Submit Action Bar */}
+                <div className="pt-4 flex gap-4 border-t border-gray-100">
+                  <button 
+                    type="submit"
+                    disabled={isSaving || isCompressing}
+                    className="flex-1 py-4 bg-blue-600 text-white rounded-2xl font-bold text-lg hover:bg-blue-700 transition-all shadow-lg active:scale-95 flex items-center justify-center gap-2 disabled:opacity-50 cursor-pointer"
+                  >
+                    {isSaving ? (
+                      <>
+                        <Loader2 className="w-5 h-5 animate-spin" />
+                        <span>Saving Profile...</span>
+                      </>
+                    ) : (
+                      <span>{editingEmployee ? "Update Employee Profile" : "Register Employee"}</span>
+                    )}
+                  </button>
+                  <button 
+                    type="button"
+                    onClick={resetForm}
+                    disabled={isSaving}
+                    className="px-8 py-4 bg-gray-100 text-gray-600 rounded-2xl font-bold hover:bg-gray-200 transition-all cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {loading ? (

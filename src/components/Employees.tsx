@@ -522,15 +522,18 @@ export default function Employees({
       <html>
         <head>
           <title>${emp.name} - Official Personnel Record</title>
-          <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+          <link href="https://fonts.googleapis.com/css2?family=Hind+Siliguri:wght@400;500;600;700&family=Noto+Sans+Bengali:wght@400;500;600;700&family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
           <script src="https://cdn.tailwindcss.com"></script>
           <style>
             @media print {
               body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
               @page { size: portrait; margin: 15mm; }
             }
-            body {
-              font-family: 'Inter', sans-serif;
+            body, html, * {
+              font-family: 'Hind Siliguri', 'Noto Sans Bengali', 'Inter', sans-serif !important;
+              text-rendering: optimizeLegibility !important;
+              -webkit-font-smoothing: antialiased !important;
+              font-feature-settings: "liga" 1, "clig" 1, "calt" 1 !important;
             }
           </style>
         </head>
@@ -703,15 +706,18 @@ export default function Employees({
       <html>
         <head>
           <title>Active Employee Roster - ${companyName}</title>
-          <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+          <link href="https://fonts.googleapis.com/css2?family=Hind+Siliguri:wght@400;500;600;700&family=Noto+Sans+Bengali:wght@400;500;600;700&family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
           <script src="https://cdn.tailwindcss.com"></script>
           <style>
             @media print {
               body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
               @page { size: landscape; margin: 10mm; }
             }
-            body {
-              font-family: 'Inter', sans-serif;
+            body, html, * {
+              font-family: 'Hind Siliguri', 'Noto Sans Bengali', 'Inter', sans-serif !important;
+              text-rendering: optimizeLegibility !important;
+              -webkit-font-smoothing: antialiased !important;
+              font-feature-settings: "liga" 1, "clig" 1, "calt" 1 !important;
             }
           </style>
         </head>

@@ -24,8 +24,7 @@ import {
   Printer
 } from "lucide-react";
 import { format, startOfMonth, endOfMonth, isWithinInterval, parseISO } from "date-fns";
-import jsPDF from "jspdf";
-import autoTable from "jspdf-autotable";
+import { exportHtmlToPdf } from "@/src/lib/pdfExport";
 
 export default function SalarySheet({ user, role }: { user: User; role: UserRole }) {
   const [employees, setEmployees] = useState<Employee[]>([]);
@@ -205,174 +204,109 @@ export default function SalarySheet({ user, role }: { user: User; role: UserRole
     return list;
   };
 
-  const exportToPDF = () => {
-    const doc = new jsPDF("p", "mm", "a4");
-    
-    // Header Banner
-    doc.setFillColor(15, 23, 42); // slate-900 bg
-    doc.rect(0, 0, 210, 38, "F");
-    
-    // Title
-    doc.setTextColor(255, 255, 255);
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(18);
-    doc.text("MONTHLY PAYROLL RECONCILIATION", 15, 16);
-    
-    // Subtext info
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(9);
-    doc.setTextColor(156, 163, 175); // gray-400
-    doc.text(`Billing Period: ${monthLabelStr}`, 15, 23);
-    doc.text(`Generated On: ${format(new Date(), "dd MMM yyyy, hh:mm a")}`, 15, 28);
-    
-    // Accent Line
-    doc.setFillColor(14, 165, 233); // sky-500 line
-    doc.rect(0, 38, 210, 2, "F");
-    
-    // Summary Cards (Title)
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(10);
-    doc.setTextColor(75, 85, 99); // gray-600
-    doc.text("PAYROLL METRICS SUMMARY", 15, 49);
-    
+  const exportToPDF = async () => {
     const kpis = [
       { label: "Base Payroll", value: role === "admin" ? `BDT ${totalBasePayroll.toLocaleString()}` : "***" },
       { label: "Paid Salaries", value: role === "admin" ? `BDT ${totalPaidSalary.toLocaleString()}` : "***" },
       { label: "Net Cash Outflow", value: role === "admin" ? `BDT ${netDisbursement.toLocaleString()}` : "***" }
     ];
-    
-    let kpiX = 15;
-    kpis.forEach((kpi) => {
-      // Box
-      doc.setFillColor(249, 250, 251); // Gray-50
-      doc.setDrawColor(229, 231, 235); // Gray-200
-      doc.rect(kpiX, 53, 42, 20, "FD");
-      
-      // Top orange accent for box
-      doc.setFillColor(51, 65, 85);
-      doc.rect(kpiX, 53, 42, 1, "F");
-      
-      // Label
-      doc.setTextColor(107, 114, 128); // gray-500
-      doc.setFont("helvetica", "bold");
-      doc.setFontSize(7);
-      doc.text(kpi.label.toUpperCase(), kpiX + 3, 59);
-      
-      // Value
-      doc.setTextColor(15, 23, 42); // slate-900
-      doc.setFont("helvetica", "bold");
-      doc.setFontSize(9);
-      doc.text(kpi.value, kpiX + 3, 67);
-      
-      kpiX += 45;
-    });
 
-    // Employee List Table
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(10);
-    doc.setTextColor(75, 85, 99);
-    doc.text("STAFF BALANCES & STATS", 15, 82);
-    
-    const tableData = filteredEmployeeBalances.map((emp) => [
-      emp.name,
-      emp.role + (emp.department ? ` (${emp.department})` : ""),
-      role === "admin" ? `BDT ${emp.salary.toLocaleString()}` : "***",
-      role === "admin" ? `BDT ${emp.salaryPaid.toLocaleString()}` : "***",
-      role === "admin" ? `BDT ${emp.advanceGiven.toLocaleString()}` : "***",
-      emp.status.toUpperCase()
-    ]);
-    
-    autoTable(doc, {
-      startY: 85,
-      head: [["Employee Name", "Role / Department", "Basic Salary", "Paid to Date", "Advance Given", "Status"]],
-      body: tableData,
-      theme: "striped",
-      headStyles: {
-        fillColor: [15, 23, 42],
-        textColor: [255, 255, 255],
-        fontSize: 8.5,
-        fontStyle: "bold",
-        halign: "left"
-      },
-      bodyStyles: {
-        fontSize: 8,
-        halign: "left",
-        textColor: [55, 65, 81]
-      },
-      columnStyles: {
-        2: { halign: "right", fontStyle: "bold" },
-        3: { halign: "right", fontStyle: "bold" },
-        4: { halign: "right", fontStyle: "bold" },
-        5: { halign: "center", fontStyle: "bold" }
-      },
-      styles: {
-        font: "helvetica",
-        cellPadding: 3.5
-      }
-    });
-    
-    // Ledger List (next section)
-    const nextY = (doc as any).lastAutoTable.finalY + 12;
-    if (nextY > 200) {
-      doc.addPage();
-      drawLedgerSection(doc, 20);
-    } else {
-      drawLedgerSection(doc, nextY);
-    }
-    
-    function drawLedgerSection(pdfDoc: jsPDF, yCoord: number) {
-      pdfDoc.setFont("helvetica", "bold");
-      pdfDoc.setFontSize(10);
-      pdfDoc.setTextColor(75, 85, 99);
-      pdfDoc.text("RECENT PAYROLL LEDGER TRANSACTION JOURNAL", 15, yCoord);
-      
-      const ledgerData = monthTransactions
-        .sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime())
-        .map((tx) => [
-          format(parseISO(tx.date), "dd MMM yyyy"),
-          tx.subCategory,
-          tx.category === "Staff Salary" ? "Salary Payment" : "Advance Disbursement",
-          tx.paymentMethod,
-          role === "admin" ? `BDT ${tx.amount.toLocaleString()}` : "***",
-          tx.notes || "-"
-        ]);
-        
-      autoTable(pdfDoc, {
-        startY: yCoord + 4,
-        head: [["Date", "Employee Target", "Category", "Payment Method", "Amount Paid", "Reference Notes"]],
-        body: ledgerData,
-        theme: "striped",
-        headStyles: {
-          fillColor: [71, 85, 105], // Slate gray
-          textColor: [255, 255, 255],
-          fontSize: 8,
-          fontStyle: "bold",
-          halign: "left"
-        },
-        bodyStyles: {
-          fontSize: 7.5,
-          halign: "left",
-          textColor: [75, 85, 99]
-        },
-        columnStyles: {
-          4: { halign: "right", fontStyle: "bold" }
-        },
-        styles: {
-          font: "helvetica",
-          cellPadding: 3
-        }
-      });
-      
-      const lastY = (pdfDoc as any).lastAutoTable.finalY + 12;
-      if (lastY < 280) {
-        pdfDoc.setFontSize(7.5);
-        pdfDoc.setTextColor(156, 163, 175);
-        pdfDoc.setFont("helvetica", "italic");
-        pdfDoc.text("Generated via Smart Payroll Management Ledger Client. Standard audit trails preserved.", 15, lastY);
-      }
-    }
-    
-    doc.save(`Salary_Sheet_${selectedMonth}.pdf`);
+    const kpiCardsHtml = kpis.map(k => `
+      <div style="flex: 1; background-color: #f9fafb; border: 1px solid #e5e7eb; border-top: 2px solid #334155; border-radius: 6px; padding: 10px 12px; margin-right: 12px;">
+        <div style="font-size: 9px; font-weight: 800; color: #6b7280; text-transform: uppercase; margin-bottom: 4px;">${k.label}</div>
+        <div style="font-size: 13px; font-weight: 800; color: #0f172a; font-family: monospace;">${k.value}</div>
+      </div>
+    `).join("");
+
+    const staffRowsHtml = filteredEmployeeBalances.map((emp) => `
+      <tr>
+        <td style="font-weight: 700; color: #0f172a;">${emp.name}</td>
+        <td>${emp.role}${emp.department ? ` (${emp.department})` : ""}</td>
+        <td style="text-align: right; font-weight: 700; font-family: monospace;">${role === "admin" ? `BDT ${emp.salary.toLocaleString()}` : "***"}</td>
+        <td style="text-align: right; font-weight: 700; color: #10b981; font-family: monospace;">${role === "admin" ? `BDT ${emp.salaryPaid.toLocaleString()}` : "***"}</td>
+        <td style="text-align: right; font-weight: 700; color: #f59e0b; font-family: monospace;">${role === "admin" ? `BDT ${emp.advanceGiven.toLocaleString()}` : "***"}</td>
+        <td style="text-align: center; font-weight: 800; font-size: 10px; text-transform: uppercase;">${emp.status}</td>
+      </tr>
+    `).join("");
+
+    const sortedMonthTxs = [...monthTransactions].sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+    const ledgerRowsHtml = sortedMonthTxs.map((tx) => `
+      <tr>
+        <td>${format(parseISO(tx.date), "dd MMM yyyy")}</td>
+        <td style="font-weight: 700; color: #0f172a;">${tx.subCategory}</td>
+        <td>${tx.category === "Staff Salary" ? "Salary Payment" : "Advance Disbursement"}</td>
+        <td>${tx.paymentMethod}</td>
+        <td style="text-align: right; font-weight: 800; color: #0f172a; font-family: monospace;">${role === "admin" ? `BDT ${tx.amount.toLocaleString()}` : "***"}</td>
+        <td>${tx.notes || "-"}</td>
+      </tr>
+    `).join("");
+
+    const htmlContent = `
+      <div style="font-size: 12px; color: #0f172a; line-height: 1.5;">
+        <!-- Header Banner -->
+        <div style="background-color: #0f172a; color: #ffffff; padding: 20px 24px; border-radius: 8px 8px 0 0;">
+          <h1 style="margin: 0 0 6px 0; font-size: 22px; font-weight: 900; letter-spacing: 0.5px; text-transform: uppercase; color: #ffffff;">MONTHLY PAYROLL RECONCILIATION</h1>
+          <p style="margin: 0 0 2px 0; font-size: 11px; color: #9ca3af;">Billing Period: ${monthLabelStr}</p>
+          <p style="margin: 0; font-size: 11px; color: #9ca3af;">Generated On: ${format(new Date(), "dd MMM yyyy, hh:mm a")}</p>
+        </div>
+        <div style="height: 4px; background-color: #0ea5e9; margin-bottom: 20px;"></div>
+
+        <!-- KPIs -->
+        <div style="margin-bottom: 24px;">
+          <h2 style="font-size: 11px; font-weight: 800; color: #4b5563; text-transform: uppercase; margin: 0 0 10px 0;">PAYROLL METRICS SUMMARY</h2>
+          <div style="display: flex;">
+            ${kpiCardsHtml}
+          </div>
+        </div>
+
+        <!-- Staff Table -->
+        <div style="margin-bottom: 24px;">
+          <h2 style="font-size: 11px; font-weight: 800; color: #4b5563; text-transform: uppercase; margin: 0 0 10px 0;">STAFF BALANCES & STATS</h2>
+          <table>
+            <thead>
+              <tr>
+                <th>Employee Name</th>
+                <th>Role / Department</th>
+                <th style="text-align: right;">Basic Salary</th>
+                <th style="text-align: right;">Paid to Date</th>
+                <th style="text-align: right;">Advance Given</th>
+                <th style="text-align: center;">Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${staffRowsHtml}
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Journal Table -->
+        <div style="margin-bottom: 24px;">
+          <h2 style="font-size: 11px; font-weight: 800; color: #4b5563; text-transform: uppercase; margin: 0 0 10px 0;">RECENT PAYROLL LEDGER TRANSACTION JOURNAL</h2>
+          <table>
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>Employee Target</th>
+                <th>Category</th>
+                <th>Payment Method</th>
+                <th style="text-align: right;">Amount Paid</th>
+                <th>Reference Notes</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${ledgerRowsHtml}
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Footer -->
+        <div style="margin-top: 30px; font-size: 9px; color: #9ca3af; font-style: italic; text-align: center; border-top: 1px solid #f3f4f6; padding-top: 8px;">
+          Generated via Smart Payroll Management Ledger Client. Standard audit trails preserved.
+        </div>
+      </div>
+    `;
+
+    await exportHtmlToPdf(htmlContent, `Salary_Sheet_${selectedMonth}.pdf`);
   };
 
   const exportToCSV = () => {

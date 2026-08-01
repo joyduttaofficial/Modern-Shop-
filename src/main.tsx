@@ -3,7 +3,6 @@ import {createRoot} from 'react-dom/client';
 import App from './App.tsx';
 import './index.css';
 import { LanguageProvider } from "./contexts/LanguageContext.tsx";
-import { jsPDF } from "jspdf";
 
 // Detailed Bengali-to-English Romanizer Function to make PDFs readable
 export function romanizeBengali(str: string): string {
@@ -221,35 +220,6 @@ export function romanizeBengali(str: string): string {
   }
 
   return word.replace(/\b\w/g, c => c.toUpperCase());
-}
-
-// Monkey patch jsPDF routines to guarantee zero unicode artifacts/boxes
-const originalText = jsPDF.prototype.text;
-jsPDF.prototype.text = function(text: any, x: any, y: any, options: any) {
-  if (typeof text === 'string') {
-    text = romanizeBengali(text);
-  } else if (Array.isArray(text)) {
-    text = text.map(t => typeof t === 'string' ? romanizeBengali(t) : t);
-  }
-  return originalText.call(this, text, x, y, options);
-};
-
-const originalGetTextWidth = jsPDF.prototype.getTextWidth;
-jsPDF.prototype.getTextWidth = function(text: string) {
-  if (typeof text === 'string') {
-    text = romanizeBengali(text);
-  }
-  return originalGetTextWidth.call(this, text);
-};
-
-const originalGetStringUnitWidth = (jsPDF.prototype as any).getStringUnitWidth;
-if (originalGetStringUnitWidth) {
-  (jsPDF.prototype as any).getStringUnitWidth = function(text: string) {
-    if (typeof text === 'string') {
-      text = romanizeBengali(text);
-    }
-    return originalGetStringUnitWidth.call(this, text);
-  };
 }
 
 // Safe confirm & alert fallbacks for sandboxed iframes

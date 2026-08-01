@@ -26,8 +26,7 @@ import {
 } from "lucide-react";
 import { format, isWithinInterval, startOfDay, endOfDay } from "date-fns";
 import { motion, AnimatePresence } from "motion/react";
-import { jsPDF } from "jspdf";
-import autoTable from "jspdf-autotable";
+import { exportHtmlToPdf } from "@/src/lib/pdfExport";
 
 interface SalesListProps {
   user: User;
@@ -175,371 +174,259 @@ export default function SalesList({ user, role, onEditSales, onNavigateToNewSale
     };
   }, []);
 
-  const downloadTransactionPDF = (tx: Transaction) => {
-    const doc = new jsPDF("p", "mm", "a4");
-    const pageWidth = doc.internal.pageSize.getWidth();
+  const downloadTransactionPDF = async (tx: Transaction) => {
+    const htmlContent = `
+      <div style="font-size: 12px; color: #0f172a; line-height: 1.5;">
+        <!-- Header Banner -->
+        <div style="background-color: #0f172a; color: #ffffff; padding: 20px 24px; border-radius: 8px 8px 0 0;">
+          <h1 style="margin: 0 0 6px 0; font-size: 24px; font-weight: 900; letter-spacing: 0.5px; text-transform: uppercase; color: #ffffff;">${companyName}</h1>
+          <p style="margin: 0 0 4px 0; font-size: 11px; color: #cbd5e1;">${companyTagline} | Phone: ${companyPhone} | Email: ${companyEmail}</p>
+          <p style="margin: 0; font-size: 11px; color: #cbd5e1;">Registered Corporate Address: ${companyAddress}</p>
+          <div style="margin-top: 12px; font-size: 13px; font-weight: 800; color: #38bdf8; text-transform: uppercase; letter-spacing: 0.5px;">OFFICIAL TRANSACTION INVOICE & VOUCHER</div>
+        </div>
+        <div style="height: 4px; background-color: #38bdf8; margin-bottom: 20px;"></div>
 
-    // 1. Solid modern dark top banner representing corporate premium style
-    doc.setFillColor(15, 23, 42); // slate `#0f172a` primary color
-    doc.rect(0, 0, pageWidth, 42, "F");
+        <!-- Info Split Box -->
+        <div style="display: flex; background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 14px; margin-bottom: 20px;">
+          <div style="flex: 1; padding-right: 12px; border-right: 1px solid #e2e8f0;">
+            <div style="font-size: 10px; font-weight: 800; color: #475569; text-transform: uppercase; margin-bottom: 6px;">VOUCHER & RECORD METADATA:</div>
+            <div style="font-size: 11px;"><strong>Voucher ID:</strong> ${tx.id || "POS-LEDGER-VOUCHER"}</div>
+            <div style="font-size: 11px;"><strong>Category:</strong> ${tx.category}</div>
+          </div>
+          <div style="flex: 1; padding-left: 12px;">
+            <div style="font-size: 10px; font-weight: 800; color: #475569; text-transform: uppercase; margin-bottom: 6px;">RESOURCES & SETTLEMENTS:</div>
+            <div style="font-size: 11px;"><strong>Transaction Date:</strong> ${format(new Date(tx.date), "dd MMM yyyy (EEEE)")}</div>
+            <div style="font-size: 11px;"><strong>Payment Gateway:</strong> ${tx.paymentMethod || "Cash"}</div>
+          </div>
+        </div>
 
-    // Left block: Elegant display typography for branding
-    doc.setTextColor(255);
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(22);
-    const companyTitleStr = companyName.toUpperCase();
-    doc.text(companyTitleStr, 14, 17);
+        <!-- Table -->
+        <div style="margin-bottom: 24px;">
+          <table>
+            <thead>
+              <tr>
+                <th style="width: 40px; text-align: center;">S.No</th>
+                <th>Category Class</th>
+                <th>Reference Subcategory</th>
+                <th>Specific Ledger Description / Note Remarks</th>
+                <th style="text-align: right;">Inflow Amount (BDT)</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td style="text-align: center; font-weight: bold;">1</td>
+                <td style="font-weight: 700;">${tx.category}</td>
+                <td>${tx.subCategory || "Daily Reconciliation"}</td>
+                <td>${tx.notes || "Store ledger transaction record"}</td>
+                <td style="text-align: right; font-weight: 800; color: #0f172a; font-family: monospace;">BDT ${(tx.amount || 0).toFixed(2)}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
 
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(8.5);
-    doc.setTextColor(203, 213, 225); // light-slate color
-    const companyTaglineStr = `${companyTagline} | Phone: ${companyPhone} | Email: ${companyEmail}`;
-    doc.text(companyTaglineStr, 14, 24);
-    doc.text(`Registered Corporate Address: ${companyAddress}`, 14, 29);
+        <!-- Summary Box -->
+        <div style="display: flex; justify-content: flex-end; margin-bottom: 30px;">
+          <div style="width: 280px; background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 12px;">
+            <div style="display: flex; justify-content: space-between; margin-bottom: 8px; font-size: 11px;">
+              <span style="color: #64748b;">Total Value:</span>
+              <span style="font-weight: 700; font-family: monospace;">BDT ${(tx.amount || 0).toFixed(2)}</span>
+            </div>
+            <div style="display: flex; justify-content: space-between; padding: 8px 10px; background-color: #0f172a; color: #ffffff; border-radius: 6px; font-size: 12px; font-weight: 800;">
+              <span>Net Cleared Inflow:</span>
+              <span style="color: #38bdf8; font-family: monospace;">BDT ${(tx.amount || 0).toFixed(2)}</span>
+            </div>
+          </div>
+        </div>
 
-    doc.setFontSize(10);
-    doc.setFont("helvetica", "bold");
-    doc.setTextColor(56, 189, 248); // sky accent
-    doc.text("OFFICIAL TRANSACTION INVOICE & VOUCHER", 14, 36);
+        <!-- Signatures -->
+        <div style="display: flex; justify-content: space-between; margin-top: 50px; padding-top: 10px;">
+          <div style="width: 220px; text-align: center; border-top: 1px solid #cbd5e1; padding-top: 6px; font-size: 10px; font-weight: 700; color: #64748b; text-transform: uppercase;">
+            PREPARED BY (LEDGER CONTROLLER)
+          </div>
+          <div style="width: 220px; text-align: center; border-top: 1px solid #cbd5e1; padding-top: 6px; font-size: 10px; font-weight: 700; color: #64748b; text-transform: uppercase;">
+            APPROVED BY (AUTHORIZED REPRESENTATIVE)
+          </div>
+        </div>
 
-    // Cyan colored divider line
-    doc.setFillColor(56, 189, 248);
-    doc.rect(0, 42, pageWidth, 1.5, "F");
+        <!-- Security Stamp -->
+        <div style="margin-top: 30px; font-size: 9px; color: #94a3b8; text-align: center; border-top: 1px solid #f1f5f9; padding-top: 8px;">
+          Voucher generated securely on ${format(new Date(), "dd/MM/yyyy HH:mm:ss")} from ${companyName} POS database registry.<br/>
+          Protected by system-wide AES security protocols. Powered by ${companyPoweredBy}.
+        </div>
+      </div>
+    `;
 
-    // 2. Memo & Info Boxes (Left & Right Split Box)
-    const boxY = 48;
-    doc.setFillColor(248, 250, 252);
-    doc.rect(14, boxY, pageWidth - 28, 24, "F");
-    doc.setDrawColor(226, 232, 240);
-    doc.rect(14, boxY, pageWidth - 28, 24);
-    doc.line(pageWidth / 2, boxY, pageWidth / 2, boxY + 24);
-
-    doc.setFontSize(8.5);
-    doc.setFont("helvetica", "bold");
-    doc.setTextColor(71, 85, 105);
-    doc.text("VOUCHER & RECORD METADATA:", 18, boxY + 6);
-    doc.setFont("helvetica", "normal");
-    doc.text(`Voucher ID: ${tx.id || "POS-LEDGER-VOUCHER"}`, 18, boxY + 12);
-    doc.text(`Category: ${tx.category}`, 18, boxY + 18);
-
-    doc.setFont("helvetica", "bold");
-    doc.text("RESOURCES & SETTLEMENTS:", pageWidth / 2 + 5, boxY + 6);
-    doc.setFont("helvetica", "normal");
-    doc.text(`Transaction Date: ${format(new Date(tx.date), "dd MMM yyyy (EEEE)")}`, pageWidth / 2 + 5, boxY + 12);
-    doc.text(`Payment Gateway / Channel: ${tx.paymentMethod || "Cash"}`, pageWidth / 2 + 5, boxY + 18);
-
-    // 3. Transactions Detail Table
-    const startTableY = boxY + 29;
-    
-    // Construct single row for this transaction
-    const tableRows = [[
-      "1",
-      tx.category,
-      tx.subCategory || "Daily Reconciliation",
-      tx.notes || "Store ledger transaction record",
-      `BDT ${(tx.amount || 0).toFixed(2)}`
-    ]];
-
-    autoTable(doc, {
-      startY: startTableY,
-      head: [["S.No", "Category Class", "Reference Subcategory", "Specific Ledger Description / Note Remarks", "Inflow Amount (BDT)"]],
-      body: tableRows,
-      theme: "grid",
-      headStyles: {
-        fillColor: [15, 23, 42],
-        textColor: [255, 255, 255],
-        fontSize: 8.5,
-        fontStyle: "bold",
-        halign: "left"
-      },
-      bodyStyles: {
-        fontSize: 8,
-        textColor: [51, 65, 85]
-      },
-      columnStyles: {
-        0: { halign: "center", fontStyle: "bold", cellWidth: 12 },
-        1: { fontStyle: "bold", cellWidth: 35 },
-        2: { fontStyle: "bold", cellWidth: 35 },
-        4: { halign: "right", fontStyle: "bold", textColor: [15, 23, 42] }
-      },
-      styles: {
-        font: "helvetica",
-        cellPadding: 4.5
-      }
-    });
-
-    // 4. Summarized Cards
-    const finalY = (doc as any).lastAutoTable.finalY + 8;
-    const cardWidth = 72;
-    const cardX = pageWidth - 14 - cardWidth;
-
-    doc.setDrawColor(226, 232, 240);
-    doc.setFillColor(250, 250, 250);
-    doc.rect(cardX, finalY, cardWidth, 20, "F");
-    doc.rect(cardX, finalY, cardWidth, 20);
-
-    doc.setFontSize(8.5);
-    doc.setFont("helvetica", "normal");
-    doc.setTextColor(115, 115, 115);
-    doc.text("Total Value:", cardX + 4, finalY + 7);
-    doc.text(`BDT ${(tx.amount || 0).toFixed(2)}`, pageWidth - 18, finalY + 7, { align: "right" });
-
-    doc.setFillColor(15, 23, 42); // slate highlight for total
-    doc.rect(cardX, finalY + 11, cardWidth, 9, "F");
-    doc.setTextColor(255);
-    doc.setFont("helvetica", "bold");
-    doc.text("Net Cleared Inflow:", cardX + 4, finalY + 17);
-    doc.text(`BDT ${(tx.amount || 0).toFixed(2)}`, pageWidth - 18, finalY + 17, { align: "right" });
-
-    // 5. Signature areas
-    const sigY = finalY + 36;
-    doc.setDrawColor(200, 200, 200);
-    doc.line(14, sigY, 64, sigY);
-    doc.line(pageWidth - 14 - 50, sigY, pageWidth - 14, sigY);
-
-    doc.setFontSize(7.5);
-    doc.setFont("helvetica", "bold");
-    doc.setTextColor(115, 115, 115);
-    doc.text("PREPARED BY (LEDGER CONTROLLER)", 14, sigY + 4);
-    doc.text("APPROVED BY (AUTHORIZED REPRESENTATIVE)", pageWidth - 14, sigY + 4, { align: "right" });
-
-    // 6. Security stamp Audit message at bottom
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(7);
-    doc.setTextColor(148, 163, 184);
-    doc.text(`Voucher generated securely on ${format(new Date(), "dd/MM/yyyy HH:mm:ss")} from ${companyName} POS database registry.`, 14, sigY + 14);
-    doc.text(`Protected by system-wide AES security protocols. Powered by ${companyPoweredBy}.`, 14, sigY + 18);
-
-    doc.save(`Invoice_Sale_Voucher_${tx.id || "tx"}.pdf`);
+    await exportHtmlToPdf(htmlContent, `Invoice_Sale_Voucher_${tx.id || "tx"}.pdf`);
   };
 
-  const downloadDailyReportPDF = (group: DailySalesGroup) => {
-    const doc = new jsPDF("p", "mm", "a4");
-    const pageWidth = doc.internal.pageSize.getWidth();
+  const downloadDailyReportPDF = async (group: DailySalesGroup) => {
+    const staffRowsHtml = group.employeeBreakdown.map((emp, index) => {
+      const matchingDoc = employees.find(e => e.id === emp.employeeId);
+      const roleStr = matchingDoc?.role || "Sales staff";
+      return `
+        <tr>
+          <td style="text-align: center; font-weight: bold;">${index + 1}</td>
+          <td style="font-weight: 700; color: #0f172a;">Staff Counter Sale - ${emp.employeeName}</td>
+          <td style="font-weight: 600; text-transform: uppercase;">${roleStr}</td>
+          <td>Cash Inflow Entry</td>
+          <td style="text-align: right; font-weight: 800; color: #0f172a; font-family: monospace;">BDT ${emp.amount.toFixed(2)}</td>
+        </tr>
+      `;
+    }).join("");
 
-    // Corp Header banner
-    doc.setFillColor(15, 23, 42); // slate bg
-    doc.rect(0, 0, pageWidth, 42, "F");
+    let extraBreakdownRows = "";
+    let rowIdx = group.employeeBreakdown.length;
 
-    doc.setTextColor(255);
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(22);
-    doc.text(companyName.toUpperCase(), 14, 17);
-
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(8.5);
-    doc.setTextColor(203, 213, 225);
-    const companyTaglineStr = `${companyTagline} | Phone: ${companyPhone} | Email: ${companyEmail}`;
-    doc.text(companyTaglineStr, 14, 24);
-    doc.text(`Registered Corporate Address: ${companyAddress}`, 14, 29);
-
-    doc.setFontSize(10);
-    doc.setFont("helvetica", "bold");
-    doc.setTextColor(244, 63, 94); // rose/crimson accent
-    doc.text("ALL-IN-ONE DAILY LEDGER & RECONCILIATION STATEMENT", 14, 36);
-
-    doc.setFillColor(244, 63, 94); // rose divider
-    doc.rect(0, 42, pageWidth, 1.5, "F");
-
-    // Memo Box
-    const boxY = 48;
-    doc.setFillColor(248, 250, 252);
-    doc.rect(14, boxY, pageWidth - 28, 22, "F");
-    doc.setDrawColor(226, 232, 240);
-    doc.rect(14, boxY, pageWidth - 28, 22);
-    doc.line(pageWidth / 2, boxY, pageWidth / 2, boxY + 22);
-
-    doc.setFontSize(8.5);
-    doc.setFont("helvetica", "bold");
-    doc.setTextColor(71, 85, 105);
-    doc.text("LEDGER METADATA:", 18, boxY + 6);
-    doc.setFont("helvetica", "normal");
-    doc.text(`Reference ID: INV-SL-${group.dateStr.replace(/-/g, "")}`, 18, boxY + 12);
-    doc.text(`Total Transactions Synced: ${group.transactions.length}`, 18, boxY + 18);
-
-    doc.setFont("helvetica", "bold");
-    doc.text("STATEMENT DETAILS:", pageWidth / 2 + 5, boxY + 6);
-    doc.setFont("helvetica", "normal");
-    doc.text(`Ledger Date: ${format(new Date(group.dateStr), "dd MMM yyyy (EEEE)")}`, pageWidth / 2 + 5, boxY + 12);
-    doc.text(`Generated By: ${user.email} (${role})`, pageWidth / 2 + 5, boxY + 18);
-
-    // Section 1 Heading
-    const section1Y = boxY + 28;
-    doc.setFontSize(9);
-    doc.setFont("helvetica", "bold");
-    doc.setTextColor(15, 23, 42); // slate
-    doc.text("SECTION 1: RECONCILED CHANNEL BREAKDOWN (SUMMED)", 14, section1Y);
-
-    // Table 1: Channel Summary of individual items/breakdowns
-    const tableRows: any[] = [];
-    
-    // Add staff breakdown
-    if (group.employeeBreakdown.length > 0) {
-      group.employeeBreakdown.forEach((emp, index) => {
-        const matchingDoc = employees.find(e => e.id === emp.employeeId);
-        const roleStr = matchingDoc?.role || "Sales staff";
-        tableRows.push([
-          (index + 1).toString(),
-          `Staff Counter Sale - ${emp.employeeName}`,
-          roleStr.toUpperCase(),
-          "Cash Inflow Entry",
-          `BDT ${emp.amount.toFixed(2)}`
-        ]);
-      });
-    }
-
-    // Add Wholesale Sales if any
     if (group.totalWholesaleSales > 0) {
-      tableRows.push([
-        (tableRows.length + 1).toString(),
-        "Wholesale Sales Inflow",
-        "WHOLESALE DIVISION",
-        "Direct Invoice Settlement",
-        `BDT ${group.totalWholesaleSales.toFixed(2)}`
-      ]);
+      rowIdx++;
+      extraBreakdownRows += `
+        <tr>
+          <td style="text-align: center; font-weight: bold;">${rowIdx}</td>
+          <td style="font-weight: 700; color: #0f172a;">Wholesale Sales Inflow</td>
+          <td style="font-weight: 600; text-transform: uppercase;">WHOLESALE DIVISION</td>
+          <td>Direct Invoice Settlement</td>
+          <td style="text-align: right; font-weight: 800; color: #0f172a; font-family: monospace;">BDT ${group.totalWholesaleSales.toFixed(2)}</td>
+        </tr>
+      `;
     }
 
-    // Add Deposits if any
     if (group.totalDeposit > 0) {
-      tableRows.push([
-        (tableRows.length + 1).toString(),
-        "Deposit Deductions",
-        "TREASURY",
-        "Due Balance adjustments / store credits",
-        `-BDT ${group.totalDeposit.toFixed(2)}`
-      ]);
+      rowIdx++;
+      extraBreakdownRows += `
+        <tr>
+          <td style="text-align: center; font-weight: bold;">${rowIdx}</td>
+          <td style="font-weight: 700; color: #0f172a;">Deposit Deductions</td>
+          <td style="font-weight: 600; text-transform: uppercase;">TREASURY</td>
+          <td>Due Balance adjustments / store credits</td>
+          <td style="text-align: right; font-weight: 800; color: #ef4444; font-family: monospace;">-BDT ${group.totalDeposit.toFixed(2)}</td>
+        </tr>
+      `;
     }
 
-    autoTable(doc, {
-      startY: section1Y + 3,
-      head: [["S.No", "Sales Channel / Personnel", "Class Designation", "Payment Memo Remarks", "Volume (BDT)"]],
-      body: tableRows,
-      theme: "grid",
-      headStyles: {
-        fillColor: [15, 23, 42],
-        textColor: [255, 255, 255],
-        fontSize: 8.5,
-        fontStyle: "bold",
-        halign: "left"
-      },
-      bodyStyles: {
-        fontSize: 8,
-        textColor: [51, 65, 85]
-      },
-      columnStyles: {
-        0: { halign: "center", fontStyle: "bold", cellWidth: 12 },
-        4: { halign: "right", fontStyle: "bold", textColor: [15, 23, 42] }
-      },
-      styles: {
-        font: "helvetica",
-        cellPadding: 3.5
-      }
-    });
+    const txRowsHtml = group.transactions.map((tx, idx) => {
+      const catClass = tx.category === "Employee Sales" ? "Staff Sale" : tx.category === "Wholesale Sales" ? "Wholesale Inflow" : "Deposit Deduction";
+      return `
+        <tr>
+          <td style="text-align: center; font-weight: bold;">${idx + 1}</td>
+          <td style="font-weight: 700; color: #0f172a;">${catClass}</td>
+          <td>${tx.subCategory || "Daily Reconciliation"}</td>
+          <td>${tx.notes || "Store ledger transaction record"}</td>
+          <td style="text-align: center;">${tx.paymentMethod || "Cash"}</td>
+          <td style="text-align: right; font-weight: 800; color: #0f172a; font-family: monospace;">BDT ${(tx.amount || 0).toFixed(2)}</td>
+        </tr>
+      `;
+    }).join("");
 
-    // Section 2: Detailed Ledger Particulars of each transaction
-    const table1EndY = (doc as any).lastAutoTable.finalY;
-    const section2Y = table1EndY + 9;
-    
-    doc.setFontSize(9);
-    doc.setFont("helvetica", "bold");
-    doc.setTextColor(15, 23, 42); // slate
-    doc.text("SECTION 2: ITEMIZED INDIVIDUAL TRANSACTION LEDGER PARTICULARS", 14, section2Y);
+    const htmlContent = `
+      <div style="font-size: 12px; color: #0f172a; line-height: 1.5;">
+        <!-- Header Banner -->
+        <div style="background-color: #0f172a; color: #ffffff; padding: 20px 24px; border-radius: 8px 8px 0 0;">
+          <h1 style="margin: 0 0 6px 0; font-size: 24px; font-weight: 900; letter-spacing: 0.5px; text-transform: uppercase; color: #ffffff;">${companyName}</h1>
+          <p style="margin: 0 0 4px 0; font-size: 11px; color: #cbd5e1;">${companyTagline} | Phone: ${companyPhone} | Email: ${companyEmail}</p>
+          <p style="margin: 0; font-size: 11px; color: #cbd5e1;">Registered Corporate Address: ${companyAddress}</p>
+          <div style="margin-top: 12px; font-size: 13px; font-weight: 800; color: #f43f5e; text-transform: uppercase; letter-spacing: 0.5px;">ALL-IN-ONE DAILY LEDGER & RECONCILIATION STATEMENT</div>
+        </div>
+        <div style="height: 4px; background-color: #f43f5e; margin-bottom: 20px;"></div>
 
-    const table2Rows = group.transactions.map((tx, idx) => [
-      (idx + 1).toString(),
-      tx.category === "Employee Sales" ? "Staff Sale" : tx.category === "Wholesale Sales" ? "Wholesale Inflow" : "Deposit Deduction",
-      tx.subCategory || "Daily Reconciliation",
-      tx.notes || "Store ledger transaction record",
-      tx.paymentMethod || "Cash",
-      `BDT ${(tx.amount || 0).toFixed(2)}`
-    ]);
+        <!-- Metadata Box -->
+        <div style="display: flex; background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 14px; margin-bottom: 20px;">
+          <div style="flex: 1; padding-right: 12px; border-right: 1px solid #e2e8f0;">
+            <div style="font-size: 10px; font-weight: 800; color: #475569; text-transform: uppercase; margin-bottom: 6px;">LEDGER METADATA:</div>
+            <div style="font-size: 11px;"><strong>Reference ID:</strong> INV-SL-${group.dateStr.replace(/-/g, "")}</div>
+            <div style="font-size: 11px;"><strong>Total Transactions Synced:</strong> ${group.transactions.length}</div>
+          </div>
+          <div style="flex: 1; padding-left: 12px;">
+            <div style="font-size: 10px; font-weight: 800; color: #475569; text-transform: uppercase; margin-bottom: 6px;">STATEMENT DETAILS:</div>
+            <div style="font-size: 11px;"><strong>Ledger Date:</strong> ${format(new Date(group.dateStr), "dd MMM yyyy (EEEE)")}</div>
+            <div style="font-size: 11px;"><strong>Generated By:</strong> ${user.email} (${role})</div>
+          </div>
+        </div>
 
-    autoTable(doc, {
-      startY: section2Y + 3,
-      head: [["S.No", "Category Class", "Ref Account", "Specific Ledger Notes", "Gateway", "Amount (BDT)"]],
-      body: table2Rows,
-      theme: "grid",
-      headStyles: {
-        fillColor: [71, 85, 105], // cool steel slate
-        textColor: [255, 255, 255],
-        fontSize: 8,
-        fontStyle: "bold",
-        halign: "left"
-      },
-      bodyStyles: {
-        fontSize: 7.5,
-        textColor: [71, 85, 105]
-      },
-      columnStyles: {
-        0: { halign: "center", fontStyle: "bold", cellWidth: 10 },
-        1: { fontStyle: "bold", cellWidth: 32 },
-        2: { cellWidth: 30 },
-        4: { halign: "center", cellWidth: 18 },
-        5: { halign: "right", fontStyle: "bold", textColor: [15, 23, 42], cellWidth: 30 }
-      },
-      styles: {
-        font: "helvetica",
-        cellPadding: 3
-      }
-    });
+        <!-- Section 1 -->
+        <div style="margin-bottom: 20px;">
+          <h2 style="font-size: 12px; font-weight: 800; color: #0f172a; text-transform: uppercase; margin: 0 0 8px 0; letter-spacing: 0.5px;">
+            SECTION 1: RECONCILED CHANNEL BREAKDOWN (SUMMED)
+          </h2>
+          <table>
+            <thead>
+              <tr>
+                <th style="width: 40px; text-align: center;">S.No</th>
+                <th>Sales Channel / Personnel</th>
+                <th>Class Designation</th>
+                <th>Payment Memo Remarks</th>
+                <th style="text-align: right;">Volume (BDT)</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${staffRowsHtml}
+              ${extraBreakdownRows}
+            </tbody>
+          </table>
+        </div>
 
-    // Drawing the summary list card relative to Table 2
-    const table2EndY = (doc as any).lastAutoTable.finalY;
-    const finalY = table2EndY + 8;
-    const pageHeight = doc.internal.pageSize.getHeight();
-    
-    let currentY = finalY;
-    // We need around 60mm space for summary card & signature block
-    if (currentY + 60 > pageHeight) {
-      doc.addPage();
-      currentY = 20;
-    }
+        <!-- Section 2 -->
+        <div style="margin-bottom: 20px;">
+          <h2 style="font-size: 12px; font-weight: 800; color: #0f172a; text-transform: uppercase; margin: 0 0 8px 0; letter-spacing: 0.5px;">
+            SECTION 2: ITEMIZED INDIVIDUAL TRANSACTION LEDGER PARTICULARS
+          </h2>
+          <table>
+            <thead>
+              <tr>
+                <th style="width: 40px; text-align: center;">S.No</th>
+                <th>Category Class</th>
+                <th>Ref Account</th>
+                <th>Specific Ledger Notes</th>
+                <th style="text-align: center;">Gateway</th>
+                <th style="text-align: right;">Amount (BDT)</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${txRowsHtml}
+            </tbody>
+          </table>
+        </div>
 
-    const cardWidth = 72;
-    const cardX = pageWidth - 14 - cardWidth;
+        <!-- Summary Box -->
+        <div style="display: flex; justify-content: flex-end; margin-bottom: 30px;">
+          <div style="width: 280px; background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 12px;">
+            <div style="display: flex; justify-content: space-between; margin-bottom: 6px; font-size: 11px;">
+              <span style="color: #64748b;">Summed Staff Sales:</span>
+              <span style="font-weight: 700; font-family: monospace;">BDT ${group.totalEmployeeSales.toFixed(2)}</span>
+            </div>
+            <div style="display: flex; justify-content: space-between; margin-bottom: 6px; font-size: 11px;">
+              <span style="color: #64748b;">Wholesale Volume (+):</span>
+              <span style="font-weight: 700; font-family: monospace;">BDT ${group.totalWholesaleSales.toFixed(2)}</span>
+            </div>
+            <div style="display: flex; justify-content: space-between; margin-bottom: 8px; font-size: 11px; padding-bottom: 6px; border-bottom: 1px dashed #cbd5e1;">
+              <span style="color: #64748b;">Due Sales (-):</span>
+              <span style="font-weight: 700; color: #ef4444; font-family: monospace;">BDT ${group.totalDeposit.toFixed(2)}</span>
+            </div>
+            <div style="display: flex; justify-content: space-between; padding: 8px 10px; background-color: #0f172a; color: #ffffff; border-radius: 6px; font-size: 12px; font-weight: 800;">
+              <span>Grand Net Total:</span>
+              <span style="color: #10b981; font-family: monospace;">BDT ${group.grandTotal.toFixed(2)}</span>
+            </div>
+          </div>
+        </div>
 
-    doc.setDrawColor(226, 232, 240);
-    doc.setFillColor(250, 250, 250);
-    doc.rect(cardX, currentY, cardWidth, 34, "F");
-    doc.rect(cardX, currentY, cardWidth, 34);
+        <!-- Signatures -->
+        <div style="display: flex; justify-content: space-between; margin-top: 40px; padding-top: 10px;">
+          <div style="width: 220px; text-align: center; border-top: 1px solid #cbd5e1; padding-top: 6px; font-size: 10px; font-weight: 700; color: #64748b; text-transform: uppercase;">
+            PREPARED BY (LEDGER CONTROLLER)
+          </div>
+          <div style="width: 220px; text-align: center; border-top: 1px solid #cbd5e1; padding-top: 6px; font-size: 10px; font-weight: 700; color: #64748b; text-transform: uppercase;">
+            APPROVED BY (AUTHORIZED SIGNATURE)
+          </div>
+        </div>
 
-    doc.setFontSize(8.5);
-    doc.setFont("helvetica", "normal");
-    doc.setTextColor(115, 115, 115);
-    doc.text("Summed Staff Sales:", cardX + 4, currentY + 7);
-    doc.text(`BDT ${group.totalEmployeeSales.toFixed(2)}`, pageWidth - 18, currentY + 7, { align: "right" });
+        <!-- Audit Footer -->
+        <div style="margin-top: 30px; font-size: 9px; color: #94a3b8; text-align: center; border-top: 1px solid #f1f5f9; padding-top: 8px;">
+          Invoice generated automatically on ${format(new Date(), "dd/MM/yyyy HH:mm:ss")} from ${companyName} Daily Reconciliation Ledger.<br/>
+          Protected by system-wide security protocols. Powered by ${companyPoweredBy}.
+        </div>
+      </div>
+    `;
 
-    doc.text("Wholesale volume (+):", cardX + 4, currentY + 14);
-    doc.text(`BDT ${group.totalWholesaleSales.toFixed(2)}`, pageWidth - 18, currentY + 14, { align: "right" });
-
-    doc.text("Due Sales (-):", cardX + 4, currentY + 21);
-    doc.text(`BDT ${group.totalDeposit.toFixed(2)}`, pageWidth - 18, currentY + 21, { align: "right" });
-
-    doc.setFillColor(15, 23, 42); // slate highlight for grand total
-    doc.rect(cardX, currentY + 25, cardWidth, 9, "F");
-    doc.setTextColor(255);
-    doc.setFont("helvetica", "bold");
-    doc.text("Grand Net Total:", cardX + 4, currentY + 31);
-    doc.text(`BDT ${group.grandTotal.toFixed(2)}`, pageWidth - 18, currentY + 31, { align: "right" });
-
-    // Signatures
-    const sigY = currentY + 48;
-    doc.setDrawColor(200, 200, 200);
-    doc.line(14, sigY, 64, sigY);
-    doc.line(pageWidth - 14 - 50, sigY, pageWidth - 14, sigY);
-
-    doc.setFontSize(7.5);
-    doc.setFont("helvetica", "bold");
-    doc.setTextColor(115, 115, 115);
-    doc.text("PREPARED BY (LEDGER CONTROLLER)", 14, sigY + 4);
-    doc.text("APPROVED BY (AUTHORIZED SIGNATURE)", pageWidth - 14, sigY + 4, { align: "right" });
-
-    // Audit Info
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(7);
-    doc.setTextColor(148, 163, 184);
-    doc.text(`Invoice generated automatically on ${format(new Date(), "dd/MM/yyyy HH:mm:ss")} from ${companyName} Daily Reconciliation Ledger.`, 14, sigY + 14);
-    doc.save(`Daily_Sales_Statement_${group.dateStr}.pdf`);
+    await exportHtmlToPdf(htmlContent, `Daily_Sales_Statement_${group.dateStr}.pdf`);
   };
 
   // Soft toggle expand/collapse for a date row

@@ -7,8 +7,7 @@ import { cn, formatCurrency } from "@/src/lib/utils";
 import { Calendar, UserCircle, Save, CheckCircle, Loader2, Home, ChevronRight, ShoppingCart, Printer, FileText } from "lucide-react";
 import { format, startOfDay, endOfDay } from "date-fns";
 import { useLanguage } from "../contexts/LanguageContext";
-import { jsPDF } from "jspdf";
-import autoTable from "jspdf-autotable";
+import { exportHtmlToPdf } from "@/src/lib/pdfExport";
 
 export default function NewSale({ 
   user, 
@@ -369,151 +368,106 @@ export default function NewSale({
     }
   };
 
-  const handleGenerateInvoicePDF = () => {
-    const doc = new jsPDF("p", "mm", "a4");
-    const pageWidth = doc.internal.pageSize.getWidth();
-
-    // Corp Header banner
-    doc.setFillColor(15, 23, 42); // slate bg
-    doc.rect(0, 0, pageWidth, 42, "F");
-
-    doc.setTextColor(255);
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(22);
-    const companyTitleStr = companyName.toUpperCase();
-    const companyTitleWidth = doc.getTextWidth(companyTitleStr);
-    doc.text(companyTitleStr, pageWidth / 2 - (companyTitleWidth / 2), 16);
-
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(9);
-    doc.setTextColor(203, 213, 225);
-    const companyTaglineStr = `Phone: ${companyPhone} • Email: ${companyEmail} • Address: ${companyAddress}`;
-    const taglineWidth = doc.getTextWidth(companyTaglineStr);
-    doc.text(companyTaglineStr, pageWidth / 2 - (taglineWidth / 2), 24);
-
-    doc.setFontSize(10);
-    doc.setFont("helvetica", "bold");
-    doc.setTextColor(220, 38, 38); // crimson accent
-    const printedTitle = "DAILY SALES SHIFT STATEMENT & INVOICE";
-    const printedTitleWidth = doc.getTextWidth(printedTitle);
-    doc.text(printedTitle, pageWidth / 2 - (printedTitleWidth / 2), 33);
-
-    doc.setFillColor(220, 38, 38); // crimson line
-    doc.rect(0, 42, pageWidth, 1.5, "F");
-
-    // Memo Box
-    const boxY = 48;
-    doc.setFillColor(248, 250, 252);
-    doc.rect(14, boxY, pageWidth - 28, 22, "F");
-    doc.setDrawColor(226, 232, 240);
-    doc.rect(14, boxY, pageWidth - 28, 22);
-    doc.line(pageWidth / 2, boxY, pageWidth / 2, boxY + 22);
-
-    doc.setFontSize(8.5);
-    doc.setFont("helvetica", "bold");
-    doc.setTextColor(71, 85, 105);
-    doc.text("STATEMENT INVOICE METADATA:", 18, boxY + 6);
-    doc.setFont("helvetica", "normal");
-    doc.text(`Reference: INV-SL-${selectedDate.replace(/-/g, "")}`, 18, boxY + 12);
-    doc.text(`Created By: ${user.email} (${role})`, 18, boxY + 18);
-
-    doc.setFont("helvetica", "bold");
-    doc.text("STATEMENT DETAILS:", pageWidth / 2 + 5, boxY + 6);
-    doc.setFont("helvetica", "normal");
-    doc.text(`Sales Date: ${format(new Date(selectedDate), "dd MMM yyyy (EEEE)")}`, pageWidth / 2 + 5, boxY + 12);
-    const syncStatus = Object.keys(salesTxIds).length > 0 ? "LEDGER SYNCED" : "DRAFT STATEMENT";
-    doc.text(`Save Status: ${syncStatus}`, pageWidth / 2 + 5, boxY + 18);
-
-    // Table rows of Sales Employees
-    const tableRows = employees.map((emp, index) => {
+  const handleGenerateInvoicePDF = async () => {
+    const tableRowsHtml = employees.map((emp, index) => {
       const amountValue = salesAmounts[emp.id!] || "0.00";
-      return [
-        (index + 1).toString(),
-        emp.name,
-        emp.role.toUpperCase(),
-        emp.department || "Sales",
-        `BDT ${(parseFloat(amountValue) || 0).toFixed(2)}`
-      ];
-    });
+      return `
+        <tr>
+          <td style="text-align: center; font-weight: bold;">${index + 1}</td>
+          <td style="font-weight: 700; color: #0f172a;">${emp.name}</td>
+          <td style="font-weight: 600; text-transform: uppercase;">${emp.role}</td>
+          <td>${emp.department || "Sales"}</td>
+          <td style="text-align: right; font-weight: 800; color: #0f172a; font-family: monospace;">BDT ${(parseFloat(amountValue) || 0).toFixed(2)}</td>
+        </tr>
+      `;
+    }).join("");
 
-    const startTableY = boxY + 28;
-
-    autoTable(doc, {
-      startY: startTableY,
-      head: [["S.No", "Sales Officer", "Designation", "Department", "Daily Inflow Volume"]],
-      body: tableRows,
-      theme: "grid",
-      headStyles: {
-        fillColor: [15, 23, 42],
-        textColor: [255, 255, 255],
-        fontSize: 8.5,
-        fontStyle: "bold",
-        halign: "left"
-      },
-      bodyStyles: {
-        fontSize: 8,
-        textColor: [51, 65, 85]
-      },
-      columnStyles: {
-        0: { halign: "center", fontStyle: "bold" },
-        4: { halign: "right", fontStyle: "bold", textColor: [15, 23, 42] }
-      },
-      styles: {
-        font: "helvetica",
-        cellPadding: 3.5
-      }
-    });
-
-    // Drawing the summary list card
-    const finalY = (doc as any).lastAutoTable.finalY + 8;
-    const cardWidth = 72;
-    const cardX = pageWidth - 14 - cardWidth;
-
-    doc.setDrawColor(226, 232, 240);
-    doc.setFillColor(250, 250, 250);
-    doc.rect(cardX, finalY, cardWidth, 34, "F");
-    doc.rect(cardX, finalY, cardWidth, 34);
-
-    doc.setFontSize(8.5);
-    doc.setFont("helvetica", "normal");
-    doc.setTextColor(115, 115, 115);
-    doc.text("Total Staff Sales:", cardX + 4, finalY + 7);
-    doc.text(`BDT ${totalSale.toFixed(2)}`, pageWidth - 18, finalY + 7, { align: "right" });
-
-    doc.text("Wholesale Sales (+):", cardX + 4, finalY + 14);
     const wholesaleFloat = parseFloat(wholesaleAmount) || 0;
-    doc.text(`BDT ${wholesaleFloat.toFixed(2)}`, pageWidth - 18, finalY + 14, { align: "right" });
-
-    doc.text("Due Sales (-):", cardX + 4, finalY + 21);
     const depositFloat = parseFloat(depositAmount) || 0;
-    doc.text(`BDT ${depositFloat.toFixed(2)}`, pageWidth - 18, finalY + 21, { align: "right" });
+    const syncStatus = Object.keys(salesTxIds).length > 0 ? "LEDGER SYNCED" : "DRAFT STATEMENT";
 
-    doc.setFillColor(15, 23, 42); // slate highlight for grand total
-    doc.rect(cardX, finalY + 25, cardWidth, 9, "F");
-    doc.setTextColor(255);
-    doc.setFont("helvetica", "bold");
-    doc.text("Grand Net Total:", cardX + 4, finalY + 31);
-    doc.text(`BDT ${grandTotal.toFixed(2)}`, pageWidth - 18, finalY + 31, { align: "right" });
+    const htmlContent = `
+      <div style="font-size: 12px; color: #0f172a; line-height: 1.5;">
+        <!-- Header Banner -->
+        <div style="background-color: #0f172a; color: #ffffff; padding: 20px 24px; border-radius: 8px 8px 0 0; text-align: center;">
+          <h1 style="margin: 0 0 6px 0; font-size: 24px; font-weight: 900; letter-spacing: 0.5px; text-transform: uppercase; color: #ffffff;">${companyName}</h1>
+          <p style="margin: 0 0 4px 0; font-size: 11px; color: #cbd5e1;">Phone: ${companyPhone} • Email: ${companyEmail} • Address: ${companyAddress}</p>
+          <div style="margin-top: 10px; font-size: 13px; font-weight: 800; color: #dc2626; text-transform: uppercase; letter-spacing: 0.5px;">DAILY SALES SHIFT STATEMENT & INVOICE</div>
+        </div>
+        <div style="height: 4px; background-color: #dc2626; margin-bottom: 20px;"></div>
 
-    // Signatures
-    const sigY = finalY + 48;
-    doc.setDrawColor(200, 200, 200);
-    doc.line(14, sigY, 64, sigY);
-    doc.line(pageWidth - 14 - 50, sigY, pageWidth - 14, sigY);
+        <!-- Info Split Box -->
+        <div style="display: flex; background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 14px; margin-bottom: 20px;">
+          <div style="flex: 1; padding-right: 12px; border-right: 1px solid #e2e8f0;">
+            <div style="font-size: 10px; font-weight: 800; color: #475569; text-transform: uppercase; margin-bottom: 6px;">STATEMENT INVOICE METADATA:</div>
+            <div style="font-size: 11px;"><strong>Reference:</strong> INV-SL-${selectedDate.replace(/-/g, "")}</div>
+            <div style="font-size: 11px;"><strong>Created By:</strong> ${user.email} (${role})</div>
+          </div>
+          <div style="flex: 1; padding-left: 12px;">
+            <div style="font-size: 10px; font-weight: 800; color: #475569; text-transform: uppercase; margin-bottom: 6px;">STATEMENT DETAILS:</div>
+            <div style="font-size: 11px;"><strong>Sales Date:</strong> ${format(new Date(selectedDate), "dd MMM yyyy (EEEE)")}</div>
+            <div style="font-size: 11px;"><strong>Save Status:</strong> ${syncStatus}</div>
+          </div>
+        </div>
 
-    doc.setFontSize(7.5);
-    doc.setFont("helvetica", "bold");
-    doc.setTextColor(115, 115, 115);
-    doc.text("PREPARED BY (STAFF SIGNATURE)", 14, sigY + 4);
-    doc.text("APPROVED BY (AUTHORIZED SIGNATURE)", pageWidth - 14, sigY + 4, { align: "right" });
+        <!-- Table -->
+        <div style="margin-bottom: 24px;">
+          <table>
+            <thead>
+              <tr>
+                <th style="width: 40px; text-align: center;">S.No</th>
+                <th>Sales Officer</th>
+                <th>Designation</th>
+                <th>Department</th>
+                <th style="text-align: right;">Daily Inflow Volume</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${tableRowsHtml}
+            </tbody>
+          </table>
+        </div>
 
-    // Audit Info
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(7);
-    doc.setTextColor(148, 163, 184);
-    doc.text(`Invoice generated automatically on ${format(new Date(), "dd/MM/yyyy HH:mm:ss")} from ${companyName} Ledger.`, 14, sigY + 15);
+        <!-- Summary Box -->
+        <div style="display: flex; justify-content: flex-end; margin-bottom: 30px;">
+          <div style="width: 280px; background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 12px;">
+            <div style="display: flex; justify-content: space-between; margin-bottom: 6px; font-size: 11px;">
+              <span style="color: #64748b;">Total Staff Sales:</span>
+              <span style="font-weight: 700; font-family: monospace;">BDT ${totalSale.toFixed(2)}</span>
+            </div>
+            <div style="display: flex; justify-content: space-between; margin-bottom: 6px; font-size: 11px;">
+              <span style="color: #64748b;">Wholesale Sales (+):</span>
+              <span style="font-weight: 700; font-family: monospace;">BDT ${wholesaleFloat.toFixed(2)}</span>
+            </div>
+            <div style="display: flex; justify-content: space-between; margin-bottom: 8px; font-size: 11px; padding-bottom: 6px; border-bottom: 1px dashed #cbd5e1;">
+              <span style="color: #64748b;">Due Sales (-):</span>
+              <span style="font-weight: 700; color: #ef4444; font-family: monospace;">BDT ${depositFloat.toFixed(2)}</span>
+            </div>
+            <div style="display: flex; justify-content: space-between; padding: 8px 10px; background-color: #0f172a; color: #ffffff; border-radius: 6px; font-size: 12px; font-weight: 800;">
+              <span>Grand Net Total:</span>
+              <span style="color: #10b981; font-family: monospace;">BDT ${grandTotal.toFixed(2)}</span>
+            </div>
+          </div>
+        </div>
 
-    doc.save(`Invoice_Sales_${selectedDate}.pdf`);
+        <!-- Signatures -->
+        <div style="display: flex; justify-content: space-between; margin-top: 50px; padding-top: 10px;">
+          <div style="width: 220px; text-align: center; border-top: 1px solid #cbd5e1; padding-top: 6px; font-size: 10px; font-weight: 700; color: #64748b; text-transform: uppercase;">
+            PREPARED BY (STAFF SIGNATURE)
+          </div>
+          <div style="width: 220px; text-align: center; border-top: 1px solid #cbd5e1; padding-top: 6px; font-size: 10px; font-weight: 700; color: #64748b; text-transform: uppercase;">
+            APPROVED BY (AUTHORIZED SIGNATURE)
+          </div>
+        </div>
+
+        <!-- Audit Stamp -->
+        <div style="margin-top: 30px; font-size: 9px; color: #94a3b8; text-align: center; border-top: 1px solid #f1f5f9; padding-top: 8px;">
+          Invoice generated automatically on ${format(new Date(), "dd/MM/yyyy HH:mm:ss")} from ${companyName} Ledger.
+        </div>
+      </div>
+    `;
+
+    await exportHtmlToPdf(htmlContent, `Invoice_Sales_${selectedDate}.pdf`);
   };
 
   const handleAmountChange = (empId: string, val: string) => {

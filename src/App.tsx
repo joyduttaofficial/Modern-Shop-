@@ -408,7 +408,8 @@ export default function App() {
       icon: CreditCard, 
       children: [
         { id: "newPurchase", label: "New Procurement" },
-        { id: "purchaseList", label: "Bills & Purchase List" }
+        { id: "purchaseList", label: "Bills & Purchase List" },
+        { id: "paySupplierDue", label: "Supplier Due Payment" }
       ]
     },
     { 
@@ -1034,6 +1035,16 @@ export default function App() {
                     user={user} 
                     role={profile.role} 
                     mode="list" 
+                  />
+                </div>
+              )}
+              {activeView === "paySupplierDue" && (
+                <div key="pay-supplier-due">
+                  <Purchase 
+                    user={user} 
+                    role={profile.role} 
+                    mode="payDue"
+                    onSuccess={() => setActiveView("purchaseList")} 
                   />
                 </div>
               )}

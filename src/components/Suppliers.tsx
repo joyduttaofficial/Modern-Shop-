@@ -7,9 +7,10 @@ import { cn, formatCurrency } from "@/src/lib/utils";
 import { 
   Users, Plus, Trash2, CreditCard, History, Wallet, UserCircle, Landmark, X, Eye, Pencil, 
   Search, ArrowDownRight, ArrowUpRight, Check, CheckSquare, ClipboardList, Shield, ChevronDown,
-  Printer, ArrowLeft, Receipt, Download
+  Printer, ArrowLeft, Receipt, Download, FileText, FileSpreadsheet
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
+import { exportHtmlToPdf } from "@/src/lib/pdfExport";
 
 export default function Suppliers({
   user,
@@ -19,7 +20,7 @@ export default function Suppliers({
 }: {
   user: User;
   role: UserRole;
-  mode?: "new" | "list";
+  mode?: "new" | "list" | "payDue";
   onSuccess?: () => void;
 }) {
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
@@ -653,6 +654,247 @@ export default function Suppliers({
     window.print();
   };
 
+  const [isExportingPdf, setIsExportingPdf] = useState(false);
+
+  // Export Individual Supplier Profile Statement to PDF
+  const handleExportProfilePDF = async () => {
+    if (!selectedSupplier) return;
+    setIsExportingPdf(true);
+    try {
+      const finances = getSupplierFinances(selectedSupplier);
+      const supPurchases = transactions.filter(t => t.supplierId === selectedSupplier.id && t.type === "purchase");
+      const supPayments = transactions.filter(t => t.supplierId === selectedSupplier.id && t.type === "payment");
+      const supReturns = transactions.filter(t => t.supplierId === selectedSupplier.id && t.type === "return");
+
+      const htmlContent = `
+        <div style="font-family: 'Inter', sans-serif; color: #0f172a; padding: 12px; max-width: 800px; margin: 0 auto;">
+          <!-- Header -->
+          <div style="display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid #2563eb; padding-bottom: 12px; margin-bottom: 16px;">
+            <div>
+              <h1 style="font-size: 22px; font-weight: 800; color: #1e3a8a; margin: 0;">${companyName}</h1>
+              <p style="font-size: 11px; color: #64748b; margin: 2px 0;">${companyTagline}</p>
+              <p style="font-size: 10px; color: #475569; margin: 2px 0;">${companyAddress} | Tel: ${companyPhone} | Email: ${companyEmail}</p>
+            </div>
+            <div style="text-align: right;">
+              <h2 style="font-size: 15px; font-weight: 800; color: #0f172a; margin: 0; text-transform: uppercase;">SUPPLIER LEDGER STATEMENT</h2>
+              <p style="font-size: 10px; color: #64748b; margin: 4px 0 0 0;">Statement Date: ${new Date().toLocaleDateString('en-GB')}</p>
+            </div>
+          </div>
+
+          <!-- Supplier Overview Box -->
+          <div style="background-color: #f8fafc; border: 1px solid #cbd5e1; border-radius: 8px; padding: 12px; margin-bottom: 16px;">
+            <h3 style="font-size: 13px; font-weight: 700; color: #1e293b; margin: 0 0 8px 0; border-bottom: 1px solid #e2e8f0; padding-bottom: 4px;">
+              Supplier Details: ${selectedSupplier.name} (${selectedSupplier.code})
+            </h3>
+            <table style="width: 100%; font-size: 10px; border: none; background: transparent;">
+              <tr>
+                <td style="border: none; padding: 3px 0; width: 50%;"><strong>Mobile:</strong> ${selectedSupplier.mobile || 'N/A'}</td>
+                <td style="border: none; padding: 3px 0; width: 50%;"><strong>Email:</strong> ${selectedSupplier.email || 'N/A'}</td>
+              </tr>
+              <tr>
+                <td style="border: none; padding: 3px 0;"><strong>Country:</strong> ${selectedSupplier.country}</td>
+                <td style="border: none; padding: 3px 0;"><strong>Address:</strong> ${selectedSupplier.address || 'N/A'}</td>
+              </tr>
+            </table>
+          </div>
+
+          <!-- Financial Summary Overview Grid -->
+          <h4 style="font-size: 11px; font-weight: 700; color: #334155; margin: 0 0 6px 0; text-transform: uppercase;">Financial Summary Overview</h4>
+          <table style="width: 100%; border-collapse: collapse; margin-bottom: 16px; font-size: 10px;">
+            <thead>
+              <tr style="background-color: #1e293b; color: #ffffff;">
+                <th style="padding: 6px; text-align: left; background-color: #1e293b; color: #ffffff;">Opening Balance</th>
+                <th style="padding: 6px; text-align: right; background-color: #1e293b; color: #ffffff;">Gross Purchases</th>
+                <th style="padding: 6px; text-align: right; background-color: #1e293b; color: #ffffff;">Total Payments</th>
+                <th style="padding: 6px; text-align: right; background-color: #1e293b; color: #ffffff;">Purchase Returns</th>
+                <th style="padding: 6px; text-align: right; background-color: #1e293b; color: #ffffff;">Net Remaining Due</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td style="padding: 6px; border: 1px solid #cbd5e1;">৳${finances.openingBalance.toLocaleString('en-US', {minimumFractionDigits: 2})}</td>
+                <td style="padding: 6px; border: 1px solid #cbd5e1; text-align: right; font-weight: 600;">৳${finances.grossPurchases.toLocaleString('en-US', {minimumFractionDigits: 2})}</td>
+                <td style="padding: 6px; border: 1px solid #cbd5e1; text-align: right; font-weight: 600; color: #15803d;">৳${finances.totalPayments.toLocaleString('en-US', {minimumFractionDigits: 2})}</td>
+                <td style="padding: 6px; border: 1px solid #cbd5e1; text-align: right; font-weight: 600; color: #b45309;">৳${finances.totalReturns.toLocaleString('en-US', {minimumFractionDigits: 2})}</td>
+                <td style="padding: 6px; border: 1px solid #cbd5e1; text-align: right; font-weight: 800; color: #b91c1c;">৳${finances.remainingDue.toLocaleString('en-US', {minimumFractionDigits: 2})}</td>
+              </tr>
+            </tbody>
+          </table>
+
+          <!-- Purchases Section -->
+          <h4 style="font-size: 11px; font-weight: 700; color: #334155; margin: 12px 0 6px 0; text-transform: uppercase;">Purchases Historical Ledger (${supPurchases.length})</h4>
+          <table style="width: 100%; border-collapse: collapse; margin-bottom: 16px; font-size: 9px;">
+            <thead>
+              <tr style="background-color: #0f172a; color: #ffffff;">
+                <th style="padding: 5px; background-color: #0f172a; color: #ffffff;">Date</th>
+                <th style="padding: 5px; background-color: #0f172a; color: #ffffff;">Ref No</th>
+                <th style="padding: 5px; text-align: right; background-color: #0f172a; color: #ffffff;">Total Amount (৳)</th>
+                <th style="padding: 5px; text-align: right; background-color: #0f172a; color: #ffffff;">Paid Amount (৳)</th>
+                <th style="padding: 5px; text-align: right; background-color: #0f172a; color: #ffffff;">Pending Due (৳)</th>
+                <th style="padding: 5px; background-color: #0f172a; color: #ffffff;">Notes</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${supPurchases.length === 0 ? '<tr><td colspan="6" style="padding: 6px; text-align: center; color: #94a3b8;">No purchase bills logged</td></tr>' :
+                supPurchases.map(p => `
+                  <tr>
+                    <td style="padding: 5px; border: 1px solid #cbd5e1;">${p.date}</td>
+                    <td style="padding: 5px; border: 1px solid #cbd5e1; font-family: monospace;">${p.refNo}</td>
+                    <td style="padding: 5px; border: 1px solid #cbd5e1; text-align: right; font-weight: 600;">৳${(p.totalAmount || 0).toLocaleString('en-US', {minimumFractionDigits: 2})}</td>
+                    <td style="padding: 5px; border: 1px solid #cbd5e1; text-align: right;">৳${(p.paidAmount || 0).toLocaleString('en-US', {minimumFractionDigits: 2})}</td>
+                    <td style="padding: 5px; border: 1px solid #cbd5e1; text-align: right; color: #b91c1c; font-weight: 600;">৳${(p.dueAmount || 0).toLocaleString('en-US', {minimumFractionDigits: 2})}</td>
+                    <td style="padding: 5px; border: 1px solid #cbd5e1; color: #64748b;">${p.notes || '-'}</td>
+                  </tr>
+                `).join('')
+              }
+            </tbody>
+          </table>
+
+          <!-- Payments Section -->
+          <h4 style="font-size: 11px; font-weight: 700; color: #334155; margin: 12px 0 6px 0; text-transform: uppercase;">Payment Outflow Logs (${supPayments.length})</h4>
+          <table style="width: 100%; border-collapse: collapse; margin-bottom: 16px; font-size: 9px;">
+            <thead>
+              <tr style="background-color: #0f172a; color: #ffffff;">
+                <th style="padding: 5px; background-color: #0f172a; color: #ffffff;">Date</th>
+                <th style="padding: 5px; background-color: #0f172a; color: #ffffff;">Voucher/Ref No</th>
+                <th style="padding: 5px; background-color: #0f172a; color: #ffffff;">Payment Method</th>
+                <th style="padding: 5px; text-align: right; background-color: #0f172a; color: #ffffff;">Paid Amount (৳)</th>
+                <th style="padding: 5px; background-color: #0f172a; color: #ffffff;">Notes</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${supPayments.length === 0 ? '<tr><td colspan="5" style="padding: 6px; text-align: center; color: #94a3b8;">No payment outflow logs recorded</td></tr>' :
+                supPayments.map(p => `
+                  <tr>
+                    <td style="padding: 5px; border: 1px solid #cbd5e1;">${p.date}</td>
+                    <td style="padding: 5px; border: 1px solid #cbd5e1; font-family: monospace;">${p.refNo}</td>
+                    <td style="padding: 5px; border: 1px solid #cbd5e1;">${p.paymentMethod || 'Cash'}</td>
+                    <td style="padding: 5px; border: 1px solid #cbd5e1; text-align: right; font-weight: 700; color: #15803d;">৳${(p.totalAmount || 0).toLocaleString('en-US', {minimumFractionDigits: 2})}</td>
+                    <td style="padding: 5px; border: 1px solid #cbd5e1; color: #64748b;">${p.notes || '-'}</td>
+                  </tr>
+                `).join('')
+              }
+            </tbody>
+          </table>
+
+          <!-- Product Returns Section -->
+          <h4 style="font-size: 11px; font-weight: 700; color: #334155; margin: 12px 0 6px 0; text-transform: uppercase;">Product Returns History (${supReturns.length})</h4>
+          <table style="width: 100%; border-collapse: collapse; margin-bottom: 16px; font-size: 9px;">
+            <thead>
+              <tr style="background-color: #0f172a; color: #ffffff;">
+                <th style="padding: 5px; background-color: #0f172a; color: #ffffff;">Date</th>
+                <th style="padding: 5px; background-color: #0f172a; color: #ffffff;">Return Ref No</th>
+                <th style="padding: 5px; background-color: #0f172a; color: #ffffff;">Adjustment Method</th>
+                <th style="padding: 5px; text-align: right; background-color: #0f172a; color: #ffffff;">Return Value (৳)</th>
+                <th style="padding: 5px; background-color: #0f172a; color: #ffffff;">Notes</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${supReturns.length === 0 ? '<tr><td colspan="5" style="padding: 6px; text-align: center; color: #94a3b8;">No product returns recorded</td></tr>' :
+                supReturns.map(r => `
+                  <tr>
+                    <td style="padding: 5px; border: 1px solid #cbd5e1;">${r.date}</td>
+                    <td style="padding: 5px; border: 1px solid #cbd5e1; font-family: monospace;">${r.refNo}</td>
+                    <td style="padding: 5px; border: 1px solid #cbd5e1;">${r.paymentMethod || 'Due Adjusted'}</td>
+                    <td style="padding: 5px; border: 1px solid #cbd5e1; text-align: right; font-weight: 700; color: #b45309;">৳${(r.totalAmount || 0).toLocaleString('en-US', {minimumFractionDigits: 2})}</td>
+                    <td style="padding: 5px; border: 1px solid #cbd5e1; color: #64748b;">${r.notes || '-'}</td>
+                  </tr>
+                `).join('')
+              }
+            </tbody>
+          </table>
+
+          <!-- Footer -->
+          <div style="margin-top: 20px; text-align: center; border-top: 1px solid #e2e8f0; padding-top: 8px; font-size: 9px; color: #94a3b8;">
+            Generated by ${companyName} Automated Management System • Confidential Supplier Profile Statement
+          </div>
+        </div>
+      `;
+
+      await exportHtmlToPdf(htmlContent, `Supplier_Statement_${selectedSupplier.name.replace(/\s+/g, '_')}_${selectedSupplier.code}.pdf`);
+    } catch (err) {
+      console.error("PDF generation failed:", err);
+      alert("Failed to export PDF statement. Please try again.");
+    } finally {
+      setIsExportingPdf(false);
+    }
+  };
+
+  // Export Individual Supplier Profile & Ledgers to Excel (CSV format)
+  const handleExportProfileExcel = () => {
+    if (!selectedSupplier) return;
+    const finances = getSupplierFinances(selectedSupplier);
+    const supPurchases = transactions.filter(t => t.supplierId === selectedSupplier.id && t.type === "purchase");
+    const supPayments = transactions.filter(t => t.supplierId === selectedSupplier.id && t.type === "payment");
+    const supReturns = transactions.filter(t => t.supplierId === selectedSupplier.id && t.type === "return");
+
+    const lines: string[] = [];
+
+    // Header & Profile Info
+    lines.push(`"${companyName.replace(/"/g, '""')}" - SUPPLIER PROFILE STATEMENT`);
+    lines.push(`"Statement Date:", "${new Date().toLocaleDateString('en-GB')}"`);
+    lines.push("");
+    lines.push('"--- SUPPLIER INFORMATION ---"');
+    lines.push(`"Supplier Code:", "${selectedSupplier.code}"`);
+    lines.push(`"Supplier Name:", "${selectedSupplier.name}"`);
+    lines.push(`"Mobile:", "${selectedSupplier.mobile || ''}"`);
+    lines.push(`"Email:", "${selectedSupplier.email || ''}"`);
+    lines.push(`"Country:", "${selectedSupplier.country}"`);
+    lines.push(`"Address:", "${(selectedSupplier.address || '').replace(/"/g, '""')}"`);
+    lines.push("");
+
+    // Financial Summary
+    lines.push('"--- FINANCIAL SUMMARY OVERVIEW ---"');
+    lines.push('"Opening Balance","Gross Purchases","Total Payments","Total Returns","Net Remaining Due"');
+    lines.push(`"${finances.openingBalance.toFixed(2)}","${finances.grossPurchases.toFixed(2)}","${finances.totalPayments.toFixed(2)}","${finances.totalReturns.toFixed(2)}","${finances.remainingDue.toFixed(2)}"`);
+    lines.push("");
+
+    // Purchases
+    lines.push('"--- PURCHASES HISTORICAL LEDGER ---"');
+    lines.push('"Date","Ref No","Type","Total Amount (৳)","Paid Amount (৳)","Pending Due (৳)","Notes"');
+    if (supPurchases.length === 0) {
+      lines.push('"No purchases logged"');
+    } else {
+      supPurchases.forEach(p => {
+        lines.push(`"${p.date}","${p.refNo}","${p.type}","${(p.totalAmount || 0).toFixed(2)}","${(p.paidAmount || 0).toFixed(2)}","${(p.dueAmount || 0).toFixed(2)}","${(p.notes || '').replace(/"/g, '""')}"`);
+      });
+    }
+    lines.push("");
+
+    // Payments
+    lines.push('"--- PAYMENT OUTFLOW LOGS ---"');
+    lines.push('"Date","Voucher/Ref No","Payment Method","Paid Amount (৳)","Notes"');
+    if (supPayments.length === 0) {
+      lines.push('"No payment outflow logs recorded"');
+    } else {
+      supPayments.forEach(p => {
+        lines.push(`"${p.date}","${p.refNo}","${p.paymentMethod || 'Cash'}","${(p.totalAmount || 0).toFixed(2)}","${(p.notes || '').replace(/"/g, '""')}"`);
+      });
+    }
+    lines.push("");
+
+    // Returns
+    lines.push('"--- PRODUCT RETURNS HISTORY ---"');
+    lines.push('"Date","Return Ref No","Adjustment Method","Return Value (৳)","Notes"');
+    if (supReturns.length === 0) {
+      lines.push('"No product returns recorded"');
+    } else {
+      supReturns.forEach(r => {
+        lines.push(`"${r.date}","${r.refNo}","${r.paymentMethod || 'Due Adjusted'}","${(r.totalAmount || 0).toFixed(2)}","${(r.notes || '').replace(/"/g, '""')}"`);
+      });
+    }
+
+    const csvContent = "\uFEFF" + lines.join("\n");
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.setAttribute("download", `Supplier_Statement_${selectedSupplier.name.replace(/\s+/g, '_')}_${selectedSupplier.code}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
   // Calculate aggregate metrics across ALL suppliers
   const aggregateFinances = (() => {
     let opening = 0;
@@ -1017,7 +1259,16 @@ export default function Suppliers({
                               </span>
                             </td>
                             <td className="p-3.5 text-center print:hidden">
-                              <div className="flex items-center justify-center gap-0.5">
+                              <div className="flex items-center justify-center gap-1">
+                                <button
+                                  type="button"
+                                  onClick={() => openModal("payDue", s)}
+                                  title="Pay Outstanding Due"
+                                  className="px-2 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold flex items-center gap-1 transition-all cursor-pointer shadow-xs"
+                                >
+                                  <Wallet className="w-3.5 h-3.5" />
+                                  <span>Pay Due</span>
+                                </button>
                                 <button
                                   type="button"
                                   onClick={() => {
@@ -1091,6 +1342,31 @@ export default function Suppliers({
 
                 <div className="flex flex-wrap items-center gap-2">
                   <button
+                    onClick={handleExportProfilePDF}
+                    disabled={isExportingPdf}
+                    className="bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white text-xs font-bold py-2 px-3.5 rounded-xl flex items-center gap-1.5 transition-colors shadow-xs cursor-pointer"
+                    title="Export Supplier Profile & Ledger Statement to PDF"
+                  >
+                    <FileText className="w-4 h-4" />
+                    <span>{isExportingPdf ? "Exporting PDF..." : "PDF Statement"}</span>
+                  </button>
+                  <button
+                    onClick={handleExportProfileExcel}
+                    className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold py-2 px-3.5 rounded-xl flex items-center gap-1.5 transition-colors shadow-xs cursor-pointer"
+                    title="Export Supplier Profile & Ledgers to Excel (CSV)"
+                  >
+                    <FileSpreadsheet className="w-4 h-4" />
+                    <span>Excel Statement</span>
+                  </button>
+                  <button
+                    onClick={() => window.print()}
+                    className="bg-slate-700 hover:bg-slate-800 text-white text-xs font-bold py-2 px-3.5 rounded-xl flex items-center gap-1.5 transition-colors shadow-xs cursor-pointer print:hidden"
+                    title="Print Statement"
+                  >
+                    <Printer className="w-4 h-4" />
+                    <span>Print</span>
+                  </button>
+                  <button
                     onClick={() => openModal("addPurchase", selectedSupplier)}
                     className="bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold py-2 px-3.5 rounded-xl flex items-center gap-1.5 transition-colors shadow-xs cursor-pointer"
                   >
@@ -1104,7 +1380,7 @@ export default function Suppliers({
                   </button>
                   <button
                     onClick={() => openModal("payDue", selectedSupplier)}
-                    className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold py-2 px-3.5 rounded-xl flex items-center gap-1.5 transition-colors shadow-xs cursor-pointer"
+                    className="bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-bold py-2 px-3.5 rounded-xl flex items-center gap-1.5 transition-colors shadow-xs cursor-pointer"
                   >
                     <Wallet className="w-4 h-4" /> Pay Outstanding
                   </button>
@@ -1154,34 +1430,56 @@ export default function Suppliers({
 
             {/* Profile Transaction Tabs and Logs */}
             <div className="bg-white rounded-3xl border border-gray-100 shadow-sm p-6">
-              <div className="flex border-b border-gray-100 gap-4 mb-4">
-                <button
-                  onClick={() => setProfileTab("purchases")}
-                  className={cn(
-                    "pb-3 text-sm font-semibold transition-all relative",
-                    profileTab === "purchases" ? "text-blue-600 border-b-2 border-blue-600" : "text-gray-400 hover:text-gray-600"
-                  )}
-                >
-                  Purchases Historical Ledger
-                </button>
-                <button
-                  onClick={() => setProfileTab("payments")}
-                  className={cn(
-                    "pb-3 text-sm font-semibold transition-all relative",
-                    profileTab === "payments" ? "text-blue-600 border-b-2 border-blue-600" : "text-gray-400 hover:text-gray-600"
-                  )}
-                >
-                  Payment Outflow Logs
-                </button>
-                <button
-                  onClick={() => setProfileTab("returns")}
-                  className={cn(
-                    "pb-3 text-sm font-semibold transition-all relative",
-                    profileTab === "returns" ? "text-blue-600 border-b-2 border-blue-600" : "text-gray-400 hover:text-gray-600"
-                  )}
-                >
-                  Product Returns History
-                </button>
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-gray-100 pb-2 mb-4 gap-3">
+                <div className="flex flex-wrap gap-4">
+                  <button
+                    onClick={() => setProfileTab("purchases")}
+                    className={cn(
+                      "pb-2 text-sm font-semibold transition-all relative cursor-pointer",
+                      profileTab === "purchases" ? "text-blue-600 border-b-2 border-blue-600" : "text-gray-400 hover:text-gray-600"
+                    )}
+                  >
+                    Purchases Historical Ledger
+                  </button>
+                  <button
+                    onClick={() => setProfileTab("payments")}
+                    className={cn(
+                      "pb-2 text-sm font-semibold transition-all relative cursor-pointer",
+                      profileTab === "payments" ? "text-blue-600 border-b-2 border-blue-600" : "text-gray-400 hover:text-gray-600"
+                    )}
+                  >
+                    Payment Outflow Logs
+                  </button>
+                  <button
+                    onClick={() => setProfileTab("returns")}
+                    className={cn(
+                      "pb-2 text-sm font-semibold transition-all relative cursor-pointer",
+                      profileTab === "returns" ? "text-blue-600 border-b-2 border-blue-600" : "text-gray-400 hover:text-gray-600"
+                    )}
+                  >
+                    Product Returns History
+                  </button>
+                </div>
+
+                <div className="flex items-center gap-2 pb-1">
+                  <button
+                    onClick={handleExportProfilePDF}
+                    disabled={isExportingPdf}
+                    className="text-xs font-bold text-red-600 bg-red-50 hover:bg-red-100 disabled:opacity-50 border border-red-200 px-3 py-1.5 rounded-xl flex items-center gap-1.5 transition-all cursor-pointer shadow-2xs"
+                    title="Download Statement PDF"
+                  >
+                    <FileText className="w-3.5 h-3.5" />
+                    <span>{isExportingPdf ? "Generating..." : "Download PDF"}</span>
+                  </button>
+                  <button
+                    onClick={handleExportProfileExcel}
+                    className="text-xs font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 px-3 py-1.5 rounded-xl flex items-center gap-1.5 transition-all cursor-pointer shadow-2xs"
+                    title="Download Statement Excel (CSV)"
+                  >
+                    <FileSpreadsheet className="w-3.5 h-3.5" />
+                    <span>Download Excel</span>
+                  </button>
+                </div>
               </div>
 
               {/* Tab Outputs */}

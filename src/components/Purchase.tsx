@@ -34,7 +34,7 @@ export default function Purchase({
 }: {
   user: User;
   role: UserRole;
-  mode?: "new" | "list";
+  mode?: "new" | "list" | "payDue";
   onSuccess?: () => void;
 }) {
   const [purchases, setPurchases] = useState<PurchaseModel[]>([]);
@@ -43,7 +43,7 @@ export default function Purchase({
   const [loading, setLoading] = useState(true);
 
   // Form or list switch
-  const [viewState, setViewState] = useState<"list" | "form">(mode === "new" ? "form" : "list");
+  const [viewState, setViewState] = useState<"list" | "form">(mode === "new" || mode === "payDue" ? "form" : "list");
 
   // Form state
   const [supplierId, setSupplierId] = useState("");
@@ -144,6 +144,7 @@ export default function Purchase({
   // Deletion Confirmation State
   const [purchaseToDelete, setPurchaseToDelete] = useState<PurchaseModel | null>(null);
   const [returnToDelete, setReturnToDelete] = useState<SupplierTransaction | null>(null);
+  const [paymentToDelete, setPaymentToDelete] = useState<SupplierTransaction | null>(null);
 
   // Search/Filters
   const [searchTerm, setSearchTerm] = useState("");
@@ -153,17 +154,20 @@ export default function Purchase({
   const dueAmount = Math.max(0, (parseFloat(totalAmount) || 0) - (parseFloat(paidAmount) || 0) - (parseFloat(writtenReturn) || 0));
 
   // Sub menu split
-  const [subMenu, setSubMenu] = useState<"purchases" | "returns">("purchases");
+  const [subMenu, setSubMenu] = useState<"purchases" | "returns" | "payDue">(mode === "payDue" ? "payDue" : "purchases");
   const [supplierTransactions, setSupplierTransactions] = useState<SupplierTransaction[]>([]);
   const [adjustType, setAdjustType] = useState<"due" | "refund">("due");
+  const [payDueAmount, setPayDueAmount] = useState("");
 
   useEffect(() => {
     // Generate pre-filled transaction ref
     if (viewState === "form" && !refNo) {
       if (subMenu === "purchases") {
         setRefNo(`PUR-${Math.floor(100000 + Math.random() * 900000)}`);
-      } else {
+      } else if (subMenu === "returns") {
         setRefNo(`RET-${Math.floor(100000 + Math.random() * 900000)}`);
+      } else if (subMenu === "payDue") {
+        setRefNo(`PAY-${Math.floor(100000 + Math.random() * 900000)}`);
       }
     }
   }, [viewState, subMenu, refNo]);
@@ -639,6 +643,116 @@ export default function Purchase({
     }
   };
 
+  // Submit Supplier Due Settlement Payment
+  const handleSubmitDuePayment = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!supplierId || !payDueAmount || parseFloat(payDueAmount) <= 0) {
+      alert("Please select a supplier and enter a valid payment amount.");
+      return;
+    }
+    setIsSubmitting(true);
+    try {
+      const paidVal = parseFloat(payDueAmount) || 0;
+      const selectedSup = suppliers.find(s => s.id === supplierId);
+      const supName = selectedSup ? selectedSup.name : "Unknown Supplier";
+
+      // 1. Add expense transaction
+      const newTx: Transaction = {
+        date: new Date(date).toISOString(),
+        type: "expense",
+        category: "Supplier Due Payment",
+        amount: paidVal,
+        paymentMethod,
+        notes: notes.trim() ? `${notes.trim()} (Paid to ${supName})` : `Supplier Due Settlement for ${supName}`,
+        createdBy: user.uid,
+        subCategory: supName,
+        supplierId
+      };
+      await addDoc(collection(db, "transactions"), newTx);
+
+      // 2. Decrement purchaseDue on supplier
+      await updateDoc(doc(db, "suppliers", supplierId), {
+        purchaseDue: increment(-paidVal)
+      });
+
+      // 3. Log in supplierTransactions
+      const sTx: SupplierTransaction = {
+        supplierId,
+        date,
+        type: "payment",
+        refNo: refNo || `PAY-${Math.floor(100000 + Math.random() * 900000)}`,
+        totalAmount: paidVal,
+        paymentMethod,
+        notes: notes.trim() || "Supplier Due Payment",
+        createdAt: new Date().toISOString()
+      };
+      await addDoc(collection(db, "supplierTransactions"), sTx);
+
+      // 4. Update bank balance if not Cash
+      if (paymentMethod !== "Cash") {
+        const bank = banks.find(b => b.name === paymentMethod);
+        if (bank?.id) {
+          await updateDoc(doc(db, "banks", bank.id), {
+            balance: increment(-paidVal),
+            lastUpdated: new Date().toISOString()
+          });
+        }
+      }
+
+      alert(`Successfully recorded payment of ৳${paidVal.toLocaleString()} to ${supName}.`);
+      setSupplierId("");
+      setPayDueAmount("");
+      setNotes("");
+      setRefNo("");
+      setViewState("list");
+      if (onSuccess) onSuccess();
+    } catch (err) {
+      handleFirestoreError(err, OperationType.WRITE, "supplierTransactions");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  // Delete Due Payment Entry
+  const confirmDeletePayment = async () => {
+    if (!paymentToDelete) return;
+    const tx = paymentToDelete;
+    setPaymentToDelete(null);
+    try {
+      if (!tx.id) return;
+      // 1. Revert Supplier balance (add back paid amount to purchaseDue)
+      await updateDoc(doc(db, "suppliers", tx.supplierId), {
+        purchaseDue: increment(tx.totalAmount)
+      });
+
+      // 2. Revert Bank balance if not Cash
+      if (tx.paymentMethod && tx.paymentMethod !== "Cash") {
+        const bank = banks.find(b => b.name === tx.paymentMethod);
+        if (bank?.id) {
+          await updateDoc(doc(db, "banks", bank.id), {
+            balance: increment(tx.totalAmount),
+            lastUpdated: new Date().toISOString()
+          });
+        }
+      }
+
+      // 3. Delete matching transaction in transactions collection if present
+      const txSnap = await getDocs(collection(db, "transactions"));
+      const matchingTxDoc = txSnap.docs.find(d => {
+        const data = d.data();
+        return (data.supplierId === tx.supplierId || data.notes?.includes(tx.refNo)) && data.category === "Supplier Due Payment" && Math.abs(data.amount - tx.totalAmount) < 0.01;
+      });
+      if (matchingTxDoc) {
+        await deleteDoc(doc(db, "transactions", matchingTxDoc.id));
+      }
+
+      // 4. Delete supplierTransaction
+      await deleteDoc(doc(db, "supplierTransactions", tx.id));
+    } catch (err) {
+      handleFirestoreError(err, OperationType.DELETE, "supplierTransactions");
+    }
+  };
+
   const dynamicPurchases = computeDynamicPurchases(purchases, supplierTransactions, suppliers);
 
   const filteredPurchases = dynamicPurchases.filter((p) => {
@@ -695,12 +809,14 @@ export default function Purchase({
         <div>
           <h2 className="text-3xl font-black tracking-tight text-slate-900 flex items-center gap-2">
             <ClipboardList className="w-8 h-8 text-slate-700" />
-            {viewState === "form" ? (subMenu === "purchases" ? "New Purchase" : "New Purchase Return") : (subMenu === "purchases" ? "Purchase List" : "Purchase Returns List")}
+            {viewState === "form" 
+              ? (subMenu === "purchases" ? "New Purchase" : subMenu === "returns" ? "New Purchase Return" : "Record Supplier Due Settlement") 
+              : (subMenu === "purchases" ? "Purchase List" : subMenu === "returns" ? "Purchase Returns List" : "Supplier Due Payments Ledger")}
           </h2>
           <p className="text-sm font-medium text-slate-500 mt-1">
             {viewState === "form" 
-              ? (subMenu === "purchases" ? "Log purchase bills manually without inventory selectors" : "Record item or value returns to any supplier") 
-              : (subMenu === "purchases" ? "View historical purchase bills and scan uploads" : "Track outstanding return value adjustments or direct refunds")}
+              ? (subMenu === "purchases" ? "Log purchase bills manually without inventory selectors" : subMenu === "returns" ? "Record item or value returns to any supplier" : "Directly pay or clear outstanding supplier due balances") 
+              : (subMenu === "purchases" ? "View historical purchase bills and scan uploads" : subMenu === "returns" ? "Track outstanding return value adjustments or direct refunds" : "View historical payments made towards clearing supplier due balances")}
           </p>
         </div>
       </header>
@@ -737,6 +853,22 @@ export default function Purchase({
         >
           <span className="flex items-center gap-1.5 whitespace-nowrap">
             <RotateCcw className="w-4 h-4" /> Purchase Returns
+          </span>
+        </button>
+        <button
+          onClick={() => {
+            setSubMenu("payDue");
+            setViewState("form");
+          }}
+          className={cn(
+            "pb-3 px-4 font-bold text-sm transition-all relative cursor-pointer",
+            subMenu === "payDue"
+              ? "text-emerald-600 border-b-2 border-emerald-600"
+              : "text-slate-400 hover:text-slate-600"
+          )}
+        >
+          <span className="flex items-center gap-1.5 whitespace-nowrap">
+            <Wallet className="w-4 h-4" /> Supplier Due Payment
           </span>
         </button>
       </div>
@@ -1191,7 +1323,7 @@ export default function Purchase({
                 </div>
               </form>
             </motion.div>
-          ) : (
+          ) : subMenu === "returns" ? (
             <motion.div
               key="purchase-return-form-view"
               initial={{ opacity: 0, y: 15 }}
@@ -1382,6 +1514,178 @@ export default function Purchase({
                 </div>
               </form>
             </motion.div>
+          ) : (
+            <motion.div
+              key="due-payment-form"
+              initial={{ opacity: 0, y: 15 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -15 }}
+              className="bg-white rounded-3xl border border-gray-100 shadow-sm p-6 max-w-3xl mx-auto"
+            >
+              <form onSubmit={handleSubmitDuePayment} className="space-y-6">
+                <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                  <div className="flex items-center gap-2">
+                    <Wallet className="w-5 h-5 text-emerald-600" />
+                    <h3 className="font-bold text-lg text-slate-950">Record Supplier Due Settlement Payment</h3>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setViewState("list")}
+                    className="text-xs font-bold text-slate-500 hover:text-slate-800 bg-slate-100 px-3 py-1.5 rounded-xl transition-all cursor-pointer"
+                  >
+                    View Payment Logs
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  {/* Left Fields */}
+                  <div className="space-y-4">
+                    <div>
+                      <label className="block text-sm font-semibold text-gray-700 mb-1">
+                        Supplier <span className="text-red-500">*</span>
+                      </label>
+                      <select
+                        required
+                        value={supplierId}
+                        onChange={(e) => {
+                          setSupplierId(e.target.value);
+                          const selected = suppliers.find(s => s.id === e.target.value);
+                          if (selected && (selected.purchaseDue || 0) > 0) {
+                            setPayDueAmount(selected.purchaseDue.toFixed(2));
+                          } else {
+                            setPayDueAmount("");
+                          }
+                        }}
+                        className="w-full p-3 rounded-2xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-emerald-500 text-sm font-medium text-gray-900"
+                      >
+                        <option value="">Select Supplier to Settle Due...</option>
+                        {suppliers.map(s => (
+                          <option key={s.id} value={s.id}>
+                            {s.name} ({s.code}) - Due: ৳{(s.purchaseDue || 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-semibold text-gray-700 mb-1">Payment Date</label>
+                      <input
+                        type="date"
+                        required
+                        value={date}
+                        onChange={(e) => setDate(e.target.value)}
+                        className="w-full p-3 rounded-2xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-emerald-500 text-sm text-gray-900 font-medium"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-semibold text-gray-700 mb-1">Reference / Voucher No</label>
+                      <input
+                        type="text"
+                        required
+                        value={refNo}
+                        onChange={(e) => setRefNo(e.target.value)}
+                        className="w-full p-3 rounded-2xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-emerald-500 font-mono text-sm text-gray-900 font-medium"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-semibold text-gray-700 mb-1">Payment Source / Method</label>
+                      <select
+                        value={paymentMethod}
+                        onChange={(e) => setPaymentMethod(e.target.value)}
+                        className="w-full p-3 rounded-2xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-emerald-500 text-sm font-medium text-gray-900"
+                      >
+                        <option value="Cash">Cash in Hand</option>
+                        {banks.map(b => (
+                          <option key={b.id} value={b.name}>
+                            {b.name} (Balance: ৳{b.balance.toLocaleString()})
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* Right Fields */}
+                  <div className="space-y-4">
+                    <div>
+                      <div className="flex items-center justify-between mb-1">
+                        <label className="block text-sm font-semibold text-gray-700">
+                          Payment Amount (৳) <span className="text-red-500">*</span>
+                        </label>
+                        {selectedSupplierObj && (selectedSupplierObj.purchaseDue || 0) > 0 && (
+                          <button
+                            type="button"
+                            onClick={() => setPayDueAmount((selectedSupplierObj.purchaseDue || 0).toFixed(2))}
+                            className="text-xs font-bold text-emerald-600 hover:text-emerald-800 underline cursor-pointer"
+                          >
+                            Pay Full Due (৳{(selectedSupplierObj.purchaseDue || 0).toLocaleString()})
+                          </button>
+                        )}
+                      </div>
+                      <input
+                        type="number"
+                        step="0.01"
+                        required
+                        value={payDueAmount}
+                        onChange={(e) => setPayDueAmount(e.target.value)}
+                        placeholder="0.00"
+                        className="w-full p-3 rounded-2xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-emerald-500 font-bold text-base text-emerald-700 font-mono"
+                      />
+                    </div>
+
+                    {selectedSupplierObj && (
+                      <div className="p-4 bg-emerald-50/70 border border-emerald-100 rounded-2xl text-xs space-y-2">
+                        <div className="flex justify-between text-slate-600">
+                          <span>Current Outstanding Due:</span>
+                          <span className="font-bold font-mono text-red-600">৳{(selectedSupplierObj.purchaseDue || 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}</span>
+                        </div>
+                        <div className="flex justify-between text-slate-600">
+                          <span>Payment Amount:</span>
+                          <span className="font-bold font-mono text-emerald-700">- ৳{(parseFloat(payDueAmount) || 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}</span>
+                        </div>
+                        <hr className="border-emerald-200/60" />
+                        <div className="flex justify-between font-bold text-slate-900 text-sm">
+                          <span>Estimated Remaining Due:</span>
+                          <span className="font-mono text-slate-900">
+                            ৳{Math.max(0, (selectedSupplierObj.purchaseDue || 0) - (parseFloat(payDueAmount) || 0)).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                          </span>
+                        </div>
+                      </div>
+                    )}
+
+                    <div>
+                      <label className="block text-sm font-semibold text-gray-700 mb-1">Reference Notes / Comments</label>
+                      <textarea
+                        rows={3}
+                        value={notes}
+                        onChange={(e) => setNotes(e.target.value)}
+                        placeholder="Add details about cheque no, online transfer ref, or receipt notes..."
+                        className="w-full p-3 rounded-2xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-emerald-500 text-sm text-gray-900 font-medium"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-center gap-4 pt-4 border-t border-gray-100">
+                  <button
+                    type="submit"
+                    disabled={isSubmitting}
+                    className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3 px-10 rounded-xl transition-all shadow-md cursor-pointer disabled:opacity-50 text-sm flex items-center gap-2"
+                  >
+                    <Wallet className="w-4 h-4" />
+                    <span>{isSubmitting ? "Recording..." : "Record Due Payment"}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setViewState("list")}
+                    className="bg-slate-200 hover:bg-slate-300 text-gray-750 font-semibold py-3 px-10 rounded-xl transition-all cursor-pointer text-sm"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </form>
+            </motion.div>
           )
         ) : (
           subMenu === "purchases" ? (
@@ -1543,7 +1847,7 @@ export default function Purchase({
                 </div>
               </div>
             </motion.div>
-          ) : (
+          ) : subMenu === "returns" ? (
             <motion.div
               key="purchase-return-list-view"
               initial={{ opacity: 0 }}
@@ -1704,6 +2008,156 @@ export default function Purchase({
                             </tr>
                           );
                         })
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </motion.div>
+          ) : (
+            <motion.div
+              key="due-payments-list-view"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              className="space-y-6"
+            >
+              {/* Summary Metrics */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="p-5 bg-gradient-to-br from-emerald-600 to-teal-700 text-white rounded-3xl shadow-sm">
+                  <span className="text-xs uppercase font-extrabold text-emerald-100 tracking-wider block">Total Due Settled</span>
+                  <span className="text-2xl font-black font-mono mt-1 block">
+                    ৳{supplierTransactions.filter(t => t.type === "payment").reduce((acc, p) => acc + (p.totalAmount || 0), 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                  </span>
+                  <span className="text-xs text-emerald-100 font-medium mt-1 block">Historical due payments sum</span>
+                </div>
+                <div className="p-5 bg-gradient-to-br from-amber-500 to-orange-600 text-white rounded-3xl shadow-sm">
+                  <span className="text-xs uppercase font-extrabold text-amber-100 tracking-wider block">Suppliers With Due Balance</span>
+                  <span className="text-2xl font-black font-mono mt-1 block">
+                    {suppliers.filter(s => (s.purchaseDue || 0) > 0).length} Suppliers
+                  </span>
+                  <span className="text-xs text-amber-100 font-medium mt-1 block">Pending outstanding accounts</span>
+                </div>
+                <div className="p-5 bg-gradient-to-br from-rose-500 to-pink-600 text-white rounded-3xl shadow-sm">
+                  <span className="text-xs uppercase font-extrabold text-rose-100 tracking-wider block">Total Outstanding Due</span>
+                  <span className="text-2xl font-black font-mono mt-1 block">
+                    ৳{suppliers.reduce((acc, s) => acc + (s.purchaseDue || 0), 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                  </span>
+                  <span className="text-xs text-rose-100 font-medium mt-1 block">Across all active suppliers</span>
+                </div>
+              </div>
+
+              {/* Table Card */}
+              <div className="bg-white rounded-3xl border border-gray-100 shadow-sm p-6">
+                <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-6">
+                  <h2 className="text-xl font-bold text-gray-900">Supplier Due Settlement Payment Ledger</h2>
+                  <button
+                    onClick={() => {
+                      setSupplierId("");
+                      setPayDueAmount("");
+                      setNotes("");
+                      setRefNo("");
+                      setViewState("form");
+                    }}
+                    className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2.5 px-5 rounded-lg transition-colors shadow-sm flex items-center gap-2 text-sm cursor-pointer"
+                  >
+                    <Plus className="w-4 h-4" /> Record New Due Payment
+                  </button>
+                </div>
+
+                {/* Filters */}
+                <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-4">
+                  <div className="flex items-center gap-2 text-sm text-gray-600">
+                    <span>Show</span>
+                    <select
+                      value={entriesLimit}
+                      onChange={(e) => setEntriesLimit(parseInt(e.target.value))}
+                      className="border border-gray-200 rounded-lg p-1.5 bg-gray-50 text-xs font-bold"
+                    >
+                      <option value={10}>10</option>
+                      <option value={20}>20</option>
+                      <option value={50}>50</option>
+                    </select>
+                    <span>entries</span>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm text-gray-600 font-medium">Search:</span>
+                    <div className="relative">
+                      <input
+                        type="text"
+                        value={searchTerm}
+                        onChange={(e) => setSearchTerm(e.target.value)}
+                        placeholder="Ref / Supplier / Notes..."
+                        className="border border-gray-200 rounded-lg py-1.5 pl-3 pr-8 text-sm focus:outline-none focus:ring-1 focus:ring-emerald-500 w-48 bg-gray-50"
+                      />
+                      <Search className="w-4 h-4 text-gray-400 absolute right-2.5 top-2.5" />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Table */}
+                <div className="overflow-x-auto rounded-xl border border-gray-200">
+                  <table className="w-full text-left border-collapse">
+                    <thead>
+                      <tr className="bg-emerald-700 text-white uppercase text-[11px] tracking-wider font-bold">
+                        <th className="p-3.5">Date</th>
+                        <th className="p-3.5">Payment Ref No</th>
+                        <th className="p-3.5">Supplier Name</th>
+                        <th className="p-3.5">Payment Method</th>
+                        <th className="p-3.5 text-right font-bold">Paid Amount</th>
+                        <th className="p-3.5 flex-1">Notes</th>
+                        <th className="p-3.5 text-center">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100 text-sm text-gray-700">
+                      {loading ? (
+                        <tr>
+                          <td colSpan={7} className="p-10 text-center text-gray-400">Loading due payments...</td>
+                        </tr>
+                      ) : supplierTransactions.filter(t => t.type === "payment").length === 0 ? (
+                        <tr>
+                          <td colSpan={7} className="p-6 text-center text-gray-400">No due settlement payments recorded yet.</td>
+                        </tr>
+                      ) : (
+                        supplierTransactions
+                          .filter(t => t.type === "payment")
+                          .filter(p => {
+                            const sName = suppliers.find(s => s.id === p.supplierId)?.name || "Unknown Supplier";
+                            const text = (sName + p.refNo + (p.notes || "") + (p.paymentMethod || "")).toLowerCase();
+                            return text.includes(searchTerm.toLowerCase());
+                          })
+                          .slice(0, entriesLimit)
+                          .map((p) => {
+                            const sName = suppliers.find(s => s.id === p.supplierId)?.name || "Unknown Supplier";
+                            return (
+                              <tr key={p.id} className="hover:bg-slate-50 transition-colors">
+                                <td className="p-3.5 font-medium whitespace-nowrap">{p.date}</td>
+                                <td className="p-3.5 font-bold font-mono text-gray-500">{p.refNo}</td>
+                                <td className="p-3.5 font-semibold text-gray-900">{sName}</td>
+                                <td className="p-3.5">
+                                  <span className="px-2.5 py-1 rounded text-xs font-bold bg-emerald-50 text-emerald-800 border border-emerald-200">
+                                    {p.paymentMethod || "Cash"}
+                                  </span>
+                                </td>
+                                <td className="p-3.5 text-right font-bold text-emerald-700 font-mono">
+                                  ৳{(p.totalAmount || 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                                </td>
+                                <td className="p-3.5 italic text-gray-500 max-w-xs truncate" title={p.notes}>
+                                  {p.notes || "-"}
+                                </td>
+                                <td className="p-3.5 text-center">
+                                  <button
+                                    type="button"
+                                    onClick={() => setPaymentToDelete(p)}
+                                    title="Delete Payment Entry"
+                                    className="text-red-500 hover:text-red-700 inline-block p-1 hover:bg-red-50 rounded cursor-pointer"
+                                  >
+                                    <Trash2 className="w-4 h-4" />
+                                  </button>
+                                </td>
+                              </tr>
+                            );
+                          })
                       )}
                     </tbody>
                   </table>
@@ -1890,6 +2344,37 @@ export default function Purchase({
                 <button
                   type="button"
                   onClick={confirmDeleteReturn}
+                  className="px-5 py-2.5 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-bold transition-all shadow-lg active:scale-95"
+                >
+                  Yes, Delete
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Custom Supplier Due Payment Delete Modal */}
+        {paymentToDelete && (
+          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <div className="bg-white rounded-[32px] max-w-md w-full p-8 shadow-2xl border border-gray-100 animate-in zoom-in-95 duration-200">
+              <div className="w-12 h-12 bg-red-50 rounded-2xl flex items-center justify-center text-red-600 mb-6">
+                <Trash2 className="w-6 h-6" />
+              </div>
+              <h3 className="text-xl font-bold text-gray-900 mb-2">Delete Due Payment Entry?</h3>
+              <p className="text-sm text-gray-500 mb-6">
+                Are you sure you want to delete this payment record? This will add the paid amount back to the supplier's outstanding due balance and reverse bank balance adjustments.
+              </p>
+              <div className="flex justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={() => setPaymentToDelete(null)}
+                  className="px-5 py-2.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-xl text-xs font-bold transition-all"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={confirmDeletePayment}
                   className="px-5 py-2.5 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-bold transition-all shadow-lg active:scale-95"
                 >
                   Yes, Delete

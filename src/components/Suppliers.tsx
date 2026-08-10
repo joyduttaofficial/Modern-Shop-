@@ -73,7 +73,7 @@ export default function Suppliers({
 
   // Selected Profile state
   const [selectedSupplier, setSelectedSupplier] = useState<Supplier | null>(null);
-  const [profileTab, setProfileTab] = useState<"purchases" | "payments" | "returns">("purchases");
+  const [profileTab, setProfileTab] = useState<"all" | "purchases" | "payments" | "returns">("all");
 
   // Dynamic Modals States
   const [activeModal, setActiveModal] = useState<"payDue" | "payReturn" | "addPurchase" | "addReturn" | null>(null);
@@ -666,6 +666,12 @@ export default function Suppliers({
       const supPayments = transactions.filter(t => t.supplierId === selectedSupplier.id && t.type === "payment");
       const supReturns = transactions.filter(t => t.supplierId === selectedSupplier.id && t.type === "return");
 
+      const totalPurchasesTotal = supPurchases.reduce((acc, t) => acc + (t.totalAmount || 0), 0);
+      const totalPurchasesPaid = supPurchases.reduce((acc, t) => acc + (t.paidAmount || 0), 0);
+      const totalPurchasesDue = supPurchases.reduce((acc, t) => acc + (t.dueAmount ?? ((t.totalAmount || 0) - (t.paidAmount || 0))), 0);
+      const totalPaymentsTotal = supPayments.reduce((acc, t) => acc + (t.totalAmount || 0), 0);
+      const totalReturnsTotal = supReturns.reduce((acc, t) => acc + (t.totalAmount || 0), 0);
+
       const htmlContent = `
         <div style="font-family: 'Inter', sans-serif; color: #0f172a; padding: 12px; max-width: 800px; margin: 0 auto;">
           <!-- Header -->
@@ -721,8 +727,8 @@ export default function Suppliers({
             </tbody>
           </table>
 
-          <!-- Purchases Section -->
-          <h4 style="font-size: 11px; font-weight: 700; color: #334155; margin: 12px 0 6px 0; text-transform: uppercase;">Purchases Historical Ledger (${supPurchases.length})</h4>
+          <!-- 1. Purchases Section -->
+          <h4 style="font-size: 11px; font-weight: 700; color: #334155; margin: 12px 0 6px 0; text-transform: uppercase;">1. Purchases Historical Ledger (${supPurchases.length})</h4>
           <table style="width: 100%; border-collapse: collapse; margin-bottom: 16px; font-size: 9px;">
             <thead>
               <tr style="background-color: #0f172a; color: #ffffff;">
@@ -748,10 +754,19 @@ export default function Suppliers({
                 `).join('')
               }
             </tbody>
+            <tfoot>
+              <tr style="background-color: #f1f5f9; font-weight: 700; border-top: 2px solid #94a3b8;">
+                <td colspan="2" style="padding: 6px; border: 1px solid #cbd5e1; text-transform: uppercase;">Purchases Ledger Total (${supPurchases.length})</td>
+                <td style="padding: 6px; border: 1px solid #cbd5e1; text-align: right; color: #1e3a8a; font-weight: 800;">৳${totalPurchasesTotal.toLocaleString('en-US', {minimumFractionDigits: 2})}</td>
+                <td style="padding: 6px; border: 1px solid #cbd5e1; text-align: right; color: #15803d; font-weight: 800;">৳${totalPurchasesPaid.toLocaleString('en-US', {minimumFractionDigits: 2})}</td>
+                <td style="padding: 6px; border: 1px solid #cbd5e1; text-align: right; color: #b91c1c; font-weight: 800;">৳${totalPurchasesDue.toLocaleString('en-US', {minimumFractionDigits: 2})}</td>
+                <td style="padding: 6px; border: 1px solid #cbd5e1; color: #64748b;">Total Purchases</td>
+              </tr>
+            </tfoot>
           </table>
 
-          <!-- Payments Section -->
-          <h4 style="font-size: 11px; font-weight: 700; color: #334155; margin: 12px 0 6px 0; text-transform: uppercase;">Payment Outflow Logs (${supPayments.length})</h4>
+          <!-- 2. Payments Section -->
+          <h4 style="font-size: 11px; font-weight: 700; color: #334155; margin: 12px 0 6px 0; text-transform: uppercase;">2. Payment Outflow Logs (${supPayments.length})</h4>
           <table style="width: 100%; border-collapse: collapse; margin-bottom: 16px; font-size: 9px;">
             <thead>
               <tr style="background-color: #0f172a; color: #ffffff;">
@@ -775,10 +790,17 @@ export default function Suppliers({
                 `).join('')
               }
             </tbody>
+            <tfoot>
+              <tr style="background-color: #f1f5f9; font-weight: 700; border-top: 2px solid #94a3b8;">
+                <td colspan="3" style="padding: 6px; border: 1px solid #cbd5e1; text-transform: uppercase;">Payments Outflow Total (${supPayments.length})</td>
+                <td style="padding: 6px; border: 1px solid #cbd5e1; text-align: right; color: #15803d; font-weight: 800;">৳${totalPaymentsTotal.toLocaleString('en-US', {minimumFractionDigits: 2})}</td>
+                <td style="padding: 6px; border: 1px solid #cbd5e1; color: #64748b;">Total Paid</td>
+              </tr>
+            </tfoot>
           </table>
 
-          <!-- Product Returns Section -->
-          <h4 style="font-size: 11px; font-weight: 700; color: #334155; margin: 12px 0 6px 0; text-transform: uppercase;">Product Returns History (${supReturns.length})</h4>
+          <!-- 3. Product Returns Section -->
+          <h4 style="font-size: 11px; font-weight: 700; color: #334155; margin: 12px 0 6px 0; text-transform: uppercase;">3. Product Returns History (${supReturns.length})</h4>
           <table style="width: 100%; border-collapse: collapse; margin-bottom: 16px; font-size: 9px;">
             <thead>
               <tr style="background-color: #0f172a; color: #ffffff;">
@@ -802,7 +824,41 @@ export default function Suppliers({
                 `).join('')
               }
             </tbody>
+            <tfoot>
+              <tr style="background-color: #f1f5f9; font-weight: 700; border-top: 2px solid #94a3b8;">
+                <td colspan="3" style="padding: 6px; border: 1px solid #cbd5e1; text-transform: uppercase;">Product Returns Total (${supReturns.length})</td>
+                <td style="padding: 6px; border: 1px solid #cbd5e1; text-align: right; color: #b45309; font-weight: 800;">৳${totalReturnsTotal.toLocaleString('en-US', {minimumFractionDigits: 2})}</td>
+                <td style="padding: 6px; border: 1px solid #cbd5e1; color: #64748b;">Total Returns</td>
+              </tr>
+            </tfoot>
           </table>
+
+          <!-- 4. Grand Reconciliation Box -->
+          <div style="background-color: #0f172a; color: #ffffff; border-radius: 8px; padding: 12px; margin-top: 16px;">
+            <h3 style="font-size: 12px; font-weight: 800; color: #38bdf8; margin: 0 0 6px 0; text-transform: uppercase;">ALL TOTAL GRAND BALANCE RECONCILIATION</h3>
+            <table style="width: 100%; border-collapse: collapse; font-size: 10px; color: #ffffff;">
+              <tr>
+                <td style="padding: 4px 0;">1. Opening Balance Amount:</td>
+                <td style="padding: 4px 0; text-align: right; font-weight: 600;">+ ৳${finances.openingBalance.toLocaleString('en-US', {minimumFractionDigits: 2})}</td>
+              </tr>
+              <tr>
+                <td style="padding: 4px 0;">2. Gross Purchases Total:</td>
+                <td style="padding: 4px 0; text-align: right; font-weight: 600;">+ ৳${totalPurchasesTotal.toLocaleString('en-US', {minimumFractionDigits: 2})}</td>
+              </tr>
+              <tr>
+                <td style="padding: 4px 0;">3. Total Payments Paid Out:</td>
+                <td style="padding: 4px 0; text-align: right; font-weight: 600; color: #4ade80;">- ৳${totalPaymentsTotal.toLocaleString('en-US', {minimumFractionDigits: 2})}</td>
+              </tr>
+              <tr>
+                <td style="padding: 4px 0;">4. Total Returns Credited:</td>
+                <td style="padding: 4px 0; text-align: right; font-weight: 600; color: #fbbf24;">- ৳${totalReturnsTotal.toLocaleString('en-US', {minimumFractionDigits: 2})}</td>
+              </tr>
+              <tr style="border-top: 1px solid #334155; font-size: 11px; font-weight: 800;">
+                <td style="padding: 6px 0; color: #38bdf8;">NET REMAINING OUTSTANDING DUE:</td>
+                <td style="padding: 6px 0; text-align: right; color: #f87171; font-size: 12px;">৳${finances.remainingDue.toLocaleString('en-US', {minimumFractionDigits: 2})}</td>
+              </tr>
+            </table>
+          </div>
 
           <!-- Footer -->
           <div style="margin-top: 20px; text-align: center; border-top: 1px solid #e2e8f0; padding-top: 8px; font-size: 9px; color: #94a3b8;">
@@ -828,6 +884,12 @@ export default function Suppliers({
     const supPayments = transactions.filter(t => t.supplierId === selectedSupplier.id && t.type === "payment");
     const supReturns = transactions.filter(t => t.supplierId === selectedSupplier.id && t.type === "return");
 
+    const totalPurchasesTotal = supPurchases.reduce((acc, t) => acc + (t.totalAmount || 0), 0);
+    const totalPurchasesPaid = supPurchases.reduce((acc, t) => acc + (t.paidAmount || 0), 0);
+    const totalPurchasesDue = supPurchases.reduce((acc, t) => acc + (t.dueAmount ?? ((t.totalAmount || 0) - (t.paidAmount || 0))), 0);
+    const totalPaymentsTotal = supPayments.reduce((acc, t) => acc + (t.totalAmount || 0), 0);
+    const totalReturnsTotal = supReturns.reduce((acc, t) => acc + (t.totalAmount || 0), 0);
+
     const lines: string[] = [];
 
     // Header & Profile Info
@@ -850,7 +912,7 @@ export default function Suppliers({
     lines.push("");
 
     // Purchases
-    lines.push('"--- PURCHASES HISTORICAL LEDGER ---"');
+    lines.push('"--- 1. PURCHASES HISTORICAL LEDGER ---"');
     lines.push('"Date","Ref No","Type","Total Amount (৳)","Paid Amount (৳)","Pending Due (৳)","Notes"');
     if (supPurchases.length === 0) {
       lines.push('"No purchases logged"');
@@ -858,11 +920,12 @@ export default function Suppliers({
       supPurchases.forEach(p => {
         lines.push(`"${p.date}","${p.refNo}","${p.type}","${(p.totalAmount || 0).toFixed(2)}","${(p.paidAmount || 0).toFixed(2)}","${(p.dueAmount || 0).toFixed(2)}","${(p.notes || '').replace(/"/g, '""')}"`);
       });
+      lines.push(`"TOTAL PURCHASES (${supPurchases.length} Items)","","","${totalPurchasesTotal.toFixed(2)}","${totalPurchasesPaid.toFixed(2)}","${totalPurchasesDue.toFixed(2)}","Total Purchases Liability"`);
     }
     lines.push("");
 
     // Payments
-    lines.push('"--- PAYMENT OUTFLOW LOGS ---"');
+    lines.push('"--- 2. PAYMENT OUTFLOW LOGS ---"');
     lines.push('"Date","Voucher/Ref No","Payment Method","Paid Amount (৳)","Notes"');
     if (supPayments.length === 0) {
       lines.push('"No payment outflow logs recorded"');
@@ -870,11 +933,12 @@ export default function Suppliers({
       supPayments.forEach(p => {
         lines.push(`"${p.date}","${p.refNo}","${p.paymentMethod || 'Cash'}","${(p.totalAmount || 0).toFixed(2)}","${(p.notes || '').replace(/"/g, '""')}"`);
       });
+      lines.push(`"TOTAL PAYMENTS (${supPayments.length} Logs)","","","${totalPaymentsTotal.toFixed(2)}","Total Outflow Paid"`);
     }
     lines.push("");
 
     // Returns
-    lines.push('"--- PRODUCT RETURNS HISTORY ---"');
+    lines.push('"--- 3. PRODUCT RETURNS HISTORY ---"');
     lines.push('"Date","Return Ref No","Adjustment Method","Return Value (৳)","Notes"');
     if (supReturns.length === 0) {
       lines.push('"No product returns recorded"');
@@ -882,7 +946,17 @@ export default function Suppliers({
       supReturns.forEach(r => {
         lines.push(`"${r.date}","${r.refNo}","${r.paymentMethod || 'Due Adjusted'}","${(r.totalAmount || 0).toFixed(2)}","${(r.notes || '').replace(/"/g, '""')}"`);
       });
+      lines.push(`"TOTAL RETURNS (${supReturns.length} Records)","","","${totalReturnsTotal.toFixed(2)}","Total Returns Value"`);
     }
+    lines.push("");
+
+    // Grand All Total Reconciliation
+    lines.push('"--- 4. ALL TOTAL GRAND BALANCE RECONCILIATION ---"');
+    lines.push(`"1. Opening Balance Amount:", "${finances.openingBalance.toFixed(2)}"`);
+    lines.push(`"2. (+) Gross Purchases Total:", "${totalPurchasesTotal.toFixed(2)}"`);
+    lines.push(`"3. (-) Total Payments Paid Out:", "${totalPaymentsTotal.toFixed(2)}"`);
+    lines.push(`"4. (-) Total Product Returns:", "${totalReturnsTotal.toFixed(2)}"`);
+    lines.push(`"5. (=) NET REMAINING OUTSTANDING DUE:", "${finances.remainingDue.toFixed(2)}"`);
 
     const csvContent = "\uFEFF" + lines.join("\n");
     const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
@@ -1429,44 +1503,71 @@ export default function Suppliers({
             </div>
 
             {/* Profile Transaction Tabs and Logs */}
-            <div className="bg-white rounded-3xl border border-gray-100 shadow-sm p-6">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-gray-100 pb-2 mb-4 gap-3">
-                <div className="flex flex-wrap gap-4">
-                  <button
-                    onClick={() => setProfileTab("purchases")}
-                    className={cn(
-                      "pb-2 text-sm font-semibold transition-all relative cursor-pointer",
-                      profileTab === "purchases" ? "text-blue-600 border-b-2 border-blue-600" : "text-gray-400 hover:text-gray-600"
-                    )}
-                  >
-                    Purchases Historical Ledger
-                  </button>
-                  <button
-                    onClick={() => setProfileTab("payments")}
-                    className={cn(
-                      "pb-2 text-sm font-semibold transition-all relative cursor-pointer",
-                      profileTab === "payments" ? "text-blue-600 border-b-2 border-blue-600" : "text-gray-400 hover:text-gray-600"
-                    )}
-                  >
-                    Payment Outflow Logs
-                  </button>
-                  <button
-                    onClick={() => setProfileTab("returns")}
-                    className={cn(
-                      "pb-2 text-sm font-semibold transition-all relative cursor-pointer",
-                      profileTab === "returns" ? "text-blue-600 border-b-2 border-blue-600" : "text-gray-400 hover:text-gray-600"
-                    )}
-                  >
-                    Product Returns History
-                  </button>
-                </div>
+            <div className="bg-white rounded-3xl border border-gray-100 shadow-sm p-6 space-y-8">
+              {/* Header Bar with Tabs and Export */}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-gray-100 pb-3 gap-3">
+                {(() => {
+                  const supPurchases = transactions.filter(t => t.supplierId === selectedSupplier.id && t.type === "purchase");
+                  const supPayments = transactions.filter(t => t.supplierId === selectedSupplier.id && t.type === "payment");
+                  const supReturns = transactions.filter(t => t.supplierId === selectedSupplier.id && t.type === "return");
 
-                <div className="flex items-center gap-2 pb-1">
+                  return (
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        onClick={() => setProfileTab("all")}
+                        className={cn(
+                          "px-3 py-1.5 text-xs font-extrabold rounded-xl transition-all cursor-pointer flex items-center gap-1.5",
+                          profileTab === "all"
+                            ? "bg-blue-600 text-white shadow-xs"
+                            : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                        )}
+                      >
+                        <span className="w-2 h-2 rounded-full bg-emerald-400"></span>
+                        3-in-1 Statement
+                      </button>
+                      <button
+                        onClick={() => setProfileTab("purchases")}
+                        className={cn(
+                          "px-3 py-1.5 text-xs font-bold rounded-xl transition-all cursor-pointer flex items-center gap-1.5",
+                          profileTab === "purchases"
+                            ? "bg-blue-600 text-white shadow-xs"
+                            : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                        )}
+                      >
+                        Purchases Ledger ({supPurchases.length})
+                      </button>
+                      <button
+                        onClick={() => setProfileTab("payments")}
+                        className={cn(
+                          "px-3 py-1.5 text-xs font-bold rounded-xl transition-all cursor-pointer flex items-center gap-1.5",
+                          profileTab === "payments"
+                            ? "bg-blue-600 text-white shadow-xs"
+                            : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                        )}
+                      >
+                        Payment Outflow ({supPayments.length})
+                      </button>
+                      <button
+                        onClick={() => setProfileTab("returns")}
+                        className={cn(
+                          "px-3 py-1.5 text-xs font-bold rounded-xl transition-all cursor-pointer flex items-center gap-1.5",
+                          profileTab === "returns"
+                            ? "bg-blue-600 text-white shadow-xs"
+                            : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                        )}
+                      >
+                        Product Returns ({supReturns.length})
+                      </button>
+                    </div>
+                  );
+                })()}
+
+                <div className="flex items-center gap-2">
                   <button
                     onClick={handleExportProfilePDF}
                     disabled={isExportingPdf}
                     className="text-xs font-bold text-red-600 bg-red-50 hover:bg-red-100 disabled:opacity-50 border border-red-200 px-3 py-1.5 rounded-xl flex items-center gap-1.5 transition-all cursor-pointer shadow-2xs"
-                    title="Download Statement PDF"
+                    title="Download Complete Statement PDF"
                   >
                     <FileText className="w-3.5 h-3.5" />
                     <span>{isExportingPdf ? "Generating..." : "Download PDF"}</span>
@@ -1474,7 +1575,7 @@ export default function Suppliers({
                   <button
                     onClick={handleExportProfileExcel}
                     className="text-xs font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 px-3 py-1.5 rounded-xl flex items-center gap-1.5 transition-all cursor-pointer shadow-2xs"
-                    title="Download Statement Excel (CSV)"
+                    title="Download Complete Statement Excel (CSV)"
                   >
                     <FileSpreadsheet className="w-3.5 h-3.5" />
                     <span>Download Excel</span>
@@ -1482,188 +1583,362 @@ export default function Suppliers({
                 </div>
               </div>
 
-              {/* Tab Outputs */}
-              {profileTab === "purchases" && (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left border-collapse">
-                    <thead>
-                      <tr className="bg-slate-50 text-gray-600 uppercase text-[10px] font-bold tracking-wider border-b border-gray-200">
-                        <th className="p-3">Date</th>
-                        <th className="p-3">Ref No</th>
-                        <th className="p-3">Type</th>
-                        <th className="p-3 text-right">Total Amount (৳)</th>
-                        <th className="p-3 text-right">Paid Amount (৳)</th>
-                        <th className="p-3 text-right">Pending Due (৳)</th>
-                        <th className="p-3">Notes</th>
-                        <th className="p-4 text-center">Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-gray-100 text-xs text-gray-700">
-                      {transactions.filter(t => t.supplierId === selectedSupplier.id && t.type === "purchase").length === 0 ? (
-                        <tr>
-                          <td colSpan={8} className="p-6 text-center text-gray-400 font-medium font-medium">No purchase bills logged yet.</td>
-                        </tr>
-                      ) : (
-                        transactions
-                          .filter(t => t.supplierId === selectedSupplier.id && t.type === "purchase")
-                          .map((t) => (
-                            <tr key={t.id} className="hover:bg-slate-50">
-                              <td className="p-3 font-semibold text-gray-500">{t.date}</td>
-                              <td className="p-3 font-bold font-mono text-gray-800">{t.refNo}</td>
-                              <td className="p-3 uppercase">
-                                <span className="px-2 py-0.5 rounded text-[10px] font-extrabold bg-blue-100 text-blue-700">
-                                  {t.type}
-                                </span>
-                              </td>
-                              <td className="p-3 text-right font-bold text-gray-900">{formatCurrency(t.totalAmount)}</td>
-                              <td className="p-3 text-right">{t.paidAmount ? formatCurrency(t.paidAmount) : "—"}</td>
-                              <td className="p-3 text-right text-red-600 font-bold">{t.dueAmount ? formatCurrency(t.dueAmount) : "0"}</td>
-                              <td className="p-3 text-gray-500 italic max-w-xs truncate">{t.notes || "—"}</td>
-                              <td className="p-3 text-center">
-                                <div className="flex items-center justify-center gap-2">
-                                  <button
-                                    onClick={() => setInvoiceTransaction(t)}
-                                    title="View Proper Invoice"
-                                    className="p-1 text-blue-600 hover:text-blue-800 hover:bg-blue-50 rounded-lg transition-colors"
-                                  >
-                                    <Receipt className="w-4 h-4" />
-                                  </button>
-                                  <button
-                                    onClick={() => setTxToDelete({ id: t.id!, tx: t })}
-                                    title="Delete Transaction Record"
-                                    className="p-1 text-red-600 hover:text-red-800 hover:bg-red-50 rounded-lg transition-colors"
-                                  >
-                                    <Trash2 className="w-4 h-4" />
-                                  </button>
-                                </div>
-                              </td>
-                            </tr>
-                          ))
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-              )}
+              {/* Transactions Data Calculations */}
+              {(() => {
+                const supPurchases = transactions.filter(t => t.supplierId === selectedSupplier.id && t.type === "purchase");
+                const supPayments = transactions.filter(t => t.supplierId === selectedSupplier.id && t.type === "payment");
+                const supReturns = transactions.filter(t => t.supplierId === selectedSupplier.id && t.type === "return");
 
-              {profileTab === "returns" && (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left border-collapse">
-                    <thead>
-                      <tr className="bg-slate-50 text-gray-600 uppercase text-[10px] font-bold tracking-wider border-b border-gray-200">
-                        <th className="p-3">Return Date</th>
-                        <th className="p-3">Return Ref No</th>
-                        <th className="p-3">Type</th>
-                        <th className="p-3 text-right">Return Value (৳)</th>
-                        <th className="p-3">Adjustment / Method</th>
-                        <th className="p-3">Status/Notes</th>
-                        <th className="p-4 text-center">Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-gray-100 text-xs text-gray-700">
-                      {transactions.filter(t => t.supplierId === selectedSupplier.id && t.type === "return").length === 0 ? (
-                        <tr>
-                          <td colSpan={7} className="p-6 text-center text-gray-400 font-medium">No product returns recorded for this supplier.</td>
-                        </tr>
-                      ) : (
-                        transactions
-                          .filter(t => t.supplierId === selectedSupplier.id && t.type === "return")
-                          .map((t) => (
-                            <tr key={t.id} className="hover:bg-slate-50">
-                              <td className="p-3 font-semibold text-gray-500">{t.date}</td>
-                              <td className="p-3 font-bold font-mono text-gray-800">{t.refNo}</td>
-                              <td className="p-3 uppercase">
-                                <span className="bg-yellow-100 text-yellow-700 px-2 py-0.5 rounded text-[10px] font-extrabold">
-                                  {t.type}
-                                </span>
-                              </td>
-                              <td className="p-3 text-right font-bold text-amber-600">{formatCurrency(t.totalAmount)}</td>
-                              <td className="p-3 font-bold text-gray-600">{t.paymentMethod || "Due Adjusted"}</td>
-                              <td className="p-3 text-gray-500 italic max-w-xs truncate">{t.notes || "—"}</td>
-                              <td className="p-3 text-center">
-                                <div className="flex items-center justify-center gap-2">
-                                  <button
-                                    onClick={() => setInvoiceTransaction(t)}
-                                    title="View Return Voucher"
-                                    className="p-1 text-blue-600 hover:text-blue-800 hover:bg-blue-50 rounded-lg transition-colors"
-                                  >
-                                    <Receipt className="w-4 h-4" />
-                                  </button>
-                                  <button
-                                    onClick={() => setTxToDelete({ id: t.id!, tx: t })}
-                                    title="Delete Return Record"
-                                    className="p-1 text-red-600 hover:text-red-800 hover:bg-red-50 rounded-lg transition-colors"
-                                  >
-                                    <Trash2 className="w-4 h-4" />
-                                  </button>
-                                </div>
-                              </td>
-                            </tr>
-                          ))
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-              )}
+                const totalPurchasesTotal = supPurchases.reduce((acc, t) => acc + (t.totalAmount || 0), 0);
+                const totalPurchasesPaid = supPurchases.reduce((acc, t) => acc + (t.paidAmount || 0), 0);
+                const totalPurchasesDue = supPurchases.reduce((acc, t) => acc + (t.dueAmount ?? ((t.totalAmount || 0) - (t.paidAmount || 0))), 0);
 
-              {profileTab === "payments" && (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left border-collapse">
-                    <thead>
-                      <tr className="bg-slate-50 text-gray-600 uppercase text-[10px] font-bold tracking-wider border-b border-gray-200">
-                        <th className="p-3">Date</th>
-                        <th className="p-3">Ref/Receipt No</th>
-                        <th className="p-3">Type</th>
-                        <th className="p-3 text-right">Amount Paid (৳)</th>
-                        <th className="p-3">Payment Method</th>
-                        <th className="p-3">Notes</th>
-                        <th className="p-4 text-center">Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-gray-100 text-xs text-gray-700">
-                      {transactions.filter(t => t.supplierId === selectedSupplier.id && t.type === "payment").length === 0 ? (
-                        <tr>
-                          <td colSpan={7} className="p-6 text-center text-gray-400 font-medium">No payments logs found.</td>
-                        </tr>
-                      ) : (
-                        transactions
-                          .filter(t => t.supplierId === selectedSupplier.id && t.type === "payment")
-                          .map((t) => (
-                            <tr key={t.id} className="hover:bg-slate-50">
-                              <td className="p-3 font-semibold text-gray-500">{t.date}</td>
-                              <td className="p-3 font-bold font-mono text-gray-800">{t.refNo}</td>
-                              <td className="p-3 uppercase">
-                                <span className="bg-green-100 text-green-700 px-2 py-0.5 rounded text-[10px] font-extrabold">
-                                  payment
-                                </span>
-                              </td>
-                              <td className="p-3 text-right font-bold text-[#00a65a]">{formatCurrency(t.totalAmount)}</td>
-                              <td className="p-3 font-bold text-gray-600">{t.paymentMethod || "Cash"}</td>
-                              <td className="p-3 text-gray-500 italic max-w-xs truncate">{t.notes || "—"}</td>
-                              <td className="p-3 text-center">
-                                <div className="flex items-center justify-center gap-2">
-                                  <button
-                                    onClick={() => setInvoiceTransaction(t)}
-                                    title="View Payment Voucher"
-                                    className="p-1 text-blue-600 hover:text-blue-800 hover:bg-blue-50 rounded-lg transition-colors"
-                                  >
-                                    <Receipt className="w-4 h-4" />
-                                  </button>
-                                  <button
-                                    onClick={() => setTxToDelete({ id: t.id!, tx: t })}
-                                    title="Delete Paid Payment Voucher"
-                                    className="p-1 text-red-600 hover:text-red-800 hover:bg-red-50 rounded-lg transition-colors"
-                                  >
-                                    <Trash2 className="w-4 h-4" />
-                                  </button>
-                                </div>
-                              </td>
-                            </tr>
-                          ))
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-              )}
+                const totalPaymentsTotal = supPayments.reduce((acc, t) => acc + (t.totalAmount || 0), 0);
+                const totalReturnsTotal = supReturns.reduce((acc, t) => acc + (t.totalAmount || 0), 0);
+
+                const finances = getSupplierFinances(selectedSupplier);
+
+                const showPurchases = profileTab === "all" || profileTab === "purchases";
+                const showPayments = profileTab === "all" || profileTab === "payments";
+                const showReturns = profileTab === "all" || profileTab === "returns";
+
+                return (
+                  <div className="space-y-8">
+                    {/* SECTION 1: PURCHASES LEDGER */}
+                    {showPurchases && (
+                      <div className="bg-slate-50/50 rounded-2xl border border-slate-200/80 p-4 space-y-3">
+                        <div className="flex items-center justify-between">
+                          <h4 className="text-xs font-black uppercase tracking-wider text-blue-900 flex items-center gap-2">
+                            <span className="w-2 h-2 rounded-full bg-blue-600"></span>
+                            1. Purchases Historical Ledger ({supPurchases.length})
+                          </h4>
+                          <span className="text-[11px] font-extrabold text-blue-700 bg-blue-50 border border-blue-200 px-2.5 py-0.5 rounded-lg">
+                            Total: {formatCurrency(totalPurchasesTotal)}
+                          </span>
+                        </div>
+
+                        <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
+                          <table className="w-full text-left border-collapse">
+                            <thead>
+                              <tr className="bg-slate-100 text-slate-700 uppercase text-[10px] font-extrabold tracking-wider border-b border-slate-200">
+                                <th className="p-3">Date</th>
+                                <th className="p-3">Ref No</th>
+                                <th className="p-3">Type</th>
+                                <th className="p-3 text-right">Total Amount (৳)</th>
+                                <th className="p-3 text-right">Paid Amount (৳)</th>
+                                <th className="p-3 text-right">Pending Due (৳)</th>
+                                <th className="p-3">Notes</th>
+                                <th className="p-3 text-center">Actions</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-gray-100 text-xs text-gray-700">
+                              {supPurchases.length === 0 ? (
+                                <tr>
+                                  <td colSpan={8} className="p-6 text-center text-gray-400 font-medium">No purchase bills logged yet.</td>
+                                </tr>
+                              ) : (
+                                supPurchases.map((t) => (
+                                  <tr key={t.id} className="hover:bg-slate-50 transition-colors">
+                                    <td className="p-3 font-semibold text-gray-500">{t.date}</td>
+                                    <td className="p-3 font-bold font-mono text-gray-800">{t.refNo}</td>
+                                    <td className="p-3 uppercase">
+                                      <span className="px-2 py-0.5 rounded text-[10px] font-extrabold bg-blue-100 text-blue-700">
+                                        {t.type}
+                                      </span>
+                                    </td>
+                                    <td className="p-3 text-right font-bold text-gray-900">{formatCurrency(t.totalAmount)}</td>
+                                    <td className="p-3 text-right font-medium text-emerald-700">{t.paidAmount ? formatCurrency(t.paidAmount) : "—"}</td>
+                                    <td className="p-3 text-right text-red-600 font-bold">{t.dueAmount ? formatCurrency(t.dueAmount) : "0"}</td>
+                                    <td className="p-3 text-gray-500 italic max-w-xs truncate">{t.notes || "—"}</td>
+                                    <td className="p-3 text-center">
+                                      <div className="flex items-center justify-center gap-2">
+                                        <button
+                                          onClick={() => setInvoiceTransaction(t)}
+                                          title="View Invoice"
+                                          className="p-1 text-blue-600 hover:text-blue-800 hover:bg-blue-50 rounded-lg transition-colors cursor-pointer"
+                                        >
+                                          <Receipt className="w-4 h-4" />
+                                        </button>
+                                        <button
+                                          onClick={() => setTxToDelete({ id: t.id!, tx: t })}
+                                          title="Delete Record"
+                                          className="p-1 text-red-600 hover:text-red-800 hover:bg-red-50 rounded-lg transition-colors cursor-pointer"
+                                        >
+                                          <Trash2 className="w-4 h-4" />
+                                        </button>
+                                      </div>
+                                    </td>
+                                  </tr>
+                                ))
+                              )}
+                            </tbody>
+                            <tfoot className="bg-slate-100/90 font-bold text-xs border-t-2 border-slate-300">
+                              <tr>
+                                <td colSpan={3} className="p-3 text-slate-800 uppercase font-black text-[11px] tracking-wide">
+                                  Purchases Ledger Total ({supPurchases.length} Items)
+                                </td>
+                                <td className="p-3 text-right text-blue-900 font-black text-sm">
+                                  {formatCurrency(totalPurchasesTotal)}
+                                </td>
+                                <td className="p-3 text-right text-emerald-700 font-black text-sm">
+                                  {formatCurrency(totalPurchasesPaid)}
+                                </td>
+                                <td className="p-3 text-right text-red-600 font-black text-sm">
+                                  {formatCurrency(totalPurchasesDue)}
+                                </td>
+                                <td colSpan={2} className="p-3 text-[11px] text-gray-500 font-normal">
+                                  Total purchase bills
+                                </td>
+                              </tr>
+                            </tfoot>
+                          </table>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* SECTION 2: PAYMENTS OUTFLOW LOGS */}
+                    {showPayments && (
+                      <div className="bg-slate-50/50 rounded-2xl border border-slate-200/80 p-4 space-y-3">
+                        <div className="flex items-center justify-between">
+                          <h4 className="text-xs font-black uppercase tracking-wider text-emerald-800 flex items-center gap-2">
+                            <span className="w-2 h-2 rounded-full bg-emerald-600"></span>
+                            2. Payment Outflow Logs ({supPayments.length})
+                          </h4>
+                          <span className="text-[11px] font-extrabold text-emerald-800 bg-emerald-50 border border-emerald-200 px-2.5 py-0.5 rounded-lg">
+                            Total Paid: {formatCurrency(totalPaymentsTotal)}
+                          </span>
+                        </div>
+
+                        <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
+                          <table className="w-full text-left border-collapse">
+                            <thead>
+                              <tr className="bg-slate-100 text-slate-700 uppercase text-[10px] font-extrabold tracking-wider border-b border-slate-200">
+                                <th className="p-3">Date</th>
+                                <th className="p-3">Ref/Receipt No</th>
+                                <th className="p-3">Type</th>
+                                <th className="p-3 text-right">Amount Paid (৳)</th>
+                                <th className="p-3">Payment Method</th>
+                                <th className="p-3">Notes</th>
+                                <th className="p-3 text-center">Actions</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-gray-100 text-xs text-gray-700">
+                              {supPayments.length === 0 ? (
+                                <tr>
+                                  <td colSpan={7} className="p-6 text-center text-gray-400 font-medium">No payment outflow logs recorded.</td>
+                                </tr>
+                              ) : (
+                                supPayments.map((t) => (
+                                  <tr key={t.id} className="hover:bg-slate-50 transition-colors">
+                                    <td className="p-3 font-semibold text-gray-500">{t.date}</td>
+                                    <td className="p-3 font-bold font-mono text-gray-800">{t.refNo}</td>
+                                    <td className="p-3 uppercase">
+                                      <span className="bg-green-100 text-green-700 px-2 py-0.5 rounded text-[10px] font-extrabold">
+                                        payment
+                                      </span>
+                                    </td>
+                                    <td className="p-3 text-right font-bold text-[#00a65a]">{formatCurrency(t.totalAmount)}</td>
+                                    <td className="p-3 font-bold text-gray-600">{t.paymentMethod || "Cash"}</td>
+                                    <td className="p-3 text-gray-500 italic max-w-xs truncate">{t.notes || "—"}</td>
+                                    <td className="p-3 text-center">
+                                      <div className="flex items-center justify-center gap-2">
+                                        <button
+                                          onClick={() => setInvoiceTransaction(t)}
+                                          title="View Voucher"
+                                          className="p-1 text-blue-600 hover:text-blue-800 hover:bg-blue-50 rounded-lg transition-colors cursor-pointer"
+                                        >
+                                          <Receipt className="w-4 h-4" />
+                                        </button>
+                                        <button
+                                          onClick={() => setTxToDelete({ id: t.id!, tx: t })}
+                                          title="Delete Payment"
+                                          className="p-1 text-red-600 hover:text-red-800 hover:bg-red-50 rounded-lg transition-colors cursor-pointer"
+                                        >
+                                          <Trash2 className="w-4 h-4" />
+                                        </button>
+                                      </div>
+                                    </td>
+                                  </tr>
+                                ))
+                              )}
+                            </tbody>
+                            <tfoot className="bg-slate-100/90 font-bold text-xs border-t-2 border-slate-300">
+                              <tr>
+                                <td colSpan={3} className="p-3 text-slate-800 uppercase font-black text-[11px] tracking-wide">
+                                  Payments Outflow Total ({supPayments.length} Logs)
+                                </td>
+                                <td className="p-3 text-right text-emerald-700 font-black text-sm">
+                                  {formatCurrency(totalPaymentsTotal)}
+                                </td>
+                                <td colSpan={3} className="p-3 text-[11px] text-gray-500 font-normal">
+                                  Total cash/bank settlements
+                                </td>
+                              </tr>
+                            </tfoot>
+                          </table>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* SECTION 3: PRODUCT RETURNS HISTORY */}
+                    {showReturns && (
+                      <div className="bg-slate-50/50 rounded-2xl border border-slate-200/80 p-4 space-y-3">
+                        <div className="flex items-center justify-between">
+                          <h4 className="text-xs font-black uppercase tracking-wider text-amber-800 flex items-center gap-2">
+                            <span className="w-2 h-2 rounded-full bg-amber-500"></span>
+                            3. Product Returns History ({supReturns.length})
+                          </h4>
+                          <span className="text-[11px] font-extrabold text-amber-800 bg-amber-50 border border-amber-200 px-2.5 py-0.5 rounded-lg">
+                            Total Return Value: {formatCurrency(totalReturnsTotal)}
+                          </span>
+                        </div>
+
+                        <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
+                          <table className="w-full text-left border-collapse">
+                            <thead>
+                              <tr className="bg-slate-100 text-slate-700 uppercase text-[10px] font-extrabold tracking-wider border-b border-slate-200">
+                                <th className="p-3">Return Date</th>
+                                <th className="p-3">Return Ref No</th>
+                                <th className="p-3">Type</th>
+                                <th className="p-3 text-right">Return Value (৳)</th>
+                                <th className="p-3">Adjustment / Method</th>
+                                <th className="p-3">Status/Notes</th>
+                                <th className="p-3 text-center">Actions</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-gray-100 text-xs text-gray-700">
+                              {supReturns.length === 0 ? (
+                                <tr>
+                                  <td colSpan={7} className="p-6 text-center text-gray-400 font-medium">No product returns recorded for this supplier.</td>
+                                </tr>
+                              ) : (
+                                supReturns.map((t) => (
+                                  <tr key={t.id} className="hover:bg-slate-50 transition-colors">
+                                    <td className="p-3 font-semibold text-gray-500">{t.date}</td>
+                                    <td className="p-3 font-bold font-mono text-gray-800">{t.refNo}</td>
+                                    <td className="p-3 uppercase">
+                                      <span className="bg-yellow-100 text-yellow-700 px-2 py-0.5 rounded text-[10px] font-extrabold">
+                                        {t.type}
+                                      </span>
+                                    </td>
+                                    <td className="p-3 text-right font-bold text-amber-600">{formatCurrency(t.totalAmount)}</td>
+                                    <td className="p-3 font-bold text-gray-600">{t.paymentMethod || "Due Adjusted"}</td>
+                                    <td className="p-3 text-gray-500 italic max-w-xs truncate">{t.notes || "—"}</td>
+                                    <td className="p-3 text-center">
+                                      <div className="flex items-center justify-center gap-2">
+                                        <button
+                                          onClick={() => setInvoiceTransaction(t)}
+                                          title="View Voucher"
+                                          className="p-1 text-blue-600 hover:text-blue-800 hover:bg-blue-50 rounded-lg transition-colors cursor-pointer"
+                                        >
+                                          <Receipt className="w-4 h-4" />
+                                        </button>
+                                        <button
+                                          onClick={() => setTxToDelete({ id: t.id!, tx: t })}
+                                          title="Delete Return"
+                                          className="p-1 text-red-600 hover:text-red-800 hover:bg-red-50 rounded-lg transition-colors cursor-pointer"
+                                        >
+                                          <Trash2 className="w-4 h-4" />
+                                        </button>
+                                      </div>
+                                    </td>
+                                  </tr>
+                                ))
+                              )}
+                            </tbody>
+                            <tfoot className="bg-slate-100/90 font-bold text-xs border-t-2 border-slate-300">
+                              <tr>
+                                <td colSpan={3} className="p-3 text-slate-800 uppercase font-black text-[11px] tracking-wide">
+                                  Product Returns Total ({supReturns.length} Records)
+                                </td>
+                                <td className="p-3 text-right text-amber-800 font-black text-sm">
+                                  {formatCurrency(totalReturnsTotal)}
+                                </td>
+                                <td colSpan={3} className="p-3 text-[11px] text-gray-500 font-normal">
+                                  Total returned product credits
+                                </td>
+                              </tr>
+                            </tfoot>
+                          </table>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* SECTION 4: GRAND CONSOLIDATED RECONCILIATION SUMMARY BOX ("and in the last all total") */}
+                    {(profileTab === "all" || profileTab === "purchases" || profileTab === "payments" || profileTab === "returns") && (
+                      <div className="bg-gradient-to-br from-slate-900 via-slate-800 to-indigo-950 text-white rounded-3xl p-6 shadow-xl border border-slate-700 space-y-5">
+                        <div className="flex flex-col md:flex-row items-start md:items-center justify-between pb-4 border-b border-slate-700/80 gap-4">
+                          <div>
+                            <span className="text-[10px] font-black uppercase tracking-widest text-indigo-400 bg-indigo-950/80 px-2.5 py-1 rounded-full border border-indigo-800/50">
+                              Grand Reconciliation Statement
+                            </span>
+                            <h3 className="text-xl font-black text-white mt-1.5 flex items-center gap-2">
+                              All Total Consolidated Balance Statement
+                            </h3>
+                            <p className="text-xs text-slate-400 mt-0.5">
+                              Consolidated ledger total factoring opening balance, purchases, payments, and product returns.
+                            </p>
+                          </div>
+                          <div className="bg-slate-800/90 px-5 py-3 rounded-2xl border border-slate-700 text-right shadow-inner min-w-[200px]">
+                            <p className="text-[10px] uppercase font-extrabold text-slate-400 tracking-wider">Net Outstanding Due</p>
+                            <p className={cn("text-2xl font-black font-mono mt-0.5", finances.remainingDue > 0 ? "text-red-400" : "text-emerald-400")}>
+                              {formatCurrency(finances.remainingDue)}
+                            </p>
+                          </div>
+                        </div>
+
+                        {/* Breakdown Grid */}
+                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+                          <div className="bg-slate-800/70 p-4 rounded-2xl border border-slate-700/70">
+                            <p className="text-[10px] uppercase font-extrabold text-indigo-300 tracking-wider">1. Opening Balance</p>
+                            <p className="text-lg font-black text-white mt-1">{formatCurrency(finances.openingBalance)}</p>
+                            <p className="text-[10px] text-slate-400 mt-1">Starting ledger balance</p>
+                          </div>
+
+                          <div className="bg-slate-800/70 p-4 rounded-2xl border border-slate-700/70">
+                            <p className="text-[10px] uppercase font-extrabold text-blue-300 tracking-wider">2. (+) Gross Purchases</p>
+                            <p className="text-lg font-black text-blue-300 mt-1">{formatCurrency(totalPurchasesTotal)}</p>
+                            <p className="text-[10px] text-slate-400 mt-1">+ Total purchases value</p>
+                          </div>
+
+                          <div className="bg-slate-800/70 p-4 rounded-2xl border border-slate-700/70">
+                            <p className="text-[10px] uppercase font-extrabold text-emerald-300 tracking-wider">3. (-) Total Payments</p>
+                            <p className="text-lg font-black text-emerald-400 mt-1">{formatCurrency(totalPaymentsTotal)}</p>
+                            <p className="text-[10px] text-slate-400 mt-1">- Total cash/bank paid</p>
+                          </div>
+
+                          <div className="bg-slate-800/70 p-4 rounded-2xl border border-slate-700/70">
+                            <p className="text-[10px] uppercase font-extrabold text-amber-300 tracking-wider">4. (-) Product Returns</p>
+                            <p className="text-lg font-black text-amber-300 mt-1">{formatCurrency(totalReturnsTotal)}</p>
+                            <p className="text-[10px] text-slate-400 mt-1">- Return credits adjusted</p>
+                          </div>
+
+                          <div className="bg-red-950/50 p-4 rounded-2xl border border-red-800/70">
+                            <p className="text-[10px] uppercase font-extrabold text-red-300 tracking-wider">5. (=) Final Net Due</p>
+                            <p className="text-lg font-black text-red-400 mt-1">{formatCurrency(finances.remainingDue)}</p>
+                            <p className="text-[10px] text-red-300/80 mt-1">Pending net payable</p>
+                          </div>
+                        </div>
+
+                        {/* Calculation Formula Footer Bar */}
+                        <div className="pt-3 border-t border-slate-700/70 text-xs text-slate-300 font-mono bg-slate-900/80 p-3.5 rounded-2xl flex flex-wrap items-center justify-between gap-3">
+                          <div className="flex items-center gap-2">
+                            <span className="px-2 py-0.5 rounded bg-indigo-900/80 text-indigo-300 font-bold text-[10px] uppercase border border-indigo-700/50">
+                              Math Formula
+                            </span>
+                            <span className="text-[11px]">
+                              (Opening ৳{finances.openingBalance.toFixed(2)} + Purchases ৳{totalPurchasesTotal.toFixed(2)}) - (Payments ৳{totalPaymentsTotal.toFixed(2)} + Returns ৳{totalReturnsTotal.toFixed(2)})
+                            </span>
+                          </div>
+                          <div className="text-xs font-black text-emerald-400 bg-emerald-950/80 px-3 py-1 rounded-xl border border-emerald-800/50">
+                            Grand Total Due: {formatCurrency(finances.remainingDue)}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
             </div>
           </motion.div>
         )}

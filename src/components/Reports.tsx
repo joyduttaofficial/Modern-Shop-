@@ -106,7 +106,30 @@ export interface PurchaseModel {
 
 export default function Reports({ user, role }: { user: User; role: UserRole }) {
   const { language, t, formatCurrency, formatDate, formatNumber, translateValue } = useLanguage();
-  const [activeTab, setActiveTab] = useState<ReportTab>("daily");
+  const [activeTab, setActiveTab] = useState<ReportTab>(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const saved = localStorage.getItem("reports_activeTab") as ReportTab;
+        const validTabs: ReportTab[] = ["daily", "bank", "salary", "supplier", "purchase", "attendance", "transactions", "inventory", "unified", "sales"];
+        if (saved && validTabs.includes(saved)) {
+          return saved;
+        }
+      } catch (e) {
+        console.warn("Could not read reports_activeTab:", e);
+      }
+    }
+    return "daily";
+  });
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      try {
+        localStorage.setItem("reports_activeTab", activeTab);
+      } catch (e) {
+        console.warn("Could not save reports_activeTab:", e);
+      }
+    }
+  }, [activeTab]);
 
   // Dynamic company settings context
   const [companyName, setCompanyName] = useState("Modern Pro");

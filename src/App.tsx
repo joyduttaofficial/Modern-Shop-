@@ -150,11 +150,81 @@ function QuotaExceededOverlay({ onDismiss, databaseId, projectId }: { onDismiss:
   );
 }
 
-type View = "dashboard" | "transactions" | "newSale" | "salesList" | "newEmployee" | "employeesList" | "salaryEntry" | "salarySheet" | "addAttendance" | "attendanceList" | "attendance" | "reports" | "settings" | "newSupplier" | "suppliersList" | "suppliers" | "newPurchase" | "purchaseList" | "newUser" | "usersList" | "rolesList" | "profileView" | "inventory";
+type View = "dashboard" | "transactions" | "newSale" | "salesList" | "newEmployee" | "employeesList" | "employees" | "salaryEntry" | "salarySheet" | "addAttendance" | "attendanceList" | "attendance" | "reports" | "settings" | "newSupplier" | "suppliersList" | "suppliers" | "newPurchase" | "purchaseList" | "paySupplierDue" | "newUser" | "usersList" | "rolesList" | "profileView" | "inventory";
+
+const VALID_VIEWS: View[] = [
+  "dashboard",
+  "transactions",
+  "newSale",
+  "salesList",
+  "newEmployee",
+  "employeesList",
+  "employees",
+  "salaryEntry",
+  "salarySheet",
+  "addAttendance",
+  "attendanceList",
+  "attendance",
+  "reports",
+  "settings",
+  "newSupplier",
+  "suppliersList",
+  "suppliers",
+  "newPurchase",
+  "purchaseList",
+  "paySupplierDue",
+  "newUser",
+  "usersList",
+  "rolesList",
+  "profileView",
+  "inventory"
+];
 
 export default function App() {
   const { language, setLanguage, t, formatDate } = useLanguage();
-  const [activeView, setActiveView] = useState<View>("dashboard");
+  const [activeView, setActiveView] = useState<View>(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const hash = window.location.hash.replace("#", "") as View;
+        if (hash && VALID_VIEWS.includes(hash)) {
+          return hash;
+        }
+        const saved = localStorage.getItem("activeView") as View;
+        if (saved && VALID_VIEWS.includes(saved)) {
+          return saved;
+        }
+      } catch (e) {
+        console.warn("Error reading activeView from storage/hash:", e);
+      }
+    }
+    return "dashboard";
+  });
+
+  // Keep localStorage and URL hash in sync with activeView
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      try {
+        localStorage.setItem("activeView", activeView);
+        if (window.location.hash !== `#${activeView}`) {
+          window.history.replaceState(null, "", `#${activeView}`);
+        }
+      } catch (e) {
+        console.warn("Error saving activeView:", e);
+      }
+    }
+  }, [activeView]);
+
+  // Support browser Back/Forward navigation
+  useEffect(() => {
+    const handleHashChange = () => {
+      const hash = window.location.hash.replace("#", "") as View;
+      if (VALID_VIEWS.includes(hash) && hash !== activeView) {
+        setActiveView(hash);
+      }
+    };
+    window.addEventListener("hashchange", handleHashChange);
+    return () => window.removeEventListener("hashchange", handleHashChange);
+  }, [activeView]);
   const [initialActiveTab, setInitialActiveTab] = useState<"income" | "expense">("income");
   const [salesEditDate, setSalesEditDate] = useState<string>("");
   const [isSidebarOpen, setIsSidebarOpen] = useState(() => {

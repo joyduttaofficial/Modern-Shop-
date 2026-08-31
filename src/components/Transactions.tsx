@@ -30,7 +30,29 @@ export default function Transactions({
   initialActiveTab?: "income" | "expense";
   onClearInitialActiveTab?: () => void;
 }) {
-  const [workspaceTab, setWorkspaceTab] = useState<"inout" | "opening" | "banks" | "loans" | "ledgers">("inout");
+  const [workspaceTab, setWorkspaceTab] = useState<"inout" | "opening" | "banks" | "loans" | "ledgers">(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const saved = localStorage.getItem("transactions_workspaceTab") as any;
+        if (saved && ["inout", "opening", "banks", "loans", "ledgers"].includes(saved)) {
+          return saved;
+        }
+      } catch (e) {
+        console.warn("Could not read transactions_workspaceTab:", e);
+      }
+    }
+    return "inout";
+  });
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      try {
+        localStorage.setItem("transactions_workspaceTab", workspaceTab);
+      } catch (e) {
+        console.warn("Could not save transactions_workspaceTab:", e);
+      }
+    }
+  }, [workspaceTab]);
   const [activeTab, setActiveTab] = useState<TransactionType>(initialActiveTab || "income");
 
   useEffect(() => {

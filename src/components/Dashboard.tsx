@@ -139,13 +139,15 @@ export default function Dashboard({
   useEffect(() => {
     let all: Transaction[] = [];
     let purchasesList: any[] = [];
+    let supplierTransactionsList: any[] = [];
+    let suppliersList: any[] = [];
     let attendanceList: any[] = [];
     let employeesList: any[] = [];
 
     let initialLoads = 0;
     const checkInitialDone = () => {
       initialLoads++;
-      if (initialLoads >= 4) setLoading(false);
+      if (initialLoads >= 6) setLoading(false);
     };
 
     const recomputeStats = () => {
@@ -214,8 +216,6 @@ export default function Dashboard({
           tx.category.toLowerCase().includes("withdrawal")
         );
 
-        const isSupplierPay = tx.category === "Supplier Due Payment" || tx.category.toLowerCase().includes("supplier payment");
-
         const isPreviousCash = tx.category === "Previous Cash" || tx.category === "Opening Balance";
 
         // All-Time Totals
@@ -224,7 +224,6 @@ export default function Dashboard({
         if (isDeposit) totalBankDeposit += tx.amount;
         if (isWithdrawal) totalBankWithdraw += tx.amount;
         if (tx.type === "expense") totalExpense += tx.amount;
-        if (isSupplierPay) totalSupplierPayment += tx.amount;
 
         // Today Snaps
         if (isToday) {
@@ -233,22 +232,63 @@ export default function Dashboard({
           if (isDeposit) todayBankDeposit += tx.amount;
           if (isWithdrawal) todayBankWithdraw += tx.amount;
           if (tx.type === "expense") todayExpense += tx.amount;
-          if (isSupplierPay) todaySupplierPayment += tx.amount;
           if (isPreviousCash) todayPreviousCash += tx.amount;
         }
       });
 
       // 2. Purchases calculation
       purchasesList.forEach(p => {
-        totalPurchase += (p.totalAmount || 0);
-        totalPurchaseDue += (p.dueAmount || 0);
+        const pTotal = p.totalAmount || 0;
+        const pPaid = p.paidAmount || 0;
+        totalPurchase += pTotal;
+        totalSupplierPayment += pPaid;
 
-        if (p.date === todayFormatted) {
-          todayPurchase += (p.totalAmount || 0);
+        let isToday = false;
+        try {
+          const pDateStr = p.date ? format(new Date(p.date), "yyyy-MM-dd") : "";
+          isToday = pDateStr === todayFormatted || p.date === todayFormatted;
+        } catch (e) {
+          isToday = p.date === todayFormatted;
+        }
+
+        if (isToday) {
+          todayPurchase += pTotal;
+          todaySupplierPayment += pPaid;
         }
       });
 
-      // 3. Attendance calculation
+      // 3. Due settlement payments to suppliers
+      supplierTransactionsList.forEach(stx => {
+        if (stx.type === "payment") {
+          const stxAmount = stx.totalAmount || 0;
+          totalSupplierPayment += stxAmount;
+
+          let isToday = false;
+          try {
+            const stxDateStr = stx.date ? format(new Date(stx.date), "yyyy-MM-dd") : "";
+            isToday = stxDateStr === todayFormatted || stx.date === todayFormatted;
+          } catch (e) {
+            isToday = stx.date === todayFormatted;
+          }
+
+          if (isToday) {
+            todaySupplierPayment += stxAmount;
+          }
+        }
+      });
+
+      // 4. Supplier Outstanding Due
+      if (suppliersList.length > 0) {
+        suppliersList.forEach(s => {
+          totalPurchaseDue += Math.max(0, s.purchaseDue || 0);
+        });
+      } else {
+        purchasesList.forEach(p => {
+          totalPurchaseDue += Math.max(0, p.dueAmount || 0);
+        });
+      }
+
+      // 5. Attendance calculation
       const currentMonthYear = format(new Date(), "yyyy-MM");
       attendanceList.forEach(a => {
         let isToday = false;
@@ -410,6 +450,18 @@ export default function Dashboard({
       checkInitialDone();
     }, (err) => { console.error(err); checkInitialDone(); });
 
+    const unsubSupTx = onSnapshot(collection(db, "supplierTransactions"), (snap) => {
+      supplierTransactionsList = snap.docs.map(doc => doc.data() as any);
+      recomputeStats();
+      checkInitialDone();
+    }, (err) => { console.error(err); checkInitialDone(); });
+
+    const unsubSuppliers = onSnapshot(collection(db, "suppliers"), (snap) => {
+      suppliersList = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as any));
+      recomputeStats();
+      checkInitialDone();
+    }, (err) => { console.error(err); checkInitialDone(); });
+
     const unsubAtt = onSnapshot(collection(db, "attendance"), (snap) => {
       attendanceList = snap.docs.map(doc => doc.data() as any);
       recomputeStats();
@@ -425,6 +477,8 @@ export default function Dashboard({
     return () => {
       unsubTxs();
       unsubPur();
+      unsubSupTx();
+      unsubSuppliers();
       unsubAtt();
       unsubEmp();
     };
@@ -731,15 +785,6 @@ export default function Dashboard({
             color="teal" 
             description="All-time accumulated wholesale sales"
             scope="Total"
-          />
-          <StatCard 
-            title="Total Sales Amount" 
-            value={stats.totalSales} 
-            icon={TrendingUp} 
-            color="emerald" 
-            description="Literal secondary total sales matching rule"
-            scope="Total Copy"
-            printHidden={true}
           />
           <StatCard 
             title="Total Bank Deposit" 

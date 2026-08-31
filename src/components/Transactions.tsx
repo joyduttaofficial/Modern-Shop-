@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { User } from "firebase/auth";
-import { collection, addDoc, query, orderBy, onSnapshot, limit, deleteDoc, doc, increment, where } from "firebase/firestore";
+import { collection, addDoc, query, orderBy, onSnapshot, limit, deleteDoc, doc, increment, where, getDocs } from "firebase/firestore";
 import { db, OperationType, handleFirestoreError, updateDoc } from "@/src/lib/firebase";
 import { Transaction, TransactionType, Category, Bank, UserRole, Employee, Supplier } from "@/src/types";
 import { cn, formatCurrency } from "@/src/lib/utils";
@@ -13,7 +13,8 @@ import {
   Plus, Search, Filter, Trash2, ArrowUpCircle, ArrowDownCircle, 
   Wallet, Landmark, ArrowUpRight, ArrowDownLeft, ArrowUpDown, 
   PlusCircle, MinusCircle, Calendar, ChevronRight, Info, Percent, AlertCircle, 
-  DollarSign, Calculator, History, UserCheck, Users, RefreshCw
+  DollarSign, Calculator, History, UserCheck, Users, RefreshCw,
+  Pencil, Check, X
 } from "lucide-react";
 import { motion } from "motion/react";
 import { format } from "date-fns";
@@ -78,6 +79,9 @@ export default function Transactions({
   const [newBankName, setNewBankName] = useState("");
   const [newBankBalance, setNewBankBalance] = useState("");
   const [showAddBank, setShowAddBank] = useState(false);
+  const [editingBankId, setEditingBankId] = useState<string | null>(null);
+  const [editingBankBalance, setEditingBankBalance] = useState("");
+  const [isSavingBank, setIsSavingBank] = useState(false);
   const [bankSubTab, setBankSubTab] = useState<"deposit" | "credit" | "transfer">("deposit");
   const [bankActionBankName, setBankActionBankName] = useState("");
   const [bankActionAmount, setBankActionAmount] = useState("");
@@ -531,16 +535,44 @@ export default function Transactions({
     }
   };
 
+  const handleSaveEditBankBalance = async (bankId: string) => {
+    const newBal = parseFloat(editingBankBalance);
+    if (isNaN(newBal)) {
+      alert("Please enter a valid amount.");
+      return;
+    }
+    setIsSavingBank(true);
+    try {
+      await updateDoc(doc(db, "banks", bankId), {
+        balance: newBal,
+        lastUpdated: new Date().toISOString()
+      });
+      setEditingBankId(null);
+    } catch (e) {
+      handleFirestoreError(e, OperationType.UPDATE, "banks");
+    } finally {
+      setIsSavingBank(false);
+    }
+  };
+
   const handleDelete = async (tx: Transaction) => {
     try {
       if (tx.id) {
         await deleteDoc(doc(db, "transactions", tx.id));
 
-        // If it was a supplier payment, revert outstanding
+        // If it was a supplier payment, revert outstanding and clean up supplierTransactions
         if (tx.category === "Supplier Due Payment" && tx.supplierId) {
           await updateDoc(doc(db, "suppliers", tx.supplierId), {
             purchaseDue: increment(tx.amount)
           });
+          const stxSnap = await getDocs(query(collection(db, "supplierTransactions"), where("supplierId", "==", tx.supplierId)));
+          for (const sDoc of stxSnap.docs) {
+            const sDataInt倍 = sDoc.data();
+            if (sDataInt倍.type === "payment" && Math.abs((sDataInt倍.totalAmount || 0) - tx.amount) < 0.01) {
+              await deleteDoc(doc(db, "supplierTransactions", sDoc.id));
+              break;
+            }
+          }
         }
 
         // Reverse bank balance
@@ -1233,14 +1265,65 @@ export default function Transactions({
                         <p className="p-6 bg-slate-50 border border-dashed rounded-2xl text-center text-xs font-semibold text-slate-400">No bank accounts added in settings.</p>
                       ) : (
                         banks.map(b => (
-                          <div key={b.id} className="p-3.5 bg-slate-50 rounded-2xl border border-slate-100 flex items-center justify-between hover:bg-slate-100/50 transition-all">
+                          <div key={b.id} className="p-3.5 bg-slate-50 rounded-2xl border border-slate-100 flex items-center justify-between hover:bg-slate-100/50 transition-all group">
                             <div>
                               <p className="font-extrabold text-xs text-slate-800">{b.name}</p>
                               <span className="text-[9px] font-semibold text-slate-400 uppercase">Synchronized recently</span>
                             </div>
-                            <span className="font-mono font-black text-xs text-slate-900 bg-white px-3 py-1 bg-white border rounded-xl shadow-sm">
-                              ৳{b.balance.toLocaleString()}
-                            </span>
+                            {editingBankId === b.id ? (
+                              <form 
+                                onSubmit={(e) => {
+                                  e.preventDefault();
+                                  if (b.id) handleSaveEditBankBalance(b.id);
+                                }}
+                                className="flex items-center gap-1.5"
+                              >
+                                <div className="relative">
+                                  <span className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-400 font-bold text-xs">৳</span>
+                                  <input
+                                    type="number"
+                                    step="any"
+                                    value={editingBankBalance}
+                                    onChange={e => setEditingBankBalance(e.target.value)}
+                                    className="w-24 pl-5 pr-2 py-1 bg-white border border-amber-400 rounded-lg text-xs font-mono font-bold text-slate-900 focus:outline-none focus:ring-1 focus:ring-amber-500"
+                                    autoFocus
+                                  />
+                                </div>
+                                <button
+                                  type="submit"
+                                  disabled={isSavingBank}
+                                  className="p-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-xs cursor-pointer shadow-xs"
+                                  title="Save Amount"
+                                >
+                                  <Check className="w-3.5 h-3.5" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setEditingBankId(null)}
+                                  className="p-1.5 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-lg text-xs cursor-pointer"
+                                  title="Cancel"
+                                >
+                                  <X className="w-3.5 h-3.5" />
+                                </button>
+                              </form>
+                            ) : (
+                              <div className="flex items-center gap-2">
+                                <span className="font-mono font-black text-xs text-slate-900 bg-white px-3 py-1 bg-white border rounded-xl shadow-sm">
+                                  ৳{b.balance.toLocaleString()}
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setEditingBankId(b.id || null);
+                                    setEditingBankBalance(b.balance.toString());
+                                  }}
+                                  className="opacity-0 group-hover:opacity-100 p-1.5 text-slate-400 hover:text-amber-600 hover:bg-white rounded-lg border border-transparent hover:border-slate-200 transition-all cursor-pointer"
+                                  title="Edit Amount"
+                                >
+                                  <Pencil className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            )}
                           </div>
                         ))
                       )}

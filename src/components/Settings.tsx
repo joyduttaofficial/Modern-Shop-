@@ -4,7 +4,7 @@ import { collection, onSnapshot, addDoc, deleteDoc, doc, query, orderBy, setDoc,
 import { db, OperationType, handleFirestoreError, updateDoc } from "@/src/lib/firebase";
 import { Category, Bank, TransactionType, UserRole, UserProfile } from "@/src/types";
 import { cn } from "@/src/lib/utils";
-import { Plus, Trash2, Landmark, Tag, Briefcase, PlusCircle, LayoutGrid, Users, ShieldAlert, Archive, Download, FileText, Database, RefreshCw, CheckCircle2, Upload, Image } from "lucide-react";
+import { Plus, Trash2, Landmark, Tag, Briefcase, PlusCircle, LayoutGrid, Users, ShieldAlert, Archive, Download, FileText, Database, RefreshCw, CheckCircle2, Upload, Image, Pencil, Check, X } from "lucide-react";
 import { format } from "date-fns";
 import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
@@ -108,6 +108,10 @@ export default function Settings({ user, role }: { user: User; role: UserRole })
   const [catType, setCatType] = useState<TransactionType>("income");
   const [bankName, setBankName] = useState("");
   const [bankBalance, setBankBalance] = useState("");
+  const [editingBankId, setEditingBankId] = useState<string | null>(null);
+  const [editingBankName, setEditingBankName] = useState("");
+  const [editingBankBalance, setEditingBankBalance] = useState("");
+  const [isSavingBank, setIsSavingBank] = useState(false);
 
   // Company Branding States
   const [companyName, setCompanyName] = useState("Modern Pro");
@@ -688,6 +692,43 @@ export default function Settings({ user, role }: { user: User; role: UserRole })
     } catch (e) { handleFirestoreError(e, OperationType.CREATE, "banks"); }
   };
 
+  const handleStartEditBank = (bank: Bank) => {
+    setEditingBankId(bank.id || null);
+    setEditingBankName(bank.name);
+    setEditingBankBalance(bank.balance.toString());
+  };
+
+  const handleCancelEditBank = () => {
+    setEditingBankId(null);
+    setEditingBankName("");
+    setEditingBankBalance("");
+  };
+
+  const handleSaveEditBank = async (bankId: string) => {
+    if (!editingBankName.trim()) {
+      alert("Bank name cannot be empty.");
+      return;
+    }
+    const newBal = parseFloat(editingBankBalance);
+    if (isNaN(newBal)) {
+      alert("Please enter a valid amount.");
+      return;
+    }
+    setIsSavingBank(true);
+    try {
+      await updateDoc(doc(db, "banks", bankId), {
+        name: editingBankName.trim(),
+        balance: newBal,
+        lastUpdated: new Date().toISOString()
+      });
+      setEditingBankId(null);
+    } catch (e) {
+      handleFirestoreError(e, OperationType.UPDATE, "banks");
+    } finally {
+      setIsSavingBank(false);
+    }
+  };
+
   const handleAddDept = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!deptName) return;
@@ -1087,44 +1128,120 @@ export default function Settings({ user, role }: { user: User; role: UserRole })
 
             <div className="space-y-3">
               {banks.map((bank, idx) => (
-                <div key={bank.id || `bank-${idx}`} className="p-4 bg-gray-50 rounded-2xl border border-gray-100 flex items-center justify-between group">
-                  <div className="flex items-center gap-4">
-                    <div className="w-10 h-10 bg-white rounded-xl flex items-center justify-center border border-gray-100">
-                      <Landmark className="w-5 h-5 text-gray-400" />
+                editingBankId === bank.id ? (
+                  <div key={bank.id || `bank-${idx}`} className="p-4 bg-amber-50/70 dark:bg-amber-950/20 rounded-2xl border-2 border-amber-300 dark:border-amber-700/50 shadow-sm space-y-3 transition-all animate-in fade-in duration-150">
+                    <div className="flex items-center justify-between pb-1 border-b border-amber-200/60 dark:border-amber-800/40">
+                      <div className="flex items-center gap-2">
+                        <Landmark className="w-4 h-4 text-amber-600 dark:text-amber-400" />
+                        <span className="text-xs font-bold text-amber-900 dark:text-amber-300">Edit Bank & Amount</span>
+                      </div>
+                      <span className="text-[10px] font-semibold text-amber-700 dark:text-amber-400 uppercase tracking-wider">Account ID: {bank.id?.slice(0, 6)}</span>
                     </div>
-                    <div>
-                      <p className="font-bold text-gray-900">{bank.name}</p>
-                      <p className="text-[10px] uppercase font-bold text-gray-400">Current Balance</p>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-4">
-                    <p className="font-mono font-bold text-lg text-gray-700">৳{bank.balance.toLocaleString()}</p>
-                    {deleteConfirm?.coll === "banks" && deleteConfirm?.id === bank.id ? (
-                      <div className="flex items-center gap-1 shrink-0 animate-in fade-in duration-100">
-                        <button 
-                          onClick={() => executeDelete("banks", bank.id!)}
-                          className="px-2 py-1 text-[9px] font-black uppercase tracking-wider bg-red-650 hover:bg-red-750 text-white rounded-md cursor-pointer transition-all"
+                    <form 
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        if (bank.id) handleSaveEditBank(bank.id);
+                      }}
+                      className="space-y-3"
+                    >
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div>
+                          <label className="block text-[10px] font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400 mb-1">Bank Name</label>
+                          <input
+                            type="text"
+                            value={editingBankName}
+                            onChange={e => setEditingBankName(e.target.value)}
+                            placeholder="Bank Name"
+                            className="w-full px-3 py-2 text-sm bg-white dark:bg-zinc-900 rounded-xl border border-amber-300 dark:border-amber-700 focus:outline-none focus:ring-2 focus:ring-amber-500 font-semibold text-gray-900 dark:text-white"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[10px] font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400 mb-1">Current Balance / Amount (৳)</label>
+                          <div className="relative">
+                            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 font-bold text-sm">৳</span>
+                            <input
+                              type="number"
+                              step="any"
+                              value={editingBankBalance}
+                              onChange={e => setEditingBankBalance(e.target.value)}
+                              placeholder="0.00"
+                              className="w-full pl-8 pr-3 py-2 text-sm bg-white dark:bg-zinc-900 rounded-xl border border-amber-300 dark:border-amber-700 focus:outline-none focus:ring-2 focus:ring-amber-500 font-mono font-bold text-gray-900 dark:text-white"
+                              autoFocus
+                            />
+                          </div>
+                        </div>
+                      </div>
+                      <div className="flex items-center justify-end gap-2 pt-1">
+                        <button
+                          type="button"
+                          onClick={handleCancelEditBank}
+                          className="px-3 py-1.5 text-xs font-bold text-gray-600 dark:text-gray-300 bg-white dark:bg-zinc-800 hover:bg-gray-100 dark:hover:bg-zinc-700 rounded-xl border border-gray-200 dark:border-zinc-700 transition-all flex items-center gap-1.5 cursor-pointer"
+                          disabled={isSavingBank}
                         >
-                          Confirm
-                        </button>
-                        <button 
-                          onClick={() => setDeleteConfirm(null)}
-                          className="px-2 py-1 text-[9px] font-black uppercase tracking-wider bg-gray-150 dark:bg-zinc-850 text-gray-600 dark:text-gray-400 hover:bg-gray-250 dark:hover:bg-zinc-750 rounded-md cursor-pointer transition-all"
-                        >
+                          <X className="w-3.5 h-3.5" />
                           Cancel
                         </button>
+                        <button
+                          type="submit"
+                          disabled={isSavingBank}
+                          className="px-4 py-1.5 text-xs font-bold text-white bg-amber-600 hover:bg-amber-700 dark:bg-amber-500 dark:hover:bg-amber-600 rounded-xl shadow-sm transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                        >
+                          <Check className="w-3.5 h-3.5" />
+                          {isSavingBank ? "Saving..." : "Save Amount"}
+                        </button>
                       </div>
-                    ) : (
-                      <button 
-                        onClick={() => setDeleteConfirm({ coll: "banks", id: bank.id! })}
-                        className="opacity-100 md:opacity-0 group-hover:opacity-100 p-2 text-gray-400 hover:text-red-500 dark:text-zinc-500 dark:hover:text-red-400 transition-all bg-white dark:bg-zinc-900 rounded-lg border border-gray-100 dark:border-zinc-800 cursor-pointer"
-                        title="Delete Bank Account"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    )}
+                    </form>
                   </div>
-                </div>
+                ) : (
+                  <div key={bank.id || `bank-${idx}`} className="p-4 bg-gray-50 dark:bg-zinc-800/60 rounded-2xl border border-gray-100 dark:border-zinc-700/50 flex items-center justify-between group hover:border-gray-200 dark:hover:border-zinc-600 transition-all">
+                    <div className="flex items-center gap-4">
+                      <div className="w-10 h-10 bg-white dark:bg-zinc-900 rounded-xl flex items-center justify-center border border-gray-100 dark:border-zinc-800 shadow-xs">
+                        <Landmark className="w-5 h-5 text-gray-400 dark:text-zinc-400" />
+                      </div>
+                      <div>
+                        <p className="font-bold text-gray-900 dark:text-white">{bank.name}</p>
+                        <p className="text-[10px] uppercase font-bold text-gray-400 dark:text-zinc-500">Current Balance</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <p className="font-mono font-bold text-lg text-gray-700 dark:text-gray-200">৳{bank.balance.toLocaleString()}</p>
+                      <div className="flex items-center gap-1.5">
+                        <button 
+                          type="button"
+                          onClick={() => handleStartEditBank(bank)}
+                          className="opacity-100 md:opacity-0 group-hover:opacity-100 p-2 text-gray-400 hover:text-amber-600 dark:text-zinc-500 dark:hover:text-amber-400 transition-all bg-white dark:bg-zinc-900 rounded-lg border border-gray-100 dark:border-zinc-800 hover:border-amber-200 dark:hover:border-amber-800 shadow-xs cursor-pointer"
+                          title="Edit Bank & Amount"
+                        >
+                          <Pencil className="w-4 h-4" />
+                        </button>
+                        {deleteConfirm?.coll === "banks" && deleteConfirm?.id === bank.id ? (
+                          <div className="flex items-center gap-1 shrink-0 animate-in fade-in duration-100">
+                            <button 
+                              onClick={() => executeDelete("banks", bank.id!)}
+                              className="px-2 py-1 text-[9px] font-black uppercase tracking-wider bg-red-650 hover:bg-red-750 text-white rounded-md cursor-pointer transition-all"
+                            >
+                              Confirm
+                            </button>
+                            <button 
+                              onClick={() => setDeleteConfirm(null)}
+                              className="px-2 py-1 text-[9px] font-black uppercase tracking-wider bg-gray-150 dark:bg-zinc-850 text-gray-600 dark:text-gray-400 hover:bg-gray-250 dark:hover:bg-zinc-750 rounded-md cursor-pointer transition-all"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        ) : (
+                          <button 
+                            onClick={() => setDeleteConfirm({ coll: "banks", id: bank.id! })}
+                            className="opacity-100 md:opacity-0 group-hover:opacity-100 p-2 text-gray-400 hover:text-red-500 dark:text-zinc-500 dark:hover:text-red-400 transition-all bg-white dark:bg-zinc-900 rounded-lg border border-gray-100 dark:border-zinc-800 hover:border-red-200 dark:hover:border-red-800 shadow-xs cursor-pointer"
+                            title="Delete Bank Account"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )
               ))}
             </div>
           </div>

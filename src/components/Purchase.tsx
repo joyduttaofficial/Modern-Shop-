@@ -103,7 +103,7 @@ export default function Purchase({
   };
 
   // Currency exchange rate states for Indian Supplier configuration
-  const [exchangeRate, setExchangeRate] = useState("70");
+  const [exchangeRate, setExchangeRate] = useState("140");
   const [inrTotalAmount, setInrTotalAmount] = useState("");
   const [inrPaidAmount, setInrPaidAmount] = useState("");
 
@@ -114,28 +114,49 @@ export default function Purchase({
     setExchangeRate(rateVal);
     const rateFloat = parseFloat(rateVal) || 0;
     
-    if (inrTotalAmount) {
-      const computedBDT = rateFloat > 0 ? ((parseFloat(inrTotalAmount) || 0) / rateFloat) * 100 : 0;
-      setTotalAmount(computedBDT > 0 ? computedBDT.toFixed(2) : "");
-    }
-    if (inrPaidAmount) {
-      const computedPaidBDT = rateFloat > 0 ? ((parseFloat(inrPaidAmount) || 0) / rateFloat) * 100 : 0;
-      setPaidAmount(computedPaidBDT > 0 ? computedPaidBDT.toFixed(2) : "");
+    if (rateFloat > 0) {
+      if (inrTotalAmount) {
+        const computedBDT = (parseFloat(inrTotalAmount) * rateFloat) / 100;
+        setTotalAmount(computedBDT > 0 ? computedBDT.toFixed(2) : "");
+      }
+      if (paidAmount) {
+        const computedINR = (parseFloat(paidAmount) * 100) / rateFloat;
+        setInrPaidAmount(computedINR > 0 ? computedINR.toFixed(2) : "");
+      } else if (inrPaidAmount) {
+        const computedBDT = (parseFloat(inrPaidAmount) * rateFloat) / 100;
+        setPaidAmount(computedBDT > 0 ? computedBDT.toFixed(2) : "");
+      }
     }
   };
 
   const handleInrTotalChange = (inrVal: string) => {
     setInrTotalAmount(inrVal);
-    const rateFloat = parseFloat(exchangeRate) || 0;
-    const computedBDT = rateFloat > 0 ? ((parseFloat(inrVal) || 0) / rateFloat) * 100 : 0;
-    setTotalAmount(computedBDT > 0 ? computedBDT.toFixed(2) : "");
+    const inrFloat = parseFloat(inrVal) || 0;
+    const rateFloat = parseFloat(exchangeRate) || 140;
+    if (rateFloat > 0) {
+      const computedBDT = (inrFloat * rateFloat) / 100;
+      setTotalAmount(computedBDT > 0 ? computedBDT.toFixed(2) : "");
+    }
+  };
+
+  const handleBdtPaidChange = (bdtVal: string) => {
+    setPaidAmount(bdtVal);
+    const bdtFloat = parseFloat(bdtVal) || 0;
+    const rateFloat = parseFloat(exchangeRate) || 140;
+    if (rateFloat > 0) {
+      const computedINR = (bdtFloat * 100) / rateFloat;
+      setInrPaidAmount(computedINR > 0 ? computedINR.toFixed(2) : "");
+    }
   };
 
   const handleInrPaidChange = (inrVal: string) => {
     setInrPaidAmount(inrVal);
-    const rateFloat = parseFloat(exchangeRate) || 0;
-    const computedBDT = rateFloat > 0 ? ((parseFloat(inrVal) || 0) / rateFloat) * 100 : 0;
-    setPaidAmount(computedBDT > 0 ? computedBDT.toFixed(2) : "");
+    const inrFloat = parseFloat(inrVal) || 0;
+    const rateFloat = parseFloat(exchangeRate) || 140;
+    if (rateFloat > 0) {
+      const computedBDT = (inrFloat * rateFloat) / 100;
+      setPaidAmount(computedBDT > 0 ? computedBDT.toFixed(2) : "");
+    }
   };
 
   // Selected Purchase Modal state (for detail view)

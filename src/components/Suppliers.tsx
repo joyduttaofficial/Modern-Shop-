@@ -90,7 +90,7 @@ export default function Suppliers({
   const [invoiceTransaction, setInvoiceTransaction] = useState<SupplierTransaction | null>(null);
 
   // States for Currency Exchange inside Supplier Add Purchase modal
-  const [modalExchangeRate, setModalExchangeRate] = useState("70");
+  const [modalExchangeRate, setModalExchangeRate] = useState("140");
   const [modalInrTotalAmount, setModalInrTotalAmount] = useState("");
   const [modalInrPaidAmount, setModalInrPaidAmount] = useState("");
 
@@ -98,28 +98,49 @@ export default function Suppliers({
     setModalExchangeRate(rateVal);
     const rateFloat = parseFloat(rateVal) || 0;
     
-    if (modalInrTotalAmount) {
-      const computedBDT = rateFloat > 0 ? ((parseFloat(modalInrTotalAmount) || 0) / rateFloat) * 100 : 0;
-      setModalAmount(computedBDT > 0 ? computedBDT.toFixed(2) : "");
-    }
-    if (modalInrPaidAmount) {
-      const computedPaidBDT = rateFloat > 0 ? ((parseFloat(modalInrPaidAmount) || 0) / rateFloat) * 100 : 0;
-      setModalPaidAmount(computedPaidBDT > 0 ? computedPaidBDT.toFixed(2) : "");
+    if (rateFloat > 0) {
+      if (modalInrTotalAmount) {
+        const computedBDT = (parseFloat(modalInrTotalAmount) * rateFloat) / 100;
+        setModalAmount(computedBDT > 0 ? computedBDT.toFixed(2) : "");
+      }
+      if (modalPaidAmount) {
+        const computedINR = (parseFloat(modalPaidAmount) * 100) / rateFloat;
+        setModalInrPaidAmount(computedINR > 0 ? computedINR.toFixed(2) : "");
+      } else if (modalInrPaidAmount) {
+        const computedBDT = (parseFloat(modalInrPaidAmount) * rateFloat) / 100;
+        setModalPaidAmount(computedBDT > 0 ? computedBDT.toFixed(2) : "");
+      }
     }
   };
 
   const handleModalInrTotalChange = (inrVal: string) => {
     setModalInrTotalAmount(inrVal);
-    const rateFloat = parseFloat(modalExchangeRate) || 0;
-    const computedBDT = rateFloat > 0 ? ((parseFloat(inrVal) || 0) / rateFloat) * 100 : 0;
-    setModalAmount(computedBDT > 0 ? computedBDT.toFixed(2) : "");
+    const inrFloat = parseFloat(inrVal) || 0;
+    const rateFloat = parseFloat(modalExchangeRate) || 140;
+    if (rateFloat > 0) {
+      const computedBDT = (inrFloat * rateFloat) / 100;
+      setModalAmount(computedBDT > 0 ? computedBDT.toFixed(2) : "");
+    }
+  };
+
+  const handleModalBdtPaidChange = (bdtVal: string) => {
+    setModalPaidAmount(bdtVal);
+    const bdtFloat = parseFloat(bdtVal) || 0;
+    const rateFloat = parseFloat(modalExchangeRate) || 140;
+    if (rateFloat > 0) {
+      const computedINR = (bdtFloat * 100) / rateFloat;
+      setModalInrPaidAmount(computedINR > 0 ? computedINR.toFixed(2) : "");
+    }
   };
 
   const handleModalInrPaidChange = (inrVal: string) => {
     setModalInrPaidAmount(inrVal);
-    const rateFloat = parseFloat(modalExchangeRate) || 0;
-    const computedBDT = rateFloat > 0 ? ((parseFloat(inrVal) || 0) / rateFloat) * 100 : 0;
-    setModalPaidAmount(computedBDT > 0 ? computedBDT.toFixed(2) : "");
+    const inrFloat = parseFloat(inrVal) || 0;
+    const rateFloat = parseFloat(modalExchangeRate) || 140;
+    if (rateFloat > 0) {
+      const computedBDT = (inrFloat * rateFloat) / 100;
+      setModalPaidAmount(computedBDT > 0 ? computedBDT.toFixed(2) : "");
+    }
   };
 
   // Deletion Confirmation States
@@ -489,7 +510,7 @@ export default function Suppliers({
       const bdtAmount = t.totalAmount || 0;
       const bdtPaid = t.paidAmount || 0;
       
-      let rate = 70; // default rate
+      let rate = 140; // standard default rate: ₹100 = ৳140 (1 INR = ৳1.40)
       let totalINR = 0;
       let paidINR = 0;
 
@@ -497,21 +518,21 @@ export default function Suppliers({
         const notes = t.notes || "";
         const rateMatch = notes.match(/(?:Rate|Exchange Rate):\s*₹?100\s*=\s*(?:৳|BDT)?\s*([\d.]+)/i);
         if (rateMatch) {
-          rate = parseFloat(rateMatch[1]) || 70;
+          rate = parseFloat(rateMatch[1]) || 140;
         }
         
         const totalMatch = notes.match(/INR Total:\s*₹?\s*([\d.]+)/i);
         if (totalMatch) {
           totalINR = parseFloat(totalMatch[1]) || 0;
         } else {
-          totalINR = rate > 0 ? (bdtAmount * rate) / 100 : 0;
+          totalINR = rate > 0 ? (bdtAmount * 100) / rate : 0;
         }
 
         const paidMatch = notes.match(/INR Paid:\s*₹?\s*([\d.]+)/i);
         if (paidMatch) {
           paidINR = parseFloat(paidMatch[1]) || 0;
         } else {
-          paidINR = rate > 0 ? (bdtPaid * rate) / 100 : 0;
+          paidINR = rate > 0 ? (bdtPaid * 100) / rate : 0;
         }
       }
 
@@ -527,13 +548,13 @@ export default function Suppliers({
         directPayments += bdtAmount;
         if (isIndian) {
           const notes = t.notes || "";
-          const paymentMatch = notes.match(/(?:INR Total|INR Paid):\s*₹?\s*([\d.]+)/i);
+          const paymentMatch = notes.match(/(?:INR Paid|INR Total):\s*₹?\s*([\d.]+)/i);
           if (paymentMatch) {
             directPaymentsINR += parseFloat(paymentMatch[1]) || 0;
           } else {
             const rateMatch = notes.match(/(?:Rate|Exchange Rate):\s*₹?100\s*=\s*(?:৳|BDT)?\s*([\d.]+)/i);
-            const currentRate = rateMatch ? (parseFloat(rateMatch[1]) || 70) : 70;
-            directPaymentsINR += currentRate > 0 ? (bdtAmount * currentRate) / 100 : 0;
+            const currentRate = rateMatch ? (parseFloat(rateMatch[1]) || 140) : 140;
+            directPaymentsINR += currentRate > 0 ? (bdtAmount * 100) / currentRate : 0;
           }
         }
       }
@@ -543,7 +564,7 @@ export default function Suppliers({
     const totalPaymentsINR = directPaymentsINR + purchaseDownpaymentsINR;
 
     const opBal = supplier.openingBalance || 0;
-    const opBalINR = isIndian ? (opBal * 70) / 100 : 0;
+    const opBalINR = isIndian ? (opBal * 100) / 140 : 0;
 
     const remainingDue = opBal + totalPurchases - totalPayments - totalReturns;
     const remainingDueINR = opBalINR + totalPurchasesINR - totalPaymentsINR - totalReturnsINR;
@@ -1598,32 +1619,68 @@ export default function Suppliers({
               {/* Dynamic balances grid */}
               {(() => {
                 const finances = getSupplierFinances(selectedSupplier);
+                const isIndian = selectedSupplier.country === "India";
                 return (
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 mt-6">
                     <div className="p-4 rounded-2xl bg-indigo-50/70 border border-indigo-120 shadow-sm">
-                      <p className="text-[10px] uppercase font-extrabold text-indigo-700 tracking-wider">Supplier Opening Balance Amount</p>
-                      <h3 className="text-xl font-black mt-1.5 text-indigo-950">{formatCurrency(finances.openingBalance)}</h3>
+                      <p className="text-[10px] uppercase font-extrabold text-indigo-700 tracking-wider">Opening Balance</p>
+                      <h3 className="text-xl font-black mt-1.5 text-indigo-950">
+                        {formatCurrency(finances.openingBalance)}
+                        {isIndian && (
+                          <span className="block text-xs font-bold text-indigo-600 mt-0.5 font-mono">
+                            ₹{finances.openingBalanceINR.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} INR
+                          </span>
+                        )}
+                      </h3>
                       <p className="text-[10px] text-gray-455 mt-1">Opening ledger balance</p>
                     </div>
                     <div className="p-4 rounded-2xl bg-blue-50/70 border border-blue-120 shadow-sm">
                       <p className="text-[10px] uppercase font-extrabold text-blue-700 tracking-wider">Total Purchase</p>
-                      <h3 className="text-xl font-black mt-1.5 text-blue-950">{formatCurrency(finances.grossPurchases)}</h3>
-                      <p className="text-[10px] text-gray-455 mt-1">Opening Balance + Purchase amount</p>
+                      <h3 className="text-xl font-black mt-1.5 text-blue-950">
+                        {formatCurrency(finances.grossPurchases)}
+                        {isIndian && (
+                          <span className="block text-xs font-bold text-blue-600 mt-0.5 font-mono">
+                            ₹{finances.grossPurchasesINR.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} INR
+                          </span>
+                        )}
+                      </h3>
+                      <p className="text-[10px] text-gray-455 mt-1">Opening + Purchases</p>
                     </div>
                     <div className="p-4 rounded-2xl bg-green-50/70 border border-green-120 shadow-sm">
-                      <p className="text-[10px] uppercase font-extrabold text-[#00a65a] tracking-wider">Total Payment Amount</p>
-                      <h3 className="text-xl font-black mt-1.5 text-[#00a65a]">{formatCurrency(finances.totalPayments)}</h3>
-                      <p className="text-[10px] text-gray-455 mt-1">Direct + purchase downpayments</p>
+                      <p className="text-[10px] uppercase font-extrabold text-[#00a65a] tracking-wider">Total Payments</p>
+                      <h3 className="text-xl font-black mt-1.5 text-[#00a65a]">
+                        {formatCurrency(finances.totalPayments)}
+                        {isIndian && (
+                          <span className="block text-xs font-bold text-emerald-600 mt-0.5 font-mono">
+                            ₹{finances.totalPaymentsINR.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} INR
+                          </span>
+                        )}
+                      </h3>
+                      <p className="text-[10px] text-gray-455 mt-1">Direct + Downpayments</p>
                     </div>
                     <div className="p-4 rounded-2xl bg-yellow-50/70 border border-yellow-120 shadow-sm">
-                      <p className="text-[10px] uppercase font-extrabold text-amber-700 tracking-wider">Purchase Return Amount</p>
-                      <h3 className="text-xl font-black mt-1.5 text-amber-950">{formatCurrency(finances.totalReturns)}</h3>
-                      <p className="text-[10px] text-gray-455 mt-1">Items returned or adjusted</p>
+                      <p className="text-[10px] uppercase font-extrabold text-amber-700 tracking-wider">Purchase Returns</p>
+                      <h3 className="text-xl font-black mt-1.5 text-amber-950">
+                        {formatCurrency(finances.totalReturns)}
+                        {isIndian && (
+                          <span className="block text-xs font-bold text-amber-600 mt-0.5 font-mono">
+                            ₹{finances.totalReturnsINR.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} INR
+                          </span>
+                        )}
+                      </h3>
+                      <p className="text-[10px] text-gray-455 mt-1">Returned or adjusted</p>
                     </div>
                     <div className="p-4 rounded-2xl bg-red-50/70 border border-red-120 shadow-sm">
                       <p className="text-[10px] uppercase font-extrabold text-red-650 tracking-wider">Total Due Amount</p>
-                      <h3 className="text-xl font-black mt-1.5 text-red-650">{formatCurrency(finances.remainingDue)}</h3>
-                      <p className="text-[10px] text-gray-455 mt-1">Net pending due to supplier</p>
+                      <h3 className="text-xl font-black mt-1.5 text-red-650">
+                        {formatCurrency(finances.remainingDue)}
+                        {isIndian && (
+                          <span className="block text-xs font-bold text-rose-600 mt-0.5 font-mono">
+                            ₹{finances.remainingDueINR.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} INR
+                          </span>
+                        )}
+                      </h3>
+                      <p className="text-[10px] text-gray-455 mt-1">Net pending due balance</p>
                     </div>
                   </div>
                 );
@@ -2142,63 +2199,140 @@ export default function Suppliers({
                       </div>
 
                       <form onSubmit={handleModalSubmit} className="space-y-4">
-                        {modalSupplier.country === "India" && activeModal === "addPurchase" && (
-                          <div className="p-4 bg-amber-50/50 border border-amber-200 rounded-2xl space-y-3 animate-in fade-in slide-in-from-top-4 duration-300">
-                            <div className="flex items-center gap-2 text-amber-900 font-bold text-xs uppercase tracking-wider">
-                              <span className="p-1 px-1.5 bg-amber-100 rounded text-[10px]">INR ⇄ BDT</span>
-                              Indian Supplier Currency Exchange
-                            </div>
-
-                            <div className="grid grid-cols-3 gap-2">
-                              <div className="col-span-1">
-                                <label className="block text-[9px] font-black uppercase text-amber-700 mb-1">Rate (₹100 = ৳)</label>
-                                <input
-                                  type="number"
-                                  step="0.01"
-                                  value={modalExchangeRate}
-                                  onChange={(e) => handleModalExchangeRateChange(e.target.value)}
-                                  placeholder="143"
-                                  className="w-full p-2 bg-white rounded-xl border border-amber-200 text-xs font-bold text-amber-900 focus:outline-[#f59e0b]"
-                                />
+                        {modalSupplier.country === "India" && (activeModal === "addPurchase" || activeModal === "payDue") && (
+                          <div className="p-4 bg-amber-50/60 border border-amber-200 rounded-2xl space-y-3 animate-in fade-in slide-in-from-top-4 duration-300">
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-2 text-amber-900 font-bold text-xs uppercase tracking-wider">
+                                <span className="p-1 px-1.5 bg-amber-200 text-amber-900 font-extrabold rounded text-[10px]">INR ⇄ BDT</span>
+                                🇮🇳 Cross-Border Indian Trade Conversion
                               </div>
-                              <div className="col-span-2">
-                                <label className="block text-[9px] font-black uppercase text-amber-700 mb-1">Gross Purchase (₹ INR)</label>
-                                <input
-                                  type="number"
-                                  step="0.01"
-                                  value={modalInrTotalAmount}
-                                  onChange={(e) => handleModalInrTotalChange(e.target.value)}
-                                  placeholder="₹0.00"
-                                  className="w-full p-2 bg-white rounded-xl border border-amber-200 text-xs font-bold text-amber-900 focus:outline-[#f59e0b]"
-                                />
-                              </div>
-                            </div>
-
-                            <div className="grid grid-cols-3 gap-2">
-                              <div className="col-span-1">
-                              </div>
-                              <div className="col-span-2">
-                                <label className="block text-[9px] font-black uppercase text-amber-700 mb-1">Paid Amount (₹ INR)</label>
-                                <input
-                                  type="number"
-                                  step="0.01"
-                                  value={modalInrPaidAmount}
-                                  onChange={(e) => handleModalInrPaidChange(e.target.value)}
-                                  placeholder="₹0.00"
-                                  className="w-full p-2 bg-white rounded-xl border border-amber-200 text-xs font-bold text-[#10b981] focus:outline-[#10b981]"
-                                />
-                              </div>
-                            </div>
-
-                            <div className="text-[10px] text-amber-800 font-bold leading-normal pt-1.5 flex flex-col gap-1 bg-white/70 p-2.5 rounded-xl border border-amber-100/50">
-                              <div className="flex justify-between">
-                                <span>Calculated: ৳{(parseFloat(modalExchangeRate) > 0 ? ((parseFloat(modalInrTotalAmount) || 0) / parseFloat(modalExchangeRate)) * 100 : 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                                <span>Paid: ৳{(parseFloat(modalExchangeRate) > 0 ? ((parseFloat(modalInrPaidAmount) || 0) / parseFloat(modalExchangeRate)) * 100 : 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                              </div>
-                              <span className="text-[9px] text-amber-600 font-medium block border-t border-amber-100 pt-1 mt-0.5 text-center font-mono">
-                                Formula: (INR / Rate) × 100
+                              <span className="text-[10px] font-mono font-bold text-amber-800 bg-amber-100/70 px-2 py-0.5 rounded-full border border-amber-200">
+                                1 INR = ৳{(parseFloat(modalExchangeRate || "140") / 100).toFixed(2)} BDT
                               </span>
                             </div>
+
+                            {activeModal === "addPurchase" ? (
+                              <>
+                                <div className="grid grid-cols-3 gap-2.5">
+                                  <div className="col-span-1">
+                                    <label className="block text-[9px] font-black uppercase text-amber-800 mb-1">Rate (₹100 = ৳)</label>
+                                    <input
+                                      type="number"
+                                      step="0.01"
+                                      value={modalExchangeRate}
+                                      onChange={(e) => handleModalExchangeRateChange(e.target.value)}
+                                      placeholder="140"
+                                      className="w-full p-2 bg-white rounded-xl border border-amber-200 text-xs font-bold text-amber-950 focus:outline-[#f59e0b]"
+                                    />
+                                  </div>
+                                  <div className="col-span-2">
+                                    <label className="block text-[9px] font-black uppercase text-amber-800 mb-1">Gross Purchase (₹ INR)</label>
+                                    <input
+                                      type="number"
+                                      step="0.01"
+                                      value={modalInrTotalAmount}
+                                      onChange={(e) => handleModalInrTotalChange(e.target.value)}
+                                      placeholder="₹0.00"
+                                      className="w-full p-2 bg-white rounded-xl border border-amber-200 text-xs font-bold text-amber-950 focus:outline-[#f59e0b]"
+                                    />
+                                  </div>
+                                </div>
+
+                                <div className="grid grid-cols-2 gap-2.5">
+                                  <div>
+                                    <label className="block text-[9px] font-black uppercase text-emerald-800 mb-1">Paid Deposit (৳ BDT - বাংলা)</label>
+                                    <input
+                                      type="number"
+                                      step="0.01"
+                                      value={modalPaidAmount}
+                                      onChange={(e) => handleModalBdtPaidChange(e.target.value)}
+                                      placeholder="৳0.00"
+                                      className="w-full p-2 bg-white rounded-xl border border-emerald-300 text-xs font-bold text-emerald-800 focus:outline-emerald-500"
+                                    />
+                                  </div>
+                                  <div>
+                                    <label className="block text-[9px] font-black uppercase text-emerald-800 mb-1">Converted Deposit (₹ INR)</label>
+                                    <input
+                                      type="number"
+                                      step="0.01"
+                                      value={modalInrPaidAmount}
+                                      onChange={(e) => handleModalInrPaidChange(e.target.value)}
+                                      placeholder="₹0.00"
+                                      className="w-full p-2 bg-white rounded-xl border border-emerald-200 text-xs font-bold text-emerald-800 focus:outline-emerald-500"
+                                    />
+                                  </div>
+                                </div>
+
+                                <div className="text-[10px] text-amber-900 font-semibold leading-normal pt-1.5 flex flex-col gap-1.5 bg-white/80 p-3 rounded-xl border border-amber-150">
+                                  <div className="grid grid-cols-3 gap-2 text-center">
+                                    <div className="bg-amber-50/50 p-1.5 rounded-lg border border-amber-100">
+                                      <span className="text-[9px] uppercase font-bold text-gray-500 block">Total in BDT</span>
+                                      <span className="font-mono font-black text-amber-950">৳{parseFloat(modalAmount || "0").toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                                    </div>
+                                    <div className="bg-emerald-50/50 p-1.5 rounded-lg border border-emerald-100">
+                                      <span className="text-[9px] uppercase font-bold text-gray-500 block">Deposit in INR</span>
+                                      <span className="font-mono font-black text-emerald-800">₹{parseFloat(modalInrPaidAmount || "0").toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                                    </div>
+                                    <div className="bg-rose-50/50 p-1.5 rounded-lg border border-rose-100">
+                                      <span className="text-[9px] uppercase font-bold text-gray-500 block">Net Due INR</span>
+                                      <span className="font-mono font-black text-rose-700">₹{Math.max(0, (parseFloat(modalInrTotalAmount || "0") - parseFloat(modalInrPaidAmount || "0"))).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                                    </div>
+                                  </div>
+                                  <span className="text-[9px] text-amber-700 font-mono text-center block pt-0.5">
+                                    Conversion Formula: ৳ BDT = (₹ INR × Rate) / 100 • ₹ INR = (৳ BDT × 100) / Rate
+                                  </span>
+                                </div>
+                              </>
+                            ) : (
+                              <>
+                                <div className="grid grid-cols-2 gap-2.5">
+                                  <div>
+                                    <label className="block text-[9px] font-black uppercase text-amber-800 mb-1">Exchange Rate (₹100 = ৳)</label>
+                                    <input
+                                      type="number"
+                                      step="0.01"
+                                      value={modalExchangeRate}
+                                      onChange={(e) => {
+                                        setModalExchangeRate(e.target.value);
+                                        const rateFloat = parseFloat(e.target.value) || 0;
+                                        if (rateFloat > 0 && modalAmount) {
+                                          const inrVal = (parseFloat(modalAmount) * 100) / rateFloat;
+                                          setModalInrPaidAmount(inrVal.toFixed(2));
+                                        }
+                                      }}
+                                      placeholder="140"
+                                      className="w-full p-2 bg-white rounded-xl border border-amber-200 text-xs font-bold text-amber-950 focus:outline-[#f59e0b]"
+                                    />
+                                  </div>
+                                  <div>
+                                    <label className="block text-[9px] font-black uppercase text-emerald-800 mb-1">Converted Settlement (₹ INR)</label>
+                                    <input
+                                      type="number"
+                                      step="0.01"
+                                      value={modalInrPaidAmount}
+                                      onChange={(e) => {
+                                        setModalInrPaidAmount(e.target.value);
+                                        const inrFloat = parseFloat(e.target.value) || 0;
+                                        const rateFloat = parseFloat(modalExchangeRate) || 140;
+                                        if (rateFloat > 0) {
+                                          const bdtVal = (inrFloat * rateFloat) / 100;
+                                          setModalAmount(bdtVal.toFixed(2));
+                                        }
+                                      }}
+                                      placeholder="₹0.00"
+                                      className="w-full p-2 bg-white rounded-xl border border-emerald-300 text-xs font-bold text-emerald-800 focus:outline-emerald-500"
+                                    />
+                                  </div>
+                                </div>
+
+                                <div className="text-[10px] text-amber-900 bg-white/80 p-2.5 rounded-xl border border-amber-150 flex items-center justify-between">
+                                  <span>Outstanding Supplier Due:</span>
+                                  <span className="font-mono font-bold">
+                                    ৳{finances.remainingDue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} (₹{finances.remainingDueINR.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} INR)
+                                  </span>
+                                </div>
+                              </>
+                            )}
                           </div>
                         )}
 

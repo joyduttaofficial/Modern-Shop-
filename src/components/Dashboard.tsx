@@ -5,6 +5,7 @@ import { db, OperationType, handleFirestoreError } from "@/src/lib/firebase";
 import { Transaction, Bank, UserRole, Product } from "@/src/types";
 import { PurchaseModel } from "./Purchase";
 import { formatCurrency, cn } from "@/src/lib/utils";
+import { getTransactionsFromIndexedDB } from "@/src/lib/indexedDbFallback";
 import { 
   TrendingUp, 
   TrendingDown, 
@@ -111,7 +112,17 @@ export default function Dashboard({
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const txs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Transaction));
       setRecentTransactions(txs);
-    }, (error) => handleFirestoreError(error, OperationType.LIST, "transactions"));
+    }, async (error) => {
+      try {
+        const cached = await getTransactionsFromIndexedDB();
+        if (cached.length > 0) {
+          setRecentTransactions(cached.slice(0, 6));
+        }
+      } catch (e) {
+        console.warn("Failed to load cached transactions in Dashboard:", e);
+      }
+      handleFirestoreError(error, OperationType.LIST, "transactions");
+    });
 
     return () => unsubscribe();
   }, []);
@@ -126,278 +137,297 @@ export default function Dashboard({
   }, []);
 
   useEffect(() => {
-    async function fetchStats() {
-      setLoading(true);
-      try {
-        const today = startOfDay(new Date());
-        const firstOfMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
-        const todayFormatted = format(new Date(), "yyyy-MM-dd");
+    let all: Transaction[] = [];
+    let purchasesList: any[] = [];
+    let attendanceList: any[] = [];
+    let employeesList: any[] = [];
 
-        // Simple fetch for summary - in production use aggregation or cloud functions
-        const allSnapshot = await getDocs(collection(db, "transactions"));
-        const all = allSnapshot.docs.map(doc => doc.data() as Transaction);
+    let initialLoads = 0;
+    const checkInitialDone = () => {
+      initialLoads++;
+      if (initialLoads >= 4) setLoading(false);
+    };
 
-        const purchasesSnapshot = await getDocs(collection(db, "purchases"));
-        const purchasesList = purchasesSnapshot.docs.map(doc => doc.data() as any);
+    const recomputeStats = () => {
+      const today = startOfDay(new Date());
+      const firstOfMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+      const todayFormatted = format(new Date(), "yyyy-MM-dd");
 
-        const attendanceSnapshot = await getDocs(collection(db, "attendance"));
-        const attendanceList = attendanceSnapshot.docs.map(doc => doc.data() as any);
+      let todaySales = 0;
+      let todayWholesale = 0;
+      let todayBankDeposit = 0;
+      let todayBankWithdraw = 0;
+      let todayExpense = 0;
+      let todayPurchase = 0;
+      let todaySupplierPayment = 0;
+      let todayEmployeePresent = 0;
+      let todayEmployeeAbsent = 0;
+      let todayPreviousCash = 0;
 
-        const employeesSnapshot = await getDocs(collection(db, "employees"));
-        const employeesList = employeesSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as any));
+      let totalSales = 0;
+      let totalWholesale = 0;
+      let totalBankDeposit = 0;
+      let totalBankWithdraw = 0;
+      let totalExpense = 0;
+      let totalPurchase = 0;
+      let totalPurchaseDue = 0;
+      let totalSupplierPayment = 0;
+      let totalEmployeeAbsentMonth = 0;
 
-        let todaySales = 0;
-        let todayWholesale = 0;
-        let todayBankDeposit = 0;
-        let todayBankWithdraw = 0;
-        let todayExpense = 0;
-        let todayPurchase = 0;
-        let todaySupplierPayment = 0;
-        let todayEmployeePresent = 0;
-        let todayEmployeeAbsent = 0;
-        let todayPreviousCash = 0;
+      // 1. Transactions calculations
+      all.forEach(tx => {
+        let isToday = false;
+        try {
+          const txDateStr = format(new Date(tx.date), "yyyy-MM-dd");
+          isToday = txDateStr === todayFormatted;
+        } catch (e) {}
 
-        let totalSales = 0;
-        let totalWholesale = 0;
-        let totalBankDeposit = 0;
-        let totalBankWithdraw = 0;
-        let totalExpense = 0;
-        let totalPurchase = 0;
-        let totalPurchaseDue = 0;
-        let totalSupplierPayment = 0;
-        let totalEmployeeAbsentMonth = 0;
+        // Sales definition: income and sale category
+        const isSale = tx.type === "income" && (
+          tx.category === "Employee Sales" || 
+          tx.category === "Wholesale Sales" || 
+          tx.category === "Retail Sales" || 
+          tx.category === "Product Sales" || 
+          tx.category.toLowerCase().includes("sale")
+        ) &&
+        tx.category !== "Opening Balance" &&
+        tx.category !== "Previous Cash" &&
+        tx.category !== "Bank Deposit" &&
+        tx.category !== "Total Deposit" &&
+        tx.category !== "Total Bank Deposit";
 
-        // 1. Transactions calculations
-        all.forEach(tx => {
-          let isToday = false;
+        const isWholesale = tx.type === "income" && (
+          tx.category === "Wholesale Sales" || 
+          tx.category.toLowerCase().includes("wholesale")
+        );
+
+        const isDeposit = tx.type === "income" && (
+          tx.category === "Bank Deposit" || 
+          tx.category.toLowerCase().includes("bank deposit")
+        );
+
+        const isWithdrawal = tx.type === "expense" && (
+          tx.category === "Bank Credit" || 
+          tx.category === "Bank Withdrawal" || 
+          tx.category.toLowerCase().includes("bank credit") || 
+          tx.category.toLowerCase().includes("bank withdrawal") || 
+          tx.category.toLowerCase().includes("withdrawal")
+        );
+
+        const isSupplierPay = tx.category === "Supplier Due Payment" || tx.category.toLowerCase().includes("supplier payment");
+
+        const isPreviousCash = tx.category === "Previous Cash" || tx.category === "Opening Balance";
+
+        // All-Time Totals
+        if (isSale) totalSales += tx.amount;
+        if (isWholesale) totalWholesale += tx.amount;
+        if (isDeposit) totalBankDeposit += tx.amount;
+        if (isWithdrawal) totalBankWithdraw += tx.amount;
+        if (tx.type === "expense") totalExpense += tx.amount;
+        if (isSupplierPay) totalSupplierPayment += tx.amount;
+
+        // Today Snaps
+        if (isToday) {
+          if (isSale) todaySales += tx.amount;
+          if (isWholesale) todayWholesale += tx.amount;
+          if (isDeposit) todayBankDeposit += tx.amount;
+          if (isWithdrawal) todayBankWithdraw += tx.amount;
+          if (tx.type === "expense") todayExpense += tx.amount;
+          if (isSupplierPay) todaySupplierPayment += tx.amount;
+          if (isPreviousCash) todayPreviousCash += tx.amount;
+        }
+      });
+
+      // 2. Purchases calculation
+      purchasesList.forEach(p => {
+        totalPurchase += (p.totalAmount || 0);
+        totalPurchaseDue += (p.dueAmount || 0);
+
+        if (p.date === todayFormatted) {
+          todayPurchase += (p.totalAmount || 0);
+        }
+      });
+
+      // 3. Attendance calculation
+      const currentMonthYear = format(new Date(), "yyyy-MM");
+      attendanceList.forEach(a => {
+        let isToday = false;
+        let isCurrentMonth = false;
+        try {
+          const aDate = new Date(a.date);
+          const aDateStr = format(aDate, "yyyy-MM-dd");
+          const aMonthStr = format(aDate, "yyyy-MM");
+          isToday = aDateStr === todayFormatted;
+          isCurrentMonth = aMonthStr === currentMonthYear;
+        } catch (e) {}
+
+        if (isToday) {
+          if (a.status === "present" || a.status === "late" || a.status === "half-day") {
+            todayEmployeePresent += 1;
+          } else if (a.status === "absent") {
+            todayEmployeeAbsent += 1;
+          }
+        }
+
+        if (isCurrentMonth && a.status === "absent") {
+          totalEmployeeAbsentMonth += 1;
+        }
+      });
+
+      setStats({
+        todaySales,
+        todayWholesale,
+        todayBankDeposit,
+        todayBankWithdraw,
+        todayExpense,
+        todayPurchase,
+        todaySupplierPayment,
+        todayEmployeePresent,
+        todayEmployeeAbsent,
+        todayPreviousCash,
+
+        totalSales,
+        totalWholesale,
+        totalBankDeposit,
+        totalBankWithdraw,
+        totalExpense,
+        totalPurchase,
+        totalPurchaseDue,
+        totalSupplierPayment,
+        totalEmployeeAbsentMonth
+      });
+
+      // Calculate employee-specific sales
+      const employeeSalesMapToday: Record<string, { name: string; amount: number }> = {};
+      const employeeSalesMapTotal: Record<string, { name: string; amount: number }> = {};
+
+      employeesList.forEach((emp: any) => {
+        if (emp.id) {
+          employeeSalesMapToday[emp.id] = { name: emp.name, amount: 0 };
+          employeeSalesMapTotal[emp.id] = { name: emp.name, amount: 0 };
+        }
+      });
+
+      all.forEach(tx => {
+        if (tx.category === "Employee Sales" && tx.employeeId) {
+          // Total
+          if (!employeeSalesMapTotal[tx.employeeId]) {
+            employeeSalesMapTotal[tx.employeeId] = { name: tx.subCategory || "Unknown Sales Officer", amount: 0 };
+          }
+          employeeSalesMapTotal[tx.employeeId].amount += tx.amount;
+
+          // Today
           try {
             const txDateStr = format(new Date(tx.date), "yyyy-MM-dd");
-            isToday = txDateStr === todayFormatted;
-          } catch (e) {}
-
-          // Sales definition: income and sale category
-          const isSale = tx.type === "income" && (
-            tx.category === "Employee Sales" || 
-            tx.category === "Wholesale Sales" || 
-            tx.category === "Retail Sales" || 
-            tx.category === "Product Sales" || 
-            tx.category.toLowerCase().includes("sale")
-          ) &&
-          tx.category !== "Opening Balance" &&
-          tx.category !== "Previous Cash" &&
-          tx.category !== "Bank Deposit" &&
-          tx.category !== "Total Deposit" &&
-          tx.category !== "Total Bank Deposit";
-
-          const isWholesale = tx.type === "income" && (
-            tx.category === "Wholesale Sales" || 
-            tx.category.toLowerCase().includes("wholesale")
-          );
-
-          const isDeposit = tx.type === "income" && (
-            tx.category === "Bank Deposit" || 
-            tx.category.toLowerCase().includes("bank deposit")
-          );
-
-          const isWithdrawal = tx.type === "expense" && (
-            tx.category === "Bank Credit" || 
-            tx.category === "Bank Withdrawal" || 
-            tx.category.toLowerCase().includes("bank credit") || 
-            tx.category.toLowerCase().includes("bank withdrawal") || 
-            tx.category.toLowerCase().includes("withdrawal")
-          );
-
-          const isSupplierPay = tx.category === "Supplier Due Payment" || tx.category.toLowerCase().includes("supplier payment");
-
-          const isPreviousCash = tx.category === "Previous Cash" || tx.category === "Opening Balance";
-
-          // All-Time Totals
-          if (isSale) totalSales += tx.amount;
-          if (isWholesale) totalWholesale += tx.amount;
-          if (isDeposit) totalBankDeposit += tx.amount;
-          if (isWithdrawal) totalBankWithdraw += tx.amount;
-          if (tx.type === "expense") totalExpense += tx.amount;
-          if (isSupplierPay) totalSupplierPayment += tx.amount;
-
-          // Today Snaps
-          if (isToday) {
-            if (isSale) todaySales += tx.amount;
-            if (isWholesale) todayWholesale += tx.amount;
-            if (isDeposit) todayBankDeposit += tx.amount;
-            if (isWithdrawal) todayBankWithdraw += tx.amount;
-            if (tx.type === "expense") todayExpense += tx.amount;
-            if (isSupplierPay) todaySupplierPayment += tx.amount;
-            if (isPreviousCash) todayPreviousCash += tx.amount;
-          }
-        });
-
-        // 2. Purchases calculation
-        purchasesList.forEach(p => {
-          totalPurchase += p.totalAmount;
-          totalPurchaseDue += (p.dueAmount || 0);
-
-          if (p.date === todayFormatted) {
-            todayPurchase += p.totalAmount;
-          }
-        });
-
-        // 3. Attendance calculation
-        const currentMonthYear = format(new Date(), "yyyy-MM");
-        attendanceList.forEach(a => {
-          let isToday = false;
-          let isCurrentMonth = false;
-          try {
-            const aDate = new Date(a.date);
-            const aDateStr = format(aDate, "yyyy-MM-dd");
-            const aMonthStr = format(aDate, "yyyy-MM");
-            isToday = aDateStr === todayFormatted;
-            isCurrentMonth = aMonthStr === currentMonthYear;
-          } catch (e) {}
-
-          if (isToday) {
-            if (a.status === "present" || a.status === "late" || a.status === "half-day") {
-              todayEmployeePresent += 1;
-            } else if (a.status === "absent") {
-              todayEmployeeAbsent += 1;
+            if (txDateStr === todayFormatted) {
+              if (!employeeSalesMapToday[tx.employeeId]) {
+                employeeSalesMapToday[tx.employeeId] = { name: tx.subCategory || "Unknown Sales Officer", amount: 0 };
+              }
+              employeeSalesMapToday[tx.employeeId].amount += tx.amount;
             }
-          }
+          } catch (e) {}
+        }
+      });
 
-          if (isCurrentMonth && a.status === "absent") {
-            totalEmployeeAbsentMonth += 1;
-          }
-        });
+      setEmployeeSalesToday(
+        Object.values(employeeSalesMapToday)
+          .filter((e: any) => e.amount > 0)
+          .sort((a: any, b: any) => b.amount - a.amount)
+      );
+      setEmployeeSalesTotal(
+        Object.values(employeeSalesMapTotal)
+          .filter((e: any) => e.amount > 0)
+          .sort((a: any, b: any) => b.amount - a.amount)
+      );
 
-        setStats({
-          todaySales,
-          todayWholesale,
-          todayBankDeposit,
-          todayBankWithdraw,
-          todayExpense,
-          todayPurchase,
-          todaySupplierPayment,
-          todayEmployeePresent,
-          todayEmployeeAbsent,
-          todayPreviousCash,
+      // Generate comparative 7-day Bar chart data: Sales, Purchase, and Expense
+      const barDays = Array.from({ length: 7 }, (_, i) => {
+        const date = subDays(new Date(), 6 - i);
+        const dayLabel = format(date, "MMM dd");
+        const dateStr = format(date, "yyyy-MM-dd");
 
-          totalSales,
-          totalWholesale,
-          totalBankDeposit,
-          totalBankWithdraw,
-          totalExpense,
-          totalPurchase,
-          totalPurchaseDue,
-          totalSupplierPayment,
-          totalEmployeeAbsentMonth
-        });
-
-        // Calculate employee-specific sales
-        const employeeSalesMapToday: Record<string, { name: string; amount: number }> = {};
-        const employeeSalesMapTotal: Record<string, { name: string; amount: number }> = {};
-
-        employeesList.forEach((emp: any) => {
-          if (emp.id) {
-            employeeSalesMapToday[emp.id] = { name: emp.name, amount: 0 };
-            employeeSalesMapTotal[emp.id] = { name: emp.name, amount: 0 };
-          }
-        });
-
-        all.forEach(tx => {
-          if (tx.category === "Employee Sales" && tx.employeeId) {
-            // Total
-            if (!employeeSalesMapTotal[tx.employeeId]) {
-              employeeSalesMapTotal[tx.employeeId] = { name: tx.subCategory || "Unknown Sales Officer", amount: 0 };
-            }
-            employeeSalesMapTotal[tx.employeeId].amount += tx.amount;
-
-            // Today
+        const daySales = all
+          .filter(tx => {
             try {
               const txDateStr = format(new Date(tx.date), "yyyy-MM-dd");
-              if (txDateStr === todayFormatted) {
-                if (!employeeSalesMapToday[tx.employeeId]) {
-                  employeeSalesMapToday[tx.employeeId] = { name: tx.subCategory || "Unknown Sales Officer", amount: 0 };
-                }
-                employeeSalesMapToday[tx.employeeId].amount += tx.amount;
-              }
-            } catch (e) {}
-          }
-        });
+              return txDateStr === dateStr && tx.type === "income" && (
+                tx.category === "Employee Sales" || 
+                tx.category === "Wholesale Sales" || 
+                tx.category === "Retail Sales" || 
+                tx.category === "Product Sales" || 
+                tx.category.toLowerCase().includes("sale")
+              ) &&
+              tx.category !== "Opening Balance" &&
+              tx.category !== "Previous Cash" &&
+              tx.category !== "Bank Deposit" &&
+              tx.category !== "Total Deposit" &&
+              tx.category !== "Total Bank Deposit";
+            } catch(e) { return false; }
+          })
+          .reduce((sum, tx) => sum + tx.amount, 0);
 
-        setEmployeeSalesToday(
-          Object.values(employeeSalesMapToday)
-            .filter((e: any) => e.amount > 0)
-            .sort((a: any, b: any) => b.amount - a.amount)
-        );
-        setEmployeeSalesTotal(
-          Object.values(employeeSalesMapTotal)
-            .filter((e: any) => e.amount > 0)
-            .sort((a: any, b: any) => b.amount - a.amount)
-        );
+        const dayPurchase = purchasesList
+          .filter(p => p.date === dateStr)
+          .reduce((sum, p) => sum + (p.totalAmount || 0), 0);
 
-        // Generate comparative 7-day Bar chart data: Sales, Purchase, and Expense
-        const barDays = Array.from({ length: 7 }, (_, i) => {
-          const date = subDays(new Date(), 6 - i);
-          const dayLabel = format(date, "MMM dd");
-          const dateStr = format(date, "yyyy-MM-dd");
+        const dayExpense = all
+          .filter(tx => {
+            try {
+              const txDateStr = format(new Date(tx.date), "yyyy-MM-dd");
+              return txDateStr === dateStr && tx.type === "expense";
+            } catch(e) { return false; }
+          })
+          .reduce((sum, tx) => sum + tx.amount, 0);
 
-          const daySales = all
-            .filter(tx => {
-              try {
-                const txDateStr = format(new Date(tx.date), "yyyy-MM-dd");
-                return txDateStr === dateStr && tx.type === "income" && (
-                  tx.category === "Employee Sales" || 
-                  tx.category === "Wholesale Sales" || 
-                  tx.category === "Retail Sales" || 
-                  tx.category === "Product Sales" || 
-                  tx.category.toLowerCase().includes("sale")
-                ) &&
-                tx.category !== "Opening Balance" &&
-                tx.category !== "Previous Cash" &&
-                tx.category !== "Bank Deposit" &&
-                tx.category !== "Total Deposit" &&
-                tx.category !== "Total Bank Deposit";
-              } catch(e) { return false; }
-            })
-            .reduce((sum, tx) => sum + tx.amount, 0);
+        return { name: dayLabel, Sales: daySales, Purchase: dayPurchase, Expense: dayExpense };
+      });
+      setSevenDaysBarChartData(barDays);
 
-          const dayPurchase = purchasesList
-            .filter(p => p.date === dateStr)
-            .reduce((sum, p) => sum + p.totalAmount, 0);
+      // Generate line trend chart data for last 7 days (Inflow vs Outflow)
+      const days = Array.from({ length: 7 }, (_, i) => {
+        const date = subDays(new Date(), 6 - i);
+        const dayLabel = format(date, "MMM dd");
+        const dayIncome = all
+          .filter(tx => format(new Date(tx.date), "yyyy-MM-dd") === format(date, "yyyy-MM-dd") && tx.type === "income")
+          .reduce((sum, tx) => sum + tx.amount, 0);
+        const dayExpense = all
+          .filter(tx => format(new Date(tx.date), "yyyy-MM-dd") === format(date, "yyyy-MM-dd") && tx.type === "expense")
+          .reduce((sum, tx) => sum + tx.amount, 0);
+        return { name: dayLabel, income: dayIncome, expense: dayExpense };
+      });
+      setTrendChartData(days);
+    };
 
-          const dayExpense = all
-            .filter(tx => {
-              try {
-                const txDateStr = format(new Date(tx.date), "yyyy-MM-dd");
-                return txDateStr === dateStr && tx.type === "expense";
-              } catch(e) { return false; }
-            })
-            .reduce((sum, tx) => sum + tx.amount, 0);
+    const unsubTxs = onSnapshot(collection(db, "transactions"), (snap) => {
+      all = snap.docs.map(doc => doc.data() as Transaction);
+      recomputeStats();
+      checkInitialDone();
+    }, (err) => { console.error(err); checkInitialDone(); });
 
-          return { name: dayLabel, Sales: daySales, Purchase: dayPurchase, Expense: dayExpense };
-        });
-        setSevenDaysBarChartData(barDays);
+    const unsubPur = onSnapshot(collection(db, "purchases"), (snap) => {
+      purchasesList = snap.docs.map(doc => doc.data() as any);
+      recomputeStats();
+      checkInitialDone();
+    }, (err) => { console.error(err); checkInitialDone(); });
 
-        // Generate line trend chart data for last 7 days (Inflow vs Outflow)
-        const days = Array.from({ length: 7 }, (_, i) => {
-          const date = subDays(new Date(), 6 - i);
-          const dayLabel = format(date, "MMM dd");
-          const dayIncome = all
-            .filter(tx => format(new Date(tx.date), "yyyy-MM-dd") === format(date, "yyyy-MM-dd") && tx.type === "income")
-            .reduce((sum, tx) => sum + tx.amount, 0);
-          const dayExpense = all
-            .filter(tx => format(new Date(tx.date), "yyyy-MM-dd") === format(date, "yyyy-MM-dd") && tx.type === "expense")
-            .reduce((sum, tx) => sum + tx.amount, 0);
-          return { name: dayLabel, income: dayIncome, expense: dayExpense };
-        });
-        setTrendChartData(days);
+    const unsubAtt = onSnapshot(collection(db, "attendance"), (snap) => {
+      attendanceList = snap.docs.map(doc => doc.data() as any);
+      recomputeStats();
+      checkInitialDone();
+    }, (err) => { console.error(err); checkInitialDone(); });
 
-      } catch (error) {
-        console.error("Error fetching stats:", error);
-      } finally {
-        setLoading(false);
-      }
-    }
+    const unsubEmp = onSnapshot(collection(db, "employees"), (snap) => {
+      employeesList = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as any));
+      recomputeStats();
+      checkInitialDone();
+    }, (err) => { console.error(err); checkInitialDone(); });
 
-    fetchStats();
+    return () => {
+      unsubTxs();
+      unsubPur();
+      unsubAtt();
+      unsubEmp();
+    };
   }, []);
 
   const totalBankLastCash = banks.reduce((sum, b) => sum + b.balance, 0);
@@ -593,7 +623,7 @@ export default function Dashboard({
           <span className="w-1.5 h-6 bg-rose-600 rounded-full animate-pulse" />
           <h3 className="text-base font-black text-slate-800 uppercase tracking-tight">{t("Today's Shop Ledger Snapshot")}</h3>
         </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+        <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-2.5 sm:gap-4">
           <StatCard 
             title="Today Sales Amount" 
             value={stats.todaySales} 
@@ -685,7 +715,7 @@ export default function Dashboard({
           <span className="w-1.5 h-6 bg-indigo-600 rounded-full" />
           <h3 className="text-base font-black text-slate-800 uppercase tracking-tight">{t("Shop Lifetime Reserves & Aggregates")}</h3>
         </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+        <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-2.5 sm:gap-4">
           <StatCard 
             title="Total Sales Amount" 
             value={stats.totalSales} 
@@ -1088,30 +1118,32 @@ function StatCard({ title, value, icon: Icon, color, description, scope = "Globa
 
   return (
     <div className={cn(
-      "bg-white p-5 rounded-3xl border border-slate-200/60 shadow-xs hover:shadow-lg transition-all duration-300 group hover:-translate-y-0.5",
+      "bg-white p-3.5 sm:p-5 rounded-2xl sm:rounded-3xl border border-slate-200/60 shadow-xs hover:shadow-lg transition-all duration-300 group hover:-translate-y-0.5 flex flex-col justify-between",
       (isCount || printHidden) ? "print:hidden" : "",
       style.glow
     )}>
-      <div className="flex items-start justify-between mb-3.5">
-        <div className={cn("p-2.5 rounded-xl border transition-transform duration-300 group-hover:scale-105", style.bg)}>
-          <Icon className="w-5 h-5" />
-        </div>
-        <span className={cn(
-          "text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded-md border",
-          scope === "Today" ? "bg-orange-55 text-orange-600 border-orange-105" :
-          scope === "Total" ? "bg-indigo-55 text-indigo-600 border-indigo-105" :
-          "bg-slate-50 text-slate-500 border-slate-100"
-        )}>
-          {t(scope)}
-        </span>
-      </div>
       <div>
-        <p className="text-[10.5px] font-bold text-slate-400 uppercase tracking-wider mb-1 truncate" title={t(title)}>{t(title)}</p>
-        <p className="text-xl font-black text-slate-900 tracking-tight font-mono">
-          {isCount ? formatNumber(value) : formatCurrency(value)}
-        </p>
+        <div className="flex items-start justify-between mb-2.5 sm:mb-3.5">
+          <div className={cn("p-2 sm:p-2.5 rounded-lg sm:rounded-xl border transition-transform duration-300 group-hover:scale-105", style.bg)}>
+            <Icon className="w-4 h-4 sm:w-5 sm:h-5" />
+          </div>
+          <span className={cn(
+            "text-[8px] sm:text-[9px] font-black uppercase tracking-wider px-1.5 sm:px-2 py-0.5 rounded-md border",
+            scope === "Today" ? "bg-orange-55 text-orange-600 border-orange-105" :
+            scope === "Total" ? "bg-indigo-55 text-indigo-600 border-indigo-105" :
+            "bg-slate-50 text-slate-500 border-slate-100"
+          )}>
+            {t(scope)}
+          </span>
+        </div>
+        <div>
+          <p className="text-[10px] sm:text-[10.5px] font-bold text-slate-400 uppercase tracking-wider mb-0.5 sm:mb-1 truncate" title={t(title)}>{t(title)}</p>
+          <p className="text-sm sm:text-xl font-black text-slate-900 tracking-tight font-mono">
+            {isCount ? formatNumber(value) : formatCurrency(value)}
+          </p>
+        </div>
       </div>
-      <p className="text-[9px] font-bold text-slate-400 mt-2 flex items-center gap-1 border-t border-slate-50 pt-2 truncate" title={t(description)}>
+      <p className="text-[8.5px] sm:text-[9px] font-bold text-slate-400 mt-2 flex items-center gap-1 border-t border-slate-50 pt-1.5 sm:pt-2 truncate hidden sm:flex" title={t(description)}>
         <span className="w-1.5 h-1.5 rounded-full bg-slate-300 animate-pulse shrink-0" />
         {t(description)}
       </p>

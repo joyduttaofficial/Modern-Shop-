@@ -4,6 +4,11 @@ import { collection, addDoc, query, orderBy, onSnapshot, limit, deleteDoc, doc, 
 import { db, OperationType, handleFirestoreError, updateDoc } from "@/src/lib/firebase";
 import { Transaction, TransactionType, Category, Bank, UserRole, Employee, Supplier } from "@/src/types";
 import { cn, formatCurrency } from "@/src/lib/utils";
+import {
+  saveTransactionsToIndexedDB,
+  getTransactionsFromIndexedDB,
+  saveSingleTransactionOffline
+} from "@/src/lib/indexedDbFallback";
 import { 
   Plus, Search, Filter, Trash2, ArrowUpCircle, ArrowDownCircle, 
   Wallet, Landmark, ArrowUpRight, ArrowDownLeft, ArrowUpDown, 
@@ -85,8 +90,17 @@ export default function Transactions({
   useEffect(() => {
     const q = query(collection(db, "transactions"), orderBy("date", "desc"), limit(100));
     const unsubTxs = onSnapshot(q, (snapshot) => {
-      setTransactions(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Transaction)));
-    }, (error) => handleFirestoreError(error, OperationType.LIST, "transactions"));
+      const txs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Transaction));
+      setTransactions(txs);
+      saveTransactionsToIndexedDB(txs);
+    }, async (error) => {
+      // Offline fallback: retrieve cached records from IndexedDB
+      const cached = await getTransactionsFromIndexedDB();
+      if (cached.length > 0) {
+        setTransactions(cached);
+      }
+      handleFirestoreError(error, OperationType.LIST, "transactions");
+    });
 
     const unsubCats = onSnapshot(collection(db, "categories"), (snapshot) => {
       setCategories(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Category)));
@@ -298,7 +312,40 @@ export default function Transactions({
       setSupplierId("");
       alert("Transaction successfully recorded in system ledger.");
     } catch (error) {
-      handleFirestoreError(error, OperationType.CREATE, "transactions");
+      const errStr = error instanceof Error ? error.message : String(error);
+      const isOfflineErr = !navigator.onLine || 
+        errStr.toLowerCase().includes("offline") || 
+        errStr.toLowerCase().includes("unavailable") || 
+        errStr.toLowerCase().includes("quota") ||
+        errStr.toLowerCase().includes("could not reach");
+
+      if (isOfflineErr) {
+        const numAmount = parseFloat(amount) || 0;
+        const computedType: TransactionType = (category === "Previous Cash" || category === "Bank Deposit" || category === "Loan Deposit" || activeTab === "income") ? "income" : "expense";
+        const fallbackTx: Transaction = {
+          date: new Date(date).toISOString(),
+          type: computedType,
+          category,
+          amount: numAmount,
+          paymentMethod,
+          notes: notes.trim(),
+          createdBy: user.uid,
+          ...(subCategory.trim() ? { subCategory: subCategory.trim() } : {}),
+          ...(employeeId ? { employeeId } : {}),
+          ...(supplierId ? { supplierId } : {})
+        };
+        await saveSingleTransactionOffline(fallbackTx, true);
+        setTransactions(prev => [fallbackTx, ...prev]);
+        setAmount("");
+        setDate(format(new Date(), "yyyy-MM-dd'T'HH:mm"));
+        setNotes("");
+        setSubCategory("");
+        setEmployeeId("");
+        setSupplierId("");
+        alert("Offline Mode: Transaction saved safely in IndexedDB local storage. It will automatically synchronize with Firestore once reconnected.");
+      } else {
+        handleFirestoreError(error, OperationType.CREATE, "transactions");
+      }
     } finally {
       setLoading(false);
     }
@@ -642,62 +689,62 @@ export default function Transactions({
       <div className="bg-white rounded-3xl border border-slate-200/60 shadow-xl shadow-slate-100/40 overflow-hidden min-h-[580px] grid grid-cols-1 lg:grid-cols-12 divide-y lg:divide-y-0 lg:divide-x divide-slate-100">
         
         {/* High-fidelity Sidebar Control Rail */}
-        <div className="lg:col-span-3 p-5 space-y-6 bg-slate-50/70">
+        <div className="lg:col-span-3 p-4 sm:p-5 space-y-4 sm:space-y-6 bg-slate-50/70">
           <div>
             <h2 className="text-lg font-black text-slate-800 tracking-tight">Financial Hub</h2>
             <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mt-0.5">Organized Cash flow registries</p>
           </div>
 
-          <nav className="flex flex-col gap-1.5">
+          <nav className="flex flex-row lg:flex-col gap-1.5 overflow-x-auto pb-2 lg:pb-0 scrollbar-none">
             <button
               id="tab-inout"
               onClick={() => setWorkspaceTab("inout")}
               className={cn(
-                "w-full flex items-center justify-between px-4 py-3 rounded-2xl text-xs font-bold transition-all uppercase tracking-wider text-left border cursor-pointer",
+                "flex-1 lg:w-full min-w-max lg:min-w-0 flex items-center justify-between px-3.5 sm:px-4 py-2.5 sm:py-3 rounded-xl sm:rounded-2xl text-xs font-bold transition-all uppercase tracking-wider text-left border cursor-pointer shrink-0",
                 workspaceTab === "inout" 
                   ? "bg-white text-slate-900 border-slate-205 shadow-sm font-black text-indigo-700" 
                   : "bg-transparent text-slate-505 border-transparent hover:bg-slate-100/80 hover:text-slate-950"
               )}
             >
-              <span className="flex items-center gap-2.5">
+              <span className="flex items-center gap-2 sm:gap-2.5">
                 <ArrowUpDown className="w-4 h-4 text-emerald-500 shrink-0" />
                 Inflows & Outflows
               </span>
-              <ChevronRight className="w-3.5 h-3.5 opacity-50" />
+              <ChevronRight className="w-3.5 h-3.5 opacity-50 hidden lg:block" />
             </button>
 
             <button
               id="tab-opening"
               onClick={() => setWorkspaceTab("opening")}
               className={cn(
-                "w-full flex items-center justify-between px-4 py-3 rounded-2xl text-xs font-bold transition-all uppercase tracking-wider text-left border cursor-pointer",
+                "flex-1 lg:w-full min-w-max lg:min-w-0 flex items-center justify-between px-3.5 sm:px-4 py-2.5 sm:py-3 rounded-xl sm:rounded-2xl text-xs font-bold transition-all uppercase tracking-wider text-left border cursor-pointer shrink-0",
                 workspaceTab === "opening" 
                   ? "bg-white text-slate-900 border-slate-205 shadow-sm font-black text-indigo-700" 
                   : "bg-transparent text-slate-505 border-transparent hover:bg-slate-100/80 hover:text-slate-950"
               )}
             >
-              <span className="flex items-center gap-2.5">
+              <span className="flex items-center gap-2 sm:gap-2.5">
                 <Wallet className="w-4 h-4 text-indigo-500 shrink-0" />
                 Previous / Opening Cash
               </span>
-              <ChevronRight className="w-3.5 h-3.5 opacity-50" />
+              <ChevronRight className="w-3.5 h-3.5 opacity-50 hidden lg:block" />
             </button>
 
             <button
               id="tab-banks"
               onClick={() => setWorkspaceTab("banks")}
               className={cn(
-                "w-full flex items-center justify-between px-4 py-3 rounded-2xl text-xs font-bold transition-all uppercase tracking-wider text-left border cursor-pointer",
+                "flex-1 lg:w-full min-w-max lg:min-w-0 flex items-center justify-between px-3.5 sm:px-4 py-2.5 sm:py-3 rounded-xl sm:rounded-2xl text-xs font-bold transition-all uppercase tracking-wider text-left border cursor-pointer shrink-0",
                 workspaceTab === "banks" 
                   ? "bg-white text-slate-900 border-slate-205 shadow-sm font-black text-indigo-700" 
                   : "bg-transparent text-slate-505 border-transparent hover:bg-slate-100/80 hover:text-slate-950"
               )}
             >
-              <span className="flex items-center gap-2.5">
+              <span className="flex items-center gap-2 sm:gap-2.5">
                 <Landmark className="w-4 h-4 text-sky-550 shrink-0" />
                 Bank Operations
               </span>
-              <span className="bg-sky-50 text-sky-700 border border-sky-100 text-[9px] px-1.5 py-0.5 rounded-md font-bold">
+              <span className="bg-sky-50 text-sky-700 border border-sky-100 text-[9px] px-1.5 py-0.5 rounded-md font-bold ml-1.5">
                 {banks.length}
               </span>
             </button>
@@ -706,41 +753,41 @@ export default function Transactions({
               id="tab-loans"
               onClick={() => setWorkspaceTab("loans")}
               className={cn(
-                "w-full flex items-center justify-between px-4 py-3 rounded-2xl text-xs font-bold transition-all uppercase tracking-wider text-left border cursor-pointer",
+                "flex-1 lg:w-full min-w-max lg:min-w-0 flex items-center justify-between px-3.5 sm:px-4 py-2.5 sm:py-3 rounded-xl sm:rounded-2xl text-xs font-bold transition-all uppercase tracking-wider text-left border cursor-pointer shrink-0",
                 workspaceTab === "loans" 
                   ? "bg-white text-slate-900 border-slate-205 shadow-sm font-black text-indigo-700" 
                   : "bg-transparent text-slate-505 border-transparent hover:bg-slate-100/80 hover:text-slate-950"
               )}
             >
-              <span className="flex items-center gap-2.5">
+              <span className="flex items-center gap-2 sm:gap-2.5">
                 <RefreshCw className="w-4 h-4 text-amber-500 shrink-0" />
                 Debt & loan Desk
               </span>
-              <ChevronRight className="w-3.5 h-3.5 opacity-50" />
+              <ChevronRight className="w-3.5 h-3.5 opacity-50 hidden lg:block" />
             </button>
 
             <button
               id="tab-ledgers"
               onClick={() => setWorkspaceTab("ledgers")}
               className={cn(
-                "w-full flex items-center justify-between px-4 py-3 rounded-2xl text-xs font-bold transition-all uppercase tracking-wider text-left border cursor-pointer",
+                "flex-1 lg:w-full min-w-max lg:min-w-0 flex items-center justify-between px-3.5 sm:px-4 py-2.5 sm:py-3 rounded-xl sm:rounded-2xl text-xs font-bold transition-all uppercase tracking-wider text-left border cursor-pointer shrink-0",
                 workspaceTab === "ledgers" 
                   ? "bg-white text-slate-900 border-slate-205 shadow-sm font-black text-indigo-700" 
                   : "bg-transparent text-slate-505 border-transparent hover:bg-slate-100/80 hover:text-slate-950"
               )}
             >
-              <span className="flex items-center gap-2.5">
+              <span className="flex items-center gap-2 sm:gap-2.5">
                 <History className="w-4 h-4 text-slate-600 shrink-0" />
                 Unified Ledger List
               </span>
-              <span className="bg-slate-100 text-slate-700 text-[9px] px-1.5 py-0.5 rounded-md font-bold">
+              <span className="bg-slate-100 text-slate-700 text-[9px] px-1.5 py-0.5 rounded-md font-bold ml-1.5">
                 {transactions.length}
               </span>
             </button>
           </nav>
 
           {/* Quick info tip context block */}
-          <div className="bg-slate-100/60 p-4 rounded-2xl border border-slate-200/50 space-y-1.5">
+          <div className="bg-slate-100/60 p-4 rounded-2xl border border-slate-200/50 space-y-1.5 hidden lg:block">
             <span className="inline-flex items-center gap-1 text-[10px] font-black tracking-widest text-slate-400 uppercase">
               <Info className="w-3 h-3 text-slate-500" /> Accounting Shield
             </span>

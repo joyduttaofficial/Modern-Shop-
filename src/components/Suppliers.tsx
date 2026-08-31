@@ -132,6 +132,60 @@ export default function Suppliers({
     const id = supplierToDelete;
     setSupplierToDelete(null);
     try {
+      const targetSup = suppliers.find(s => s.id === id);
+
+      // 1. Delete all supplierTransactions for this supplier
+      const sTxSnap = await getDocs(query(collection(db, "supplierTransactions"), where("supplierId", "==", id)));
+      for (const d of sTxSnap.docs) {
+        await deleteDoc(doc(db, "supplierTransactions", d.id));
+      }
+
+      // 2. Delete all purchases for this supplier and revert stock
+      const purSnap = await getDocs(query(collection(db, "purchases"), where("supplierId", "==", id)));
+      for (const pDoc of purSnap.docs) {
+        const pData = pDoc.data() as any;
+        if (pData.items && pData.items.length > 0) {
+          for (const item of pData.items) {
+            const productsRef = collection(db, "products");
+            const qP = query(productsRef, where("name", "==", item.productName));
+            const prodSnap = await getDocs(qP);
+            if (!prodSnap.empty) {
+              const productDoc = prodSnap.docs[0];
+              const productData = productDoc.data();
+              const currentStock = productData.stock || 0;
+              const itemQty = parseFloat(item.quantity as any) || 0;
+              const newStock = Math.max(0, currentStock - itemQty);
+              const price = productData.lastPurchasePrice || 0;
+              await updateDoc(doc(db, "products", productDoc.id), {
+                stock: newStock,
+                totalPurchaseValue: newStock * price,
+                updatedAt: new Date().toISOString()
+              });
+            }
+          }
+          const ledgerQuery = query(collection(db, "stockLedger"), where("refNo", "==", pData.refNo));
+          const ledgerSnap = await getDocs(ledgerQuery);
+          for (const lDoc of ledgerSnap.docs) {
+            await deleteDoc(doc(db, "stockLedger", lDoc.id));
+          }
+        }
+        await deleteDoc(doc(db, "purchases", pDoc.id));
+      }
+
+      // 3. Delete financial transactions related to this supplier
+      const txSnap = await getDocs(collection(db, "transactions"));
+      for (const tDoc of txSnap.docs) {
+        const tData = tDoc.data();
+        if (
+          tData.supplierId === id ||
+          (targetSup && tData.subCategory === targetSup.name) ||
+          (targetSup && tData.notes?.toLowerCase().includes(targetSup.name.toLowerCase()))
+        ) {
+          await deleteDoc(doc(db, "transactions", tDoc.id));
+        }
+      }
+
+      // 4. Delete the supplier document
       await deleteDoc(doc(db, "suppliers", id));
       if (selectedSupplier?.id === id) {
         setSelectedSupplier(null);
@@ -166,6 +220,16 @@ export default function Suppliers({
             });
           }
         }
+
+        // Delete matching transaction in transactions collection
+        const txSnap = await getDocs(collection(db, "transactions"));
+        const matchingTxDoc = txSnap.docs.find(d => {
+          const data = d.data();
+          return (data.supplierId === sTx.supplierId || data.notes?.includes(sTx.refNo)) && (data.category === "Supplier Due Payment" || data.category === "Supplier Payment") && Math.abs(data.amount - sTx.totalAmount) < 0.01;
+        });
+        if (matchingTxDoc) {
+          await deleteDoc(doc(db, "transactions", matchingTxDoc.id));
+        }
       } else if (sTx.type === "purchase") {
         const paidVal = sTx.paidAmount || 0;
         const dueVal = sTx.dueAmount ?? (sTx.totalAmount - paidVal);
@@ -186,11 +250,75 @@ export default function Suppliers({
             });
           }
         }
+
+        // Find matching purchase doc and delete it + revert stock
+        const purSnap = await getDocs(query(collection(db, "purchases"), where("refNo", "==", sTx.refNo)));
+        for (const pDoc of purSnap.docs) {
+          const pData = pDoc.data() as any;
+          if (pData.items && pData.items.length > 0) {
+            for (const item of pData.items) {
+              const productsRef = collection(db, "products");
+              const qP = query(productsRef, where("name", "==", item.productName));
+              const prodSnap = await getDocs(qP);
+              if (!prodSnap.empty) {
+                const productDoc = prodSnap.docs[0];
+                const productData = productDoc.data();
+                const currentStock = productData.stock || 0;
+                const itemQty = parseFloat(item.quantity as any) || 0;
+                const newStock = Math.max(0, currentStock - itemQty);
+                const price = productData.lastPurchasePrice || 0;
+                await updateDoc(doc(db, "products", productDoc.id), {
+                  stock: newStock,
+                  totalPurchaseValue: newStock * price,
+                  updatedAt: new Date().toISOString()
+                });
+              }
+            }
+            const ledgerQuery = query(collection(db, "stockLedger"), where("refNo", "==", pData.refNo));
+            const ledgerSnap = await getDocs(ledgerQuery);
+            for (const lDoc of ledgerSnap.docs) {
+              await deleteDoc(doc(db, "stockLedger", lDoc.id));
+            }
+          }
+          await deleteDoc(doc(db, "purchases", pDoc.id));
+        }
+
+        // Delete companion finance transactions
+        const txSnap = await getDocs(collection(db, "transactions"));
+        const matchingTxDoc = txSnap.docs.find(d => {
+          const data = d.data();
+          return data.category === "Purchases" && data.notes?.includes(sTx.refNo);
+        });
+        if (matchingTxDoc) {
+          await deleteDoc(doc(db, "transactions", matchingTxDoc.id));
+        }
       } else if (sTx.type === "return") {
         // Put the due back (purchase returns are always automatically adjusted from due)
         await updateDoc(doc(db, "suppliers", supplierId), {
           purchaseDue: increment(sTx.totalAmount)
         });
+
+        // Direct Refund: Revert bank and delete companion income transaction
+        if (sTx.paymentMethod && sTx.paymentMethod !== "Due Adjusted") {
+          if (sTx.paymentMethod !== "Cash") {
+            const bank = banks.find(b => b.name === sTx.paymentMethod);
+            if (bank?.id) {
+              await updateDoc(doc(db, "banks", bank.id), {
+                balance: increment(-sTx.totalAmount),
+                lastUpdated: new Date().toISOString()
+              });
+            }
+          }
+
+          const txSnap = await getDocs(collection(db, "transactions"));
+          const matchingTxDoc = txSnap.docs.find(d => {
+            const data = d.data();
+            return data.notes?.includes(sTx.refNo) && data.type === "income";
+          });
+          if (matchingTxDoc) {
+            await deleteDoc(doc(db, "transactions", matchingTxDoc.id));
+          }
+        }
       }
 
       // Delete the actual doc

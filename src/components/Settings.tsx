@@ -8,6 +8,7 @@ import { Plus, Trash2, Landmark, Tag, Briefcase, PlusCircle, LayoutGrid, Users, 
 import { format } from "date-fns";
 import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
+import { clearAllOfflineData } from "@/src/lib/indexedDbFallback";
 
 export default function Settings({ user, role }: { user: User; role: UserRole }) {
   const [categories, setCategories] = useState<Category[]>([]);
@@ -24,7 +25,7 @@ export default function Settings({ user, role }: { user: User; role: UserRole })
       alert("Only an administrator can perform a system reset.");
       return;
     }
-    const confirm1 = confirm("⚠️ DANGER ZONE: Are you sure you want to remove ALL demo data? This will permanently wipe all Employees, Transactions, Attendance logs, Bank balances, Suppliers, Purchases, and Custom Categories. This action cannot be undone!");
+    const confirm1 = confirm("⚠️ DANGER ZONE: Are you sure you want to remove ALL demo data? This will permanently wipe all Employees, Transactions, Attendance logs, Bank balances, Suppliers, Purchases, Products, Stock Ledger, and Custom Categories. This action cannot be undone!");
     if (!confirm1) return;
 
     const confirm2 = confirm("Please confirm once more. Click 'OK' to proceed with wiping the database and seeding a clean blank slate.");
@@ -63,6 +64,17 @@ export default function Settings({ user, role }: { user: User; role: UserRole })
       // 8. Fetch & delete Supplier Transactions
       const sTxSnap = await getDocs(collection(db, "supplierTransactions"));
       await Promise.all(sTxSnap.docs.map(d => deleteDoc(doc(db, "supplierTransactions", d.id))));
+
+      // 9. Fetch & delete Products
+      const prodSnap = await getDocs(collection(db, "products"));
+      await Promise.all(prodSnap.docs.map(d => deleteDoc(doc(db, "products", d.id))));
+
+      // 10. Fetch & delete Stock Ledger
+      const stockSnap = await getDocs(collection(db, "stockLedger"));
+      await Promise.all(stockSnap.docs.map(d => deleteDoc(doc(db, "stockLedger", d.id))));
+
+      // 11. Clear local offline IndexedDB cache
+      await clearAllOfflineData();
 
       // Seed Default Blank Slate (Categories & Default Cash bank)
       const defaultCats = [

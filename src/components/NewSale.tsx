@@ -8,6 +8,12 @@ import { Calendar, UserCircle, Save, CheckCircle, Loader2, Home, ChevronRight, S
 import { format, startOfDay, endOfDay } from "date-fns";
 import { useLanguage } from "../contexts/LanguageContext";
 import { exportHtmlToPdf } from "@/src/lib/pdfExport";
+import {
+  saveSalesRecordToIndexedDB,
+  getSalesRecordFromIndexedDB,
+  getTransactionsFromIndexedDB,
+  OfflineSaleRecord
+} from "@/src/lib/indexedDbFallback";
 
 export default function NewSale({ 
   user, 
@@ -238,6 +244,40 @@ export default function NewSale({
           setDepositTxId("");
         }
       } catch (error) {
+        // Offline / Unreachable Fallback: Retrieve existing record from IndexedDB
+        try {
+          const cachedRecord = await getSalesRecordFromIndexedDB(selectedDate);
+          if (cachedRecord) {
+            const amounts: Record<string, string> = {};
+            for (const [empId, val] of Object.entries(cachedRecord.employeeSales)) {
+              amounts[empId] = val.toString();
+            }
+            setSalesAmounts(amounts);
+            setWholesaleAmount(cachedRecord.wholesaleAmount ? cachedRecord.wholesaleAmount.toString() : "");
+            setDepositAmount(cachedRecord.depositAmount ? cachedRecord.depositAmount.toString() : "");
+          } else {
+            const cachedTxs = await getTransactionsFromIndexedDB();
+            const start = startOfDay(new Date(selectedDate));
+            const end = endOfDay(new Date(selectedDate));
+            const dailySales = cachedTxs.filter(tx => {
+              const txDate = new Date(tx.date);
+              return txDate >= start && txDate <= end;
+            });
+            const amounts: Record<string, string> = {};
+            dailySales.forEach(tx => {
+              if (tx.category === "Employee Sales" && tx.employeeId) {
+                amounts[tx.employeeId] = tx.amount.toString();
+              }
+            });
+            setSalesAmounts(amounts);
+            const wTx = dailySales.find(tx => tx.category === "Wholesale Sales");
+            if (wTx) setWholesaleAmount(wTx.amount.toString());
+            const dTx = dailySales.find(tx => tx.category === "Total Deposit");
+            if (dTx) setDepositAmount(dTx.amount.toString());
+          }
+        } catch (e) {
+          console.warn("IndexedDB read error in NewSale:", e);
+        }
         handleFirestoreError(error, OperationType.LIST, "transactions");
       } finally {
         setLoadingSales(false);
@@ -360,7 +400,47 @@ export default function NewSale({
         }
       }, 1500);
     } catch (error) {
-      handleFirestoreError(error, OperationType.UPDATE, "transactions");
+      const errStr = error instanceof Error ? error.message : String(error);
+      const isOfflineErr = !navigator.onLine || 
+        errStr.toLowerCase().includes("offline") || 
+        errStr.toLowerCase().includes("unavailable") || 
+        errStr.toLowerCase().includes("quota") ||
+        errStr.toLowerCase().includes("could not reach");
+
+      if (isOfflineErr) {
+        try {
+          const empSalesMap: Record<string, number> = {};
+          for (const emp of employees) {
+            if (emp.id && salesAmounts[emp.id]) {
+              const val = parseFloat(salesAmounts[emp.id]) || 0;
+              if (val > 0) empSalesMap[emp.id] = val;
+            }
+          }
+
+          const record: OfflineSaleRecord = {
+            date: selectedDate,
+            dayName: format(new Date(selectedDate), "EEEE"),
+            employeeSales: empSalesMap,
+            wholesaleAmount: parseFloat(wholesaleAmount) || 0,
+            depositAmount: parseFloat(depositAmount) || 0,
+            totalSales: Object.values(empSalesMap).reduce((a, b) => a + b, 0) + (parseFloat(wholesaleAmount) || 0),
+            savedAt: new Date().toISOString(),
+            syncedToFirestore: false
+          };
+
+          await saveSalesRecordToIndexedDB(record, true);
+          setSuccess(true);
+          alert("Offline Mode: Sales sheet saved safely to IndexedDB. It will automatically synchronize when connection to Cloud Firestore is restored.");
+          setTimeout(() => {
+            setSuccess(false);
+            if (onSaveSuccess) onSaveSuccess();
+          }, 1500);
+        } catch (e) {
+          console.error("Failed to save offline sales record in IndexedDB:", e);
+        }
+      } else {
+        handleFirestoreError(error, OperationType.UPDATE, "transactions");
+      }
     } finally {
       setSaving(false);
       // Re-trigger the selectedDate sync to reload the salesTxIds
@@ -512,10 +592,10 @@ export default function NewSale({
       )}
 
       {/* Main Form Container */}
-      <div className="bg-white rounded-3xl border border-gray-100 shadow-sm overflow-hidden p-6 sm:p-8">
-        <form onSubmit={handleSaveSales} className="space-y-8">
+      <div className="bg-white rounded-3xl border border-gray-100 shadow-sm overflow-hidden p-4 sm:p-8">
+        <form onSubmit={handleSaveSales} className="space-y-6 sm:space-y-8">
           {/* Top Selection Row */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pb-6 border-b border-gray-100">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6 pb-6 border-b border-gray-100">
             {/* Sales Date field */}
             <div className="space-y-2">
               <label className="text-xs font-bold text-red-500 uppercase tracking-widest flex items-center gap-1.5 pl-1">
@@ -528,7 +608,7 @@ export default function NewSale({
                   required
                   value={selectedDate}
                   onChange={(e) => setSelectedDate(e.target.value)}
-                  className="w-full pl-12 pr-4 py-4 bg-gray-50 hover:bg-gray-100/50 rounded-2xl border-none focus:ring-2 focus:ring-gray-200 transition-all font-bold text-gray-800"
+                  className="w-full pl-12 pr-4 py-3.5 sm:py-4 bg-gray-50 hover:bg-gray-100/50 rounded-2xl border-none focus:ring-2 focus:ring-gray-200 transition-all font-bold text-gray-800"
                 />
               </div>
             </div>
@@ -541,7 +621,7 @@ export default function NewSale({
               <select
                 disabled
                 value={dayName}
-                className="w-full px-4 py-4 bg-gray-100 rounded-2xl border-none font-bold text-gray-500 cursor-not-allowed appearance-none"
+                className="w-full px-4 py-3.5 sm:py-4 bg-gray-100 rounded-2xl border-none font-bold text-gray-500 cursor-not-allowed appearance-none"
               >
                 <option value={dayName}>{language === "bn" ? translateValue(dayName) : dayName}</option>
               </select>
@@ -551,19 +631,19 @@ export default function NewSale({
           {/* Daily Table of filtered Sales Employees */}
           <div className="space-y-4">
             <div className="flex justify-between items-center px-1">
-              <h3 className="font-bold text-gray-800 text-lg flex items-center gap-2">
+              <h3 className="font-bold text-gray-800 text-base sm:text-lg flex items-center gap-2">
                 <ShoppingCart className="w-5 h-5 text-gray-500" />
                 {t("Staff Sales Entry")}
               </h3>
-              <span className="text-xs font-semibold px-3 py-1 bg-blue-50 text-blue-600 rounded-full">
+              <span className="text-[11px] sm:text-xs font-semibold px-2.5 sm:px-3 py-1 bg-blue-50 text-blue-600 rounded-full">
                 {formatNumber(employees.length)} {t("Sales Officers")}
               </span>
             </div>
 
             <div className="border border-gray-100 rounded-2xl overflow-hidden shadow-sm">
-              <div className="grid grid-cols-12 bg-[#2D7BBF] text-white text-sm font-bold p-4">
-                <div className="col-span-8">{t("Employee Name")}</div>
-                <div className="col-span-4 text-center">{t("Amount")}</div>
+              <div className="grid grid-cols-12 bg-[#2D7BBF] text-white text-xs sm:text-sm font-bold p-3 sm:p-4">
+                <div className="col-span-7 sm:col-span-8">{t("Employee Name")}</div>
+                <div className="col-span-5 sm:col-span-4 text-center">{t("Amount")}</div>
               </div>
 
               {loadingEmployees ? (
@@ -572,7 +652,7 @@ export default function NewSale({
                   {t("Loading active staff roster...")}
                 </div>
               ) : employees.length === 0 ? (
-                <div className="p-16 text-center text-gray-400 bg-gray-50/50 italic">
+                <div className="p-10 sm:p-16 text-center text-gray-400 bg-gray-50/50 italic">
                   {t("No active employees exist in the designated sales departments.")}
                   <p className="not-italic text-xs text-gray-500 mt-2 font-medium">
                     {t("Go to the Employees tab and set their department to one of: Sales, Fast Accountant, Men's Section, or Sales Ladies' Section.")}
@@ -585,26 +665,26 @@ export default function NewSale({
                     const amountValue = salesAmounts[emp.id!] || "";
 
                     return (
-                      <div key={emp.id} className="grid grid-cols-12 items-center p-4 hover:bg-slate-50/50 transition-colors">
+                      <div key={emp.id} className="grid grid-cols-12 items-center p-3 sm:p-4 hover:bg-slate-50/50 transition-colors gap-2 sm:gap-4">
                         {/* Profile Photo and Employee Details */}
-                        <div className="col-span-8 flex items-center gap-4">
-                          <div className="w-12 h-12 rounded-full overflow-hidden bg-blue-50 flex items-center justify-center border border-blue-100 shrink-0">
+                        <div className="col-span-7 sm:col-span-8 flex items-center gap-2.5 sm:gap-4 min-w-0">
+                          <div className="w-9 h-9 sm:w-12 sm:h-12 rounded-full overflow-hidden bg-blue-50 flex items-center justify-center border border-blue-100 shrink-0">
                             {avatarImage ? (
                               <img src={avatarImage.data} alt="" className="w-full h-full object-cover" />
                             ) : (
-                              <UserCircle className="w-7 h-7 text-blue-400" />
+                              <UserCircle className="w-5 h-5 sm:w-7 sm:h-7 text-blue-400" />
                             )}
                           </div>
-                          <div>
-                            <p className="font-bold text-gray-900">{emp.name}</p>
-                            <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">{t(emp.role)}</p>
+                          <div className="truncate">
+                            <p className="font-bold text-xs sm:text-sm text-gray-900 truncate">{emp.name}</p>
+                            <p className="text-[9px] sm:text-[10px] font-bold text-gray-400 uppercase tracking-wider truncate">{t(emp.role)}</p>
                           </div>
                         </div>
 
                         {/* Amount Input */}
-                        <div className="col-span-4">
+                        <div className="col-span-5 sm:col-span-4">
                           <div className="relative max-w-xs mx-auto">
-                            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-xs font-bold font-mono">৳</span>
+                            <span className="absolute left-2.5 sm:left-3 top-1/2 -translate-y-1/2 text-gray-400 text-xs font-bold font-mono">৳</span>
                             <input
                               type="number"
                               min="0"
@@ -612,7 +692,7 @@ export default function NewSale({
                               value={amountValue}
                               onChange={(e) => handleAmountChange(emp.id!, e.target.value)}
                               disabled={loadingSales || saving}
-                              className="w-full pl-7 pr-3 py-3 border border-gray-200 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 rounded-xl outline-none font-bold text-sm text-gray-800 bg-white transition-all text-right font-mono"
+                              className="w-full pl-6 sm:pl-7 pr-2.5 sm:pr-3 py-2.5 sm:py-3 border border-gray-200 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 rounded-xl outline-none font-bold text-xs sm:text-sm text-gray-800 bg-white transition-all text-right font-mono"
                             />
                           </div>
                         </div>
@@ -623,64 +703,64 @@ export default function NewSale({
                   {/* Total / Summary Section below the Employee List */}
                   <div className="bg-gray-50/30 divide-y divide-gray-100 border-t border-gray-100">
                     {/* Total Sale */}
-                    <div className="grid grid-cols-12 items-center p-4">
-                      <div className="col-span-8 text-right font-bold text-gray-700 pr-10 text-sm">
+                    <div className="grid grid-cols-12 items-center p-3 sm:p-4">
+                      <div className="col-span-7 sm:col-span-8 text-right font-bold text-gray-700 pr-3 sm:pr-10 text-xs sm:text-sm">
                         {t("Total Sale")}
                       </div>
-                      <div className="col-span-4 flex justify-between items-center px-1">
-                        <div className="w-full max-w-xs mx-auto text-right pr-4 font-bold text-gray-900 font-mono text-sm">
+                      <div className="col-span-5 sm:col-span-4 flex justify-between items-center px-1">
+                        <div className="w-full max-w-xs mx-auto text-right pr-2 sm:pr-4 font-bold text-gray-900 font-mono text-xs sm:text-sm">
                           {formatNumber(totalSale.toFixed(2))}
                         </div>
                       </div>
                     </div>
 
                     {/* Wholesale */}
-                    <div className="grid grid-cols-12 items-center p-3">
-                      <div className="col-span-8 text-right font-bold text-gray-700 pr-10 text-sm">
+                    <div className="grid grid-cols-12 items-center p-2.5 sm:p-3">
+                      <div className="col-span-7 sm:col-span-8 text-right font-bold text-gray-700 pr-3 sm:pr-10 text-xs sm:text-sm">
                         {t("Wholesale")}
                       </div>
-                      <div className="col-span-4">
+                      <div className="col-span-5 sm:col-span-4">
                         <div className="relative max-w-xs mx-auto animate-in fade-in duration-200">
                           <input
                             type="number"
                             min="0"
-                            placeholder={language === "bn" ? "পাইকারি পরিমাণ লিখুন" : "Enter wholesale amount"}
+                            placeholder={language === "bn" ? "পরিমাণ লিখুন" : "Enter amount"}
                             value={wholesaleAmount}
                             onChange={(e) => setWholesaleAmount(e.target.value)}
                             disabled={saving || loadingSales}
-                            className="w-full px-4 py-3 border border-gray-200 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 rounded-xl outline-none font-medium text-sm text-gray-700 bg-white transition-all placeholder:text-gray-400"
+                            className="w-full px-3 sm:px-4 py-2.5 sm:py-3 border border-gray-200 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 rounded-xl outline-none font-medium text-xs sm:text-sm text-gray-700 bg-white transition-all placeholder:text-gray-400 text-right"
                           />
                         </div>
                       </div>
                     </div>
 
                     {/* Due Sales */}
-                    <div className="grid grid-cols-12 items-center p-3">
-                      <div className="col-span-8 text-right font-bold text-gray-700 pr-10 text-sm">
+                    <div className="grid grid-cols-12 items-center p-2.5 sm:p-3">
+                      <div className="col-span-7 sm:col-span-8 text-right font-bold text-gray-700 pr-3 sm:pr-10 text-xs sm:text-sm">
                         {t("Due Sales")}
                       </div>
-                      <div className="col-span-4">
+                      <div className="col-span-5 sm:col-span-4">
                         <div className="relative max-w-xs mx-auto animate-in fade-in duration-200">
                           <input
                             type="number"
                             min="0"
-                            placeholder={language === "bn" ? "বাকি বিক্রয়ের পরিমাণ লিখুন" : "Enter due sales amount"}
+                            placeholder={language === "bn" ? "পরিমাণ লিখুন" : "Enter amount"}
                             value={depositAmount}
                             onChange={(e) => setDepositAmount(e.target.value)}
                             disabled={saving || loadingSales}
-                            className="w-full px-4 py-3 border border-gray-200 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 rounded-xl outline-none font-medium text-sm text-gray-700 bg-gray-50 hover:bg-gray-100/50 transition-all placeholder:text-gray-400"
+                            className="w-full px-3 sm:px-4 py-2.5 sm:py-3 border border-gray-200 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 rounded-xl outline-none font-medium text-xs sm:text-sm text-gray-700 bg-gray-50 hover:bg-gray-100/50 transition-all placeholder:text-gray-400 text-right"
                           />
                         </div>
                       </div>
                     </div>
 
                     {/* Grand Total */}
-                    <div className="grid grid-cols-12 items-center p-4">
-                      <div className="col-span-8 text-right font-bold text-gray-700 pr-10 text-sm">
+                    <div className="grid grid-cols-12 items-center p-3 sm:p-4">
+                      <div className="col-span-7 sm:col-span-8 text-right font-bold text-gray-700 pr-3 sm:pr-10 text-xs sm:text-sm">
                         {t("Grand Total")}
                       </div>
-                      <div className="col-span-4 flex justify-between items-center px-1">
-                        <div className="w-full max-w-xs mx-auto text-right pr-4 font-bold text-gray-900 font-mono text-sm">
+                      <div className="col-span-5 sm:col-span-4 flex justify-between items-center px-1">
+                        <div className="w-full max-w-xs mx-auto text-right pr-2 sm:pr-4 font-bold text-emerald-600 font-mono text-sm sm:text-base">
                           {formatNumber(grandTotal.toFixed(2))}
                         </div>
                       </div>

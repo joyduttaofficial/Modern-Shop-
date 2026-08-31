@@ -4,6 +4,7 @@ import { collection, onSnapshot, query, orderBy, deleteDoc, doc, increment, writ
 import { db, OperationType, handleFirestoreError, updateDoc } from "@/src/lib/firebase";
 import { Transaction, Bank, UserRole, Employee } from "@/src/types";
 import { cn, formatCurrency } from "@/src/lib/utils";
+import { getTransactionsFromIndexedDB } from "@/src/lib/indexedDbFallback";
 import { useLanguage } from "../contexts/LanguageContext";
 import { 
   Search, 
@@ -115,7 +116,28 @@ export default function SalesList({ user, role, onEditSales, onNavigateToNewSale
       );
       setTransactions(salesTx);
       setLoading(false);
-    }, (error) => handleFirestoreError(error, OperationType.LIST, "transactions"));
+    }, async (error) => {
+      // Offline fallback: load sales from cached transactions in IndexedDB
+      try {
+        const cachedAll = await getTransactionsFromIndexedDB();
+        if (cachedAll.length > 0) {
+          const salesTx = cachedAll.filter(tx => 
+            tx.type === "income" && 
+            (tx.category === "Employee Sales" || 
+             tx.category === "Wholesale Sales" || 
+             tx.category === "Total Deposit" ||
+             tx.category.toLowerCase().includes("sale") || 
+             tx.category === "Product Sales" ||
+             tx.category === "Retail Sales")
+          );
+          setTransactions(salesTx);
+        }
+      } catch (e) {
+        console.warn("Error reading cached sales in SalesList:", e);
+      }
+      setLoading(false);
+      handleFirestoreError(error, OperationType.LIST, "transactions");
+    });
 
     // Sync Banks to safely revert balance if a transaction is deleted
     const unsubBanks = onSnapshot(collection(db, "banks"), (snapshot) => {
@@ -680,48 +702,48 @@ export default function SalesList({ user, role, onEditSales, onNavigateToNewSale
       </div>
 
       {/* Aggregate KPI Financial Highlight Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-4">
         {/* Total Staff Sales Card */}
-        <div className="bg-white p-5 rounded-2xl border border-slate-200/60 shadow-sm flex items-center gap-4 hover:shadow-md transition-all">
-          <div className="w-12 h-12 bg-emerald-50 text-emerald-600 rounded-xl flex items-center justify-center shrink-0 border border-emerald-100">
-            <ShoppingCart className="w-5 h-5" />
+        <div className="bg-white p-3.5 sm:p-5 rounded-2xl border border-slate-200/60 shadow-sm flex items-center gap-2.5 sm:gap-4 hover:shadow-md transition-all">
+          <div className="w-10 h-10 sm:w-12 sm:h-12 bg-emerald-50 text-emerald-600 rounded-xl flex items-center justify-center shrink-0 border border-emerald-100">
+            <ShoppingCart className="w-4 h-4 sm:w-5 sm:h-5" />
           </div>
-          <div>
-            <p className="text-[10px] uppercase font-black tracking-widest text-slate-400 mb-0.5">{t("Counter Sales")}</p>
-            <h3 className="text-lg font-black text-slate-850 font-mono tracking-tight">{formatCurrency(aggregateEmployeeSales)}</h3>
+          <div className="min-w-0">
+            <p className="text-[9px] sm:text-[10px] uppercase font-black tracking-wider text-slate-400 mb-0.5 truncate">{t("Counter Sales")}</p>
+            <h3 className="text-sm sm:text-lg font-black text-slate-850 font-mono tracking-tight truncate">{formatCurrency(aggregateEmployeeSales)}</h3>
           </div>
         </div>
 
         {/* Total Wholesale Card */}
-        <div className="bg-white p-5 rounded-2xl border border-slate-200/60 shadow-sm flex items-center gap-4 hover:shadow-md transition-all">
-          <div className="w-12 h-12 bg-sky-50 text-sky-600 rounded-xl flex items-center justify-center shrink-0 border border-sky-100">
-            <Building2 className="w-5 h-5" />
+        <div className="bg-white p-3.5 sm:p-5 rounded-2xl border border-slate-200/60 shadow-sm flex items-center gap-2.5 sm:gap-4 hover:shadow-md transition-all">
+          <div className="w-10 h-10 sm:w-12 sm:h-12 bg-sky-50 text-sky-600 rounded-xl flex items-center justify-center shrink-0 border border-sky-100">
+            <Building2 className="w-4 h-4 sm:w-5 sm:h-5" />
           </div>
-          <div>
-            <p className="text-[10px] uppercase font-black tracking-widest text-slate-400 mb-0.5">{t("Wholesale")}</p>
-            <h3 className="text-lg font-black text-slate-850 font-mono tracking-tight">{formatCurrency(aggregateWholesaleSales)}</h3>
+          <div className="min-w-0">
+            <p className="text-[9px] sm:text-[10px] uppercase font-black tracking-wider text-slate-400 mb-0.5 truncate">{t("Wholesale")}</p>
+            <h3 className="text-sm sm:text-lg font-black text-slate-850 font-mono tracking-tight truncate">{formatCurrency(aggregateWholesaleSales)}</h3>
           </div>
         </div>
 
         {/* Total Deposit Card */}
-        <div className="bg-white p-5 rounded-2xl border border-slate-200/60 shadow-sm flex items-center gap-4 hover:shadow-md transition-all">
-          <div className="w-12 h-12 bg-rose-50 text-rose-600 rounded-xl flex items-center justify-center shrink-0 border border-rose-100">
-            <PiggyBank className="w-5 h-5" />
+        <div className="bg-white p-3.5 sm:p-5 rounded-2xl border border-slate-200/60 shadow-sm flex items-center gap-2.5 sm:gap-4 hover:shadow-md transition-all">
+          <div className="w-10 h-10 sm:w-12 sm:h-12 bg-rose-50 text-rose-600 rounded-xl flex items-center justify-center shrink-0 border border-rose-100">
+            <PiggyBank className="w-4 h-4 sm:w-5 sm:h-5" />
           </div>
-          <div>
-            <p className="text-[10px] uppercase font-black tracking-widest text-slate-400 mb-0.5">{t("Due Sales")}</p>
-            <h3 className="text-lg font-black text-slate-850 font-mono tracking-tight">{formatCurrency(aggregateDeposits)}</h3>
+          <div className="min-w-0">
+            <p className="text-[9px] sm:text-[10px] uppercase font-black tracking-wider text-slate-400 mb-0.5 truncate">{t("Due Sales")}</p>
+            <h3 className="text-sm sm:text-lg font-black text-slate-850 font-mono tracking-tight truncate">{formatCurrency(aggregateDeposits)}</h3>
           </div>
         </div>
 
         {/* Net Cumulative Balance Card */}
-        <div className="bg-slate-900 p-5 rounded-2xl shadow-xl flex items-center gap-4">
-          <div className="w-12 h-12 bg-white/10 text-white rounded-xl flex items-center justify-center shrink-0">
-            <Scale className="w-5 h-5 text-slate-300" />
+        <div className="bg-slate-900 p-3.5 sm:p-5 rounded-2xl shadow-xl flex items-center gap-2.5 sm:gap-4">
+          <div className="w-10 h-10 sm:w-12 sm:h-12 bg-white/10 text-white rounded-xl flex items-center justify-center shrink-0">
+            <Scale className="w-4 h-4 sm:w-5 sm:h-5 text-slate-300" />
           </div>
-          <div>
-            <p className="text-[10px] uppercase font-black tracking-widest text-white/50 mb-0.5">{t("Aggregate Revenue")}</p>
-            <h3 className="text-lg font-black text-white font-mono tracking-tight">{formatCurrency(cumulativeGrandTotal)}</h3>
+          <div className="min-w-0">
+            <p className="text-[9px] sm:text-[10px] uppercase font-black tracking-wider text-white/50 mb-0.5 truncate">{t("Aggregate Revenue")}</p>
+            <h3 className="text-sm sm:text-lg font-black text-white font-mono tracking-tight truncate">{formatCurrency(cumulativeGrandTotal)}</h3>
           </div>
         </div>
       </div>

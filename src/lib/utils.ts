@@ -7,10 +7,14 @@ export function cn(...inputs: ClassValue[]) {
 }
 
 export function computeDynamicPurchases(
-  purchases: PurchaseModel[],
-  supplierTransactions: SupplierTransaction[],
-  suppliers: Supplier[]
+  purchases: PurchaseModel[] = [],
+  supplierTransactions: SupplierTransaction[] = [],
+  suppliers: Supplier[] = []
 ): PurchaseModel[] {
+  if (!purchases || purchases.length === 0) {
+    return [];
+  }
+
   // Map to hold payments and returns for each supplier
   const supplierPaymentsMap = new Map<string, number>();
   const supplierReturnsMap = new Map<string, number>();
@@ -31,15 +35,15 @@ export function computeDynamicPurchases(
 
   // Group purchases by supplier to process each supplier's account independently
   const purchasesBySupplier = new Map<string, PurchaseModel[]>();
-  purchases.forEach((p) => {
-    if (!p.id) return;
-    if (!purchasesBySupplier.has(p.supplierId)) {
-      purchasesBySupplier.set(p.supplierId, []);
+  purchases.forEach((p, idx) => {
+    const key = p.supplierId || "unknown";
+    if (!purchasesBySupplier.has(key)) {
+      purchasesBySupplier.set(key, []);
     }
-    purchasesBySupplier.get(p.supplierId)!.push({ ...p });
+    purchasesBySupplier.get(key)!.push({ ...p, _tempIdx: idx } as any);
   });
 
-  const updatedPurchasesMap = new Map<string, PurchaseModel>();
+  const updatedPurchasesMap = new Map<string | number, PurchaseModel>();
 
   purchasesBySupplier.forEach((pList, supplierId) => {
     // Sort oldest first (FIFO billing)
@@ -73,25 +77,27 @@ export function computeDynamicPurchases(
     pList.forEach((p) => {
       // If we have general payments left, apply them to reduce purchase due amount
       if (totalPool > 0) {
-        const origDue = p.dueAmount;
+        const origDue = p.dueAmount || 0;
         if (totalPool >= origDue) {
           totalPool -= origDue;
-          p.paidAmount = p.paidAmount + origDue;
+          p.paidAmount = Math.min(p.totalAmount, (p.paidAmount || 0) + origDue);
           p.dueAmount = 0;
         } else {
-          p.paidAmount = p.paidAmount + totalPool;
-          p.dueAmount = origDue - totalPool;
+          p.paidAmount = Math.min(p.totalAmount, (p.paidAmount || 0) + totalPool);
+          p.dueAmount = Math.max(0, origDue - totalPool);
           totalPool = 0;
         }
       }
-      if (p.id) updatedPurchasesMap.set(p.id, p);
+      const mapKey = p.id || (p as any)._tempIdx;
+      updatedPurchasesMap.set(mapKey, p);
     });
   });
 
   // Re-map the original purchases back to retain their original presentation order
-  return purchases.map((originalPurchase) => {
-    if (originalPurchase.id && updatedPurchasesMap.has(originalPurchase.id)) {
-      return updatedPurchasesMap.get(originalPurchase.id)!;
+  return purchases.map((originalPurchase, idx) => {
+    const key = originalPurchase.id || idx;
+    if (updatedPurchasesMap.has(key)) {
+      return updatedPurchasesMap.get(key)!;
     }
     return originalPurchase;
   });

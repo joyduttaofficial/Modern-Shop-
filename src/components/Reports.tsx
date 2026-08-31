@@ -220,47 +220,85 @@ export default function Reports({ user, role }: { user: User; role: UserRole }) 
   }, [transactions, purchases]);
 
   useEffect(() => {
-    async function fetchData() {
-      setLoading(true);
-      try {
-        const txSnap = await getDocs(query(collection(db, "transactions"), orderBy("date", "asc")));
-        const allTxs = txSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Transaction));
-        setTransactions(allTxs);
+    setLoading(true);
+    let loaded = 0;
+    const markLoaded = () => {
+      loaded++;
+      if (loaded >= 9) setLoading(false);
+    };
 
-        const bankSnap = await getDocs(collection(db, "banks"));
-        setBanks(bankSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Bank)));
-        
-        const empSnap = await getDocs(collection(db, "employees"));
-        setEmployees(empSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Employee)));
+    const unsubTx = onSnapshot(query(collection(db, "transactions"), orderBy("date", "asc")), (snap) => {
+      setTransactions(snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Transaction)));
+      markLoaded();
+    }, (err) => { console.error(err); markLoaded(); });
 
-        const attSnap = await getDocs(collection(db, "attendance"));
-        setAttendance(attSnap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    const unsubBanks = onSnapshot(collection(db, "banks"), (snap) => {
+      setBanks(snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Bank)));
+      markLoaded();
+    }, (err) => { console.error(err); markLoaded(); });
 
-        const supSnap = await getDocs(collection(db, "suppliers"));
-        setSuppliers(supSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Supplier)));
+    const unsubEmp = onSnapshot(collection(db, "employees"), (snap) => {
+      setEmployees(snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Employee)));
+      markLoaded();
+    }, (err) => { console.error(err); markLoaded(); });
 
-        const stxSnap = await getDocs(query(collection(db, "supplierTransactions"), orderBy("createdAt", "desc")));
-        setSupplierTransactions(stxSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as SupplierTransaction)));
+    const unsubAtt = onSnapshot(collection(db, "attendance"), (snap) => {
+      setAttendance(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+      markLoaded();
+    }, (err) => { console.error(err); markLoaded(); });
 
-        const purSnap = await getDocs(query(collection(db, "purchases"), orderBy("date", "desc")));
-        setPurchases(purSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as PurchaseModel)));
+    const unsubSup = onSnapshot(collection(db, "suppliers"), (snap) => {
+      setSuppliers(snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Supplier)));
+      markLoaded();
+    }, (err) => { console.error(err); markLoaded(); });
 
-        const productsSnap = await getDocs(collection(db, "products"));
-        setProducts(productsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Product)));
+    const unsubStx = onSnapshot(query(collection(db, "supplierTransactions"), orderBy("createdAt", "desc")), (snap) => {
+      setSupplierTransactions(snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as SupplierTransaction)));
+      markLoaded();
+    }, (err) => { console.error(err); markLoaded(); });
 
-        const stockLedgerSnap = await getDocs(query(collection(db, "stockLedger"), orderBy("createdAt", "desc")));
-        setStockLedger(stockLedgerSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as StockLedgerEntry)));
-      } catch (err) {
-        console.error("Error loading resources in reports:", err);
-      } finally {
-        setLoading(false);
-      }
-    }
-    fetchData();
+    const unsubPur = onSnapshot(query(collection(db, "purchases"), orderBy("date", "desc")), (snap) => {
+      setPurchases(snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as PurchaseModel)));
+      markLoaded();
+    }, (err) => { console.error(err); markLoaded(); });
+
+    const unsubProd = onSnapshot(collection(db, "products"), (snap) => {
+      setProducts(snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Product)));
+      markLoaded();
+    }, (err) => { console.error(err); markLoaded(); });
+
+    const unsubStock = onSnapshot(query(collection(db, "stockLedger"), orderBy("createdAt", "desc")), (snap) => {
+      setStockLedger(snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as StockLedgerEntry)));
+      markLoaded();
+    }, (err) => { console.error(err); markLoaded(); });
+
+    return () => {
+      unsubTx();
+      unsubBanks();
+      unsubEmp();
+      unsubAtt();
+      unsubSup();
+      unsubStx();
+      unsubPur();
+      unsubProd();
+      unsubStock();
+    };
   }, []);
 
   useEffect(() => {
-    if (transactions.length === 0) return;
+    if (transactions.length === 0) {
+      setDayStats({
+        openingBalance: 0,
+        todaySales: 0,
+        otherIncome: 0,
+        bankExpenses: 0,
+        generalExpenses: 0,
+        totalIncome: 0,
+        totalExpense: 0,
+        netCash: 0
+      });
+      return;
+    }
 
     const dayStart = startOfDay(new Date(selectedDate));
     const dayEnd = endOfDay(new Date(selectedDate));
@@ -1942,25 +1980,47 @@ function SupplierPaymentsReport({ suppliers, supplierTransactions, companyName, 
   const [startDate, setStartDate] = useState(format(subDays(new Date(), 30), "yyyy-MM-dd"));
   const [endDate, setEndDate] = useState(format(new Date(), "yyyy-MM-dd"));
 
-  const filteredSTxs = supplierTransactions.filter(tx => {
-    if (selectedSupId !== "all" && tx.supplierId !== selectedSupId) return false;
-    const dateStr = tx.date.split("T")[0];
+  const selectedSupObj = suppliers.find(s => s.id === selectedSupId);
+  const existingSupIds = new Set(suppliers.map(s => s.id));
+  const validSupplierTxs = supplierTransactions.filter(t => existingSupIds.has(t.supplierId));
+
+  const selectedSupTxs = selectedSupId === "all"
+    ? validSupplierTxs
+    : validSupplierTxs.filter(t => t.supplierId === selectedSupId);
+
+  const filteredSTxs = selectedSupTxs.filter(tx => {
+    const dateStr = (tx.date || "").split("T")[0];
     if (dateStr < startDate || dateStr > endDate) return false;
     return true;
   }).sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
-  const selectedSupObj = suppliers.find(s => s.id === selectedSupId);
+  // Supplier metrics calculation - purely transaction & opening balance driven
+  const totalOpeningBalance = selectedSupObj
+    ? (selectedSupObj.openingBalance || 0)
+    : (selectedSupId === "all" ? suppliers.reduce((sum, s) => sum + (s.openingBalance || 0), 0) : 0);
 
-  // Supplier metrics calculation - Proper lifetime/all-time values for reconciliation
-  const totalOutstandingDue = selectedSupObj
-    ? (selectedSupObj.purchaseDue || 0)
-    : suppliers.reduce((sum, s) => sum + (s.purchaseDue || 0), 0);
+  const totalPurchasesOverall = selectedSupTxs
+    .filter(tx => tx.type === "purchase")
+    .reduce((sum, tx) => sum + (tx.totalAmount || 0), 0);
+
+  const totalPaymentsOverall = selectedSupTxs
+    .filter(tx => tx.type === "payment")
+    .reduce((sum, tx) => sum + (tx.totalAmount || 0), 0) +
+    selectedSupTxs
+    .filter(tx => tx.type === "purchase")
+    .reduce((sum, tx) => sum + (tx.paidAmount || 0), 0);
+
+  const totalReturnsOverall = selectedSupTxs
+    .filter(tx => tx.type === "return")
+    .reduce((sum, tx) => sum + (tx.totalAmount || 0), 0);
+
+  const totalOutstandingDue = Math.max(0, totalOpeningBalance + totalPurchasesOverall - totalPaymentsOverall - totalReturnsOverall);
 
   const exportSupplierCSV = React.useCallback(() => {
     let csvContent = "Invoice Date,Supplier Name,Transaction Type,Invoice/Ref No,Gross Cost (BDT),Paid Portion (BDT),Remaining Balance Due,Method,Notes\n";
     filteredSTxs.forEach(tx => {
       const supName = suppliers.find(s => s.id === tx.supplierId)?.name || "Unknown";
-      csvContent += `"${tx.date}","${supName}","${tx.type.toUpperCase()}","${tx.refNo}",${tx.totalAmount},${tx.paidAmount || 0},${tx.dueAmount || 0},"${tx.paymentMethod || "Cash"}","${(tx.notes || "").replace(/"/g, '""')}"\n`;
+      csvContent += `"${tx.date}","${supName}","${tx.type.toUpperCase()}","${tx.refNo}",${tx.totalAmount || 0},${tx.paidAmount || 0},${tx.dueAmount || 0},"${tx.paymentMethod || "Cash"}","${(tx.notes || "").replace(/"/g, '""')}"\n`;
     });
     
     csvContent += `\n"Total Outstanding Due Across Filter/Account","","","","","","",${totalOutstandingDue},""\n`;
@@ -1977,27 +2037,6 @@ function SupplierPaymentsReport({ suppliers, supplierTransactions, companyName, 
       onRegisterExporter(exportSupplierCSV);
     }
   }, [exportSupplierCSV, onRegisterExporter]);
-
-  const totalPurchasesOverall = selectedSupObj
-    ? (selectedSupObj.totalAmount || 0)
-    : suppliers.reduce((sum, s) => sum + (s.totalAmount || 0), 0);
-
-  const totalPaymentsOverall = selectedSupObj
-    ? supplierTransactions
-        .filter(tx => tx.supplierId === selectedSupObj.id && tx.type === "payment")
-        .reduce((sum, tx) => sum + (tx.totalAmount || 0), 0)
-    : supplierTransactions
-        .filter(tx => tx.type === "payment")
-        .reduce((sum, tx) => sum + (tx.totalAmount || 0), 0);
-
-  // Still keep period calculations for any reference if needed (like the downloadable statement reports)
-  const totalPurchaseGross = filteredSTxs
-    .filter(tx => tx.type === "purchase")
-    .reduce((sum, tx) => sum + (tx.totalAmount || 0), 0);
-
-  const totalPaymentsMade = filteredSTxs
-    .filter(tx => tx.type === "payment")
-    .reduce((sum, tx) => sum + (tx.totalAmount || 0), 0);
 
   const downloadSupplierPDF = () => {
     const doc = new jsPDF("p", "mm", "a4");
@@ -2035,9 +2074,9 @@ function SupplierPaymentsReport({ suppliers, supplierTransactions, companyName, 
       doc.text(`Corporate Email: ${selectedSupObj.email || "—"}`, 18, 69);
       doc.text(`Street Address: ${selectedSupObj.address || "—"}`, 18, 74);
 
-      doc.text(`Gross Purchases: BDT ${selectedSupObj.totalAmount.toLocaleString()}`, 115, 59);
-      doc.text(`Outstanding Due Balance: BDT ${selectedSupObj.purchaseDue.toLocaleString()}`, 115, 64);
-      doc.text(`Advance Ledger Balance: BDT ${selectedSupObj.advanceAmount.toLocaleString()}`, 115, 69);
+      doc.text(`Gross Purchases: BDT ${totalPurchasesOverall.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, 115, 59);
+      doc.text(`Outstanding Due Balance: BDT ${totalOutstandingDue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, 115, 64);
+      doc.text(`Payments Made: BDT ${totalPaymentsOverall.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, 115, 69);
       doc.text(`Overall Status: ${selectedSupObj.status.toUpperCase()}`, 115, 74);
     } else {
       doc.setFont("helvetica", "bold");
@@ -2055,13 +2094,9 @@ function SupplierPaymentsReport({ suppliers, supplierTransactions, companyName, 
       doc.text(`Record Logs Range: ${startDate} to ${endDate}`, 18, 69);
       doc.text(`Generated Date: ${format(new Date(), "yyyy-MM-dd")}`, 18, 74);
 
-      const totalOverallPurchases = suppliers.reduce((sum, s) => sum + (s.totalAmount || 0), 0);
-      const totalOverallDue = suppliers.reduce((sum, s) => sum + (s.purchaseDue || 0), 0);
-      const totalOverallAdvance = suppliers.reduce((sum, s) => sum + (s.advanceAmount || 0), 0);
-
-      doc.text(`Combined Gross Purchases: BDT ${totalOverallPurchases.toLocaleString()}`, 115, 59);
-      doc.text(`Combined Outstanding Dues: BDT ${totalOverallDue.toLocaleString()}`, 115, 64);
-      doc.text(`Combined Advance Balances: BDT ${totalOverallAdvance.toLocaleString()}`, 115, 69);
+      doc.text(`Combined Gross Purchases: BDT ${totalPurchasesOverall.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, 115, 59);
+      doc.text(`Combined Outstanding Dues: BDT ${totalOutstandingDue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, 115, 64);
+      doc.text(`Combined Total Payments: BDT ${totalPaymentsOverall.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, 115, 69);
       doc.text(`Overall Status: CONSOLIDATED AUDIT`, 115, 74);
     }
 
@@ -2071,15 +2106,17 @@ function SupplierPaymentsReport({ suppliers, supplierTransactions, companyName, 
     doc.setTextColor(51, 65, 85);
     doc.text("SUPPLIER ACCOUNT TRANSACTION HISTORY", 14, startTableY);
 
-    const tableRows = filteredSTxs.map(tx => [
-      tx.date,
-      suppliers.find(s => s.id === tx.supplierId)?.name || "Unknown",
-      tx.type.toUpperCase(),
-      tx.refNo,
-      `BDT ${(tx.totalAmount || 0).toLocaleString()}`,
-      `BDT ${(tx.paidAmount || 0).toLocaleString()}`,
-      tx.paymentMethod || "—"
-    ]);
+    const tableRows = filteredSTxs.length > 0
+      ? filteredSTxs.map(tx => [
+          tx.date,
+          suppliers.find(s => s.id === tx.supplierId)?.name || "Unknown",
+          (tx.type || "").toUpperCase(),
+          tx.refNo,
+          `BDT ${(tx.totalAmount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+          `BDT ${(tx.paidAmount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+          tx.paymentMethod || "—"
+        ])
+      : [["—", "—", "—", "—", "BDT 0.00", "BDT 0.00", "No transaction records found in chosen filter"]];
 
     autoTable(doc, {
       startY: startTableY + 4,
@@ -2291,7 +2328,10 @@ function PurchaseReportSection({ suppliers, purchases, supplierTransactions, com
   const [endDate, setEndDate] = useState(format(new Date(), "yyyy-MM-dd"));
   const [paymentStatus, setPaymentStatus] = useState("all");
 
-  const dynamicPurchases = computeDynamicPurchases(purchases as any, supplierTransactions, suppliers);
+  const existingSupIds = new Set(suppliers.map(s => s.id));
+  const validPurchases = purchases.filter(p => !p.supplierId || existingSupIds.has(p.supplierId));
+  const validSTxs = supplierTransactions.filter(t => existingSupIds.has(t.supplierId));
+  const dynamicPurchases = computeDynamicPurchases(validPurchases as any, validSTxs, suppliers);
 
   const filteredPurchases = dynamicPurchases.filter(p => {
     if (selectedSupId !== "all" && p.supplierId !== selectedSupId) return false;
@@ -2385,16 +2425,18 @@ function PurchaseReportSection({ suppliers, purchases, supplierTransactions, com
       metricX += 61;
     });
 
-    const tableRows = filteredPurchases.map(p => [
-      p.date,
-      p.refNo,
-      p.supplierName,
-      `BDT ${p.totalAmount.toLocaleString()}`,
-      `BDT ${p.paidAmount.toLocaleString()}`,
-      `BDT ${p.dueAmount.toLocaleString()}`,
-      p.paymentMethod,
-      p.notes || "-"
-    ]);
+    const tableRows = filteredPurchases.length > 0
+      ? filteredPurchases.map(p => [
+          p.date,
+          p.refNo,
+          p.supplierName,
+          `BDT ${(p.totalAmount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+          `BDT ${(p.paidAmount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+          `BDT ${(p.dueAmount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+          p.paymentMethod || "—",
+          p.notes || "-"
+        ])
+      : [["—", "—", "No purchase records found in selected range", "BDT 0.00", "BDT 0.00", "BDT 0.00", "—", "—"]];
 
     autoTable(doc, {
       startY: 84,
@@ -4185,8 +4227,13 @@ function UnifiedFinancialReport({
         categStr === "Total Deposit" ||
         categStr.toLowerCase().includes("sale"));
 
-    // Determine if it is a Business/Utility/General Expense
-    const isExpense = tx.type === "expense" && categStr !== "Bank Credit";
+    // Determine if it is a Business/Utility/General Expense (exclude supplier payments/purchases handled below)
+    const isExpense =
+      tx.type === "expense" &&
+      categStr !== "Bank Credit" &&
+      categStr !== "Purchases" &&
+      categStr !== "Supplier Payment" &&
+      categStr !== "Supplier";
 
     if (isSale) {
       dailyMap[dateKey].sales += tx.amount || 0;

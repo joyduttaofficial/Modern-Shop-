@@ -24,15 +24,36 @@ import {
   UserPlus,
   Sun,
   Moon,
-  Boxes
+  Boxes,
+  Database,
+  Wifi,
+  WifiOff,
+  RefreshCw,
+  CheckCircle2,
+  AlertCircle,
+  HardDrive,
+  Cloud,
+  CloudOff,
+  ArrowUpRight,
+  ArrowUpDown
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { auth, db, OperationType, handleFirestoreError } from "@/src/lib/firebase";
 import { onAuthStateChanged, signOut, User as FirebaseUser } from "firebase/auth";
 import { doc, getDoc, setDoc, onSnapshot, collection, query, where, getDocs, deleteDoc } from "firebase/firestore";
-import { UserProfile, UserRole, RolePermission } from "@/src/types";
+import { UserProfile, UserRole, RolePermission, Transaction } from "@/src/types";
 import { useLanguage } from "./contexts/LanguageContext";
 import defaultLogo from "./assets/images/modern_pro_logo_1780829028289.png";
+import {
+  saveTransactionsToIndexedDB,
+  getTransactionsFromIndexedDB,
+  getOfflineStorageStats,
+  syncOfflineDataWithFirestore,
+  saveSingleTransactionOffline,
+  clearAllPendingSyncQueue,
+  OfflineStorageStats,
+  getIndexedDB
+} from "@/src/lib/indexedDbFallback";
 
 // Components
 import Dashboard from "./components/Dashboard";
@@ -136,7 +157,12 @@ export default function App() {
   const [activeView, setActiveView] = useState<View>("dashboard");
   const [initialActiveTab, setInitialActiveTab] = useState<"income" | "expense">("income");
   const [salesEditDate, setSalesEditDate] = useState<string>("");
-  const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(() => {
+    if (typeof window !== "undefined") {
+      return window.innerWidth >= 1024;
+    }
+    return false;
+  });
 
   const [darkMode, setDarkMode] = useState<boolean>(() => {
     if (typeof window !== "undefined") {
@@ -230,6 +256,183 @@ export default function App() {
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [customRoles, setCustomRoles] = useState<RolePermission[]>([]);
   const [loading, setLoading] = useState(true);
+
+  // -------------------------------------------------------------
+  // IndexedDB Local Storage Fallback & Offline State Management
+  // -------------------------------------------------------------
+  const [isOffline, setIsOffline] = useState<boolean>(() => {
+    if (typeof window !== "undefined") {
+      return !navigator.onLine;
+    }
+    return false;
+  });
+
+  const [offlineStats, setOfflineStats] = useState<OfflineStorageStats>({
+    transactionsCount: 0,
+    salesCount: 0,
+    pendingSyncCount: 0,
+    lastSyncTime: null,
+    isStorageReady: false
+  });
+
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [syncFeedback, setSyncFeedback] = useState<{ type: "success" | "error" | "info"; message: string } | null>(null);
+  const [showStorageModal, setShowStorageModal] = useState(false);
+
+  // Initialize and refresh IndexedDB storage stats
+  const refreshStorageStats = async () => {
+    try {
+      const stats = await getOfflineStorageStats();
+      setOfflineStats(stats);
+    } catch (e) {
+      console.warn("Could not load IndexedDB stats:", e);
+    }
+  };
+
+  useEffect(() => {
+    // Initial IndexedDB verification
+    getIndexedDB().then(() => {
+      refreshStorageStats();
+    }).catch((err) => {
+      console.warn("IndexedDB initialization warning:", err);
+    });
+
+    const handleOnline = async () => {
+      setIsOffline(false);
+      setSyncFeedback({ type: "info", message: "Network connection restored. Syncing pending data with Firestore..." });
+      if (user?.uid) {
+        await handleAutoSync();
+      }
+    };
+
+    const handleOffline = () => {
+      setIsOffline(true);
+      setSyncFeedback({ type: "info", message: "Offline mode active: Critical transactions and sales are securely saved in IndexedDB." });
+      refreshStorageStats();
+    };
+
+    const handleStorageUpdate = () => {
+      refreshStorageStats();
+    };
+
+    window.addEventListener("online", handleOnline);
+    window.addEventListener("offline", handleOffline);
+    window.addEventListener("indexeddb-storage-updated", handleStorageUpdate);
+
+    return () => {
+      window.removeEventListener("online", handleOnline);
+      window.removeEventListener("offline", handleOffline);
+      window.removeEventListener("indexeddb-storage-updated", handleStorageUpdate);
+    };
+  }, [user]);
+
+  // Background mirroring of Firestore transactions into IndexedDB for zero data loss
+  useEffect(() => {
+    if (!user) return;
+
+    let unsub: (() => void) | null = null;
+    try {
+      const q = query(collection(db, "transactions"));
+      unsub = onSnapshot(q, (snapshot) => {
+        const liveTxs = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as Transaction));
+        if (liveTxs.length > 0) {
+          saveTransactionsToIndexedDB(liveTxs).then(() => {
+            refreshStorageStats();
+          });
+        }
+        setIsOffline(false);
+      }, (err) => {
+        console.warn("Firestore snapshot unreachable or restricted, activating IndexedDB fallback layer:", err);
+        setIsOffline(true);
+        refreshStorageStats();
+      });
+    } catch (e) {
+      console.warn("Error establishing transaction backup listener:", e);
+      setIsOffline(true);
+    }
+
+    return () => {
+      if (unsub) unsub();
+    };
+  }, [user]);
+
+  const handleAutoSync = async () => {
+    if (!user?.uid || isSyncing) return;
+    setIsSyncing(true);
+    try {
+      const result = await syncOfflineDataWithFirestore(db, user.uid);
+      await refreshStorageStats();
+      if (result.syncedCount > 0) {
+        setSyncFeedback({
+          type: "success",
+          message: `Successfully synchronized ${result.syncedCount} queued offline change${result.syncedCount > 1 ? "s" : ""} with Cloud Firestore!`
+        });
+      }
+    } catch (e) {
+      console.error("Auto sync error:", e);
+    } finally {
+      setIsSyncing(false);
+      setTimeout(() => setSyncFeedback(null), 5000);
+    }
+  };
+
+  const handleManualSync = async () => {
+    if (!user?.uid) return;
+    setIsSyncing(true);
+    setSyncFeedback({ type: "info", message: "Connecting to Cloud Firestore..." });
+    try {
+      const result = await syncOfflineDataWithFirestore(db, user.uid);
+      await refreshStorageStats();
+      if (result.syncedCount > 0) {
+        setSyncFeedback({
+          type: "success",
+          message: `Synced ${result.syncedCount} queued change${result.syncedCount > 1 ? "s" : ""} to Firestore successfully!`
+        });
+      } else {
+        setSyncFeedback({
+          type: "success",
+          message: "All local transactions & sales are already up-to-date with Firestore!"
+        });
+      }
+    } catch (e: any) {
+      setSyncFeedback({
+        type: "error",
+        message: `Sync failed: ${e?.message || "Check network/Firestore connection."}`
+      });
+    } finally {
+      setIsSyncing(false);
+      setTimeout(() => setSyncFeedback(null), 5000);
+    }
+  };
+
+  const handleTestOfflineWrite = async () => {
+    if (!user?.uid) return;
+    const testTx: Transaction = {
+      date: new Date().toISOString(),
+      type: "income",
+      category: "Employee Sales",
+      subCategory: "Diagnostic Test",
+      amount: 1250,
+      paymentMethod: "Cash",
+      notes: "Offline Diagnostic Transaction stored via IndexedDB fallback layer",
+      createdBy: user.uid
+    };
+
+    try {
+      await saveSingleTransactionOffline(testTx, true);
+      await refreshStorageStats();
+      setSyncFeedback({
+        type: "success",
+        message: "Offline test transaction successfully saved to IndexedDB and queued for sync!"
+      });
+    } catch (err) {
+      setSyncFeedback({
+        type: "error",
+        message: "Failed to write offline test record."
+      });
+    }
+    setTimeout(() => setSyncFeedback(null), 5000);
+  };
 
   // Dynamic Company Branding & Profile States
   const [companyName, setCompanyName] = useState("Modern Pro");
@@ -597,9 +800,18 @@ export default function App() {
         </div>
       </div>
 
+      {/* Mobile Sidebar Backdrop Overlay */}
+      {isSidebarOpen && (
+        <div 
+          onClick={() => setIsSidebarOpen(false)}
+          className="fixed inset-0 bg-black/60 z-35 lg:hidden backdrop-blur-xs transition-opacity duration-300 animate-in fade-in"
+          aria-label="Close sidebar menu"
+        />
+      )}
+
       {/* Sidebar */}
       <aside className={cn(
-        "fixed inset-y-0 left-0 z-40 w-64 bg-white border-r border-slate-100 transform transition-transform duration-300 ease-in-out lg:translate-x-0 lg:static flex flex-col shadow-xl shadow-slate-100/40 lg:shadow-none print:hidden",
+        "fixed inset-y-0 left-0 z-40 w-72 sm:w-80 lg:w-64 bg-white border-r border-slate-100 transform transition-transform duration-300 ease-in-out lg:translate-x-0 lg:static flex flex-col shadow-2xl lg:shadow-none print:hidden",
         isSidebarOpen ? "translate-x-0" : "-translate-x-full"
       )}>
         <div className="h-full flex flex-col p-5 overflow-y-auto [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:bg-slate-100 [&::-webkit-scrollbar-track]:transparent">
@@ -772,7 +984,7 @@ export default function App() {
       </aside>
 
       {/* Main Content */}
-      <main className="flex-1 h-screen overflow-y-auto p-4 lg:p-10 pt-20 lg:pt-10 bg-slate-50/30 print:p-0 print:bg-white print:h-auto print:overflow-visible">
+      <main className="flex-1 h-screen overflow-y-auto p-3 sm:p-4 lg:p-10 pt-18 sm:pt-20 lg:pt-10 pb-28 lg:pb-10 bg-slate-50/30 print:p-0 print:bg-white print:h-auto print:overflow-visible">
         <div className="max-w-6xl mx-auto space-y-6">
           {/* Global Header Bar */}
           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-white p-4 sm:px-6 sm:py-4 rounded-2xl border border-slate-100 shadow-sm print:hidden">
@@ -808,6 +1020,48 @@ export default function App() {
             </div>
             
             <div className="flex items-center gap-3 self-stretch sm:self-auto justify-between sm:justify-end">
+              {/* IndexedDB Offline Storage & Sync Controls */}
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowStorageModal(true)}
+                  className={cn(
+                    "px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-2 border shadow-xs",
+                    isOffline
+                      ? "bg-amber-50 dark:bg-amber-950/40 text-amber-800 dark:text-amber-300 border-amber-200 dark:border-amber-800"
+                      : "bg-slate-50 dark:bg-zinc-900 text-slate-700 dark:text-neutral-200 border-slate-200 dark:border-zinc-800 hover:bg-slate-100"
+                  )}
+                  title="Click to view IndexedDB storage status and offline sync diagnostic"
+                >
+                  <div className="relative flex items-center justify-center">
+                    <Database className={cn("w-3.5 h-3.5", isOffline ? "text-amber-600" : "text-emerald-600")} />
+                    <span className={cn(
+                      "absolute -top-1 -right-1 w-2 h-2 rounded-full",
+                      isOffline ? "bg-amber-500 animate-ping" : "bg-emerald-500"
+                    )} />
+                  </div>
+                  <span className="hidden md:inline">
+                    {isOffline ? "Offline (IndexedDB)" : "Cloud Synced"}
+                  </span>
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-black/5 dark:bg-white/10 font-mono font-bold">
+                    {offlineStats.transactionsCount} txs
+                  </span>
+                </button>
+
+                {offlineStats.pendingSyncCount > 0 && (
+                  <button
+                    type="button"
+                    onClick={handleManualSync}
+                    disabled={isSyncing}
+                    className="px-3 py-1.5 rounded-xl text-xs font-black bg-amber-500 hover:bg-amber-600 text-white transition-all cursor-pointer flex items-center gap-1.5 shadow-sm disabled:opacity-50"
+                    title="Click to push offline changes to Firestore"
+                  >
+                    <RefreshCw className={cn("w-3.5 h-3.5", isSyncing && "animate-spin")} />
+                    <span>Sync ({offlineStats.pendingSyncCount})</span>
+                  </button>
+                )}
+              </div>
+
               {/* Dark Mode Switcher Button */}
               <div className="bg-slate-50 p-1 rounded-xl border border-slate-150 flex items-center gap-1">
                 <button
@@ -869,6 +1123,81 @@ export default function App() {
               </div>
             </div>
           </div>
+
+          {/* Offline Fallback Alert Banner */}
+          {isOffline && (
+            <div className="bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900/50 rounded-2xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-amber-900 dark:text-amber-200 shadow-xs">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-amber-100 dark:bg-amber-900/40 rounded-xl text-amber-600 dark:text-amber-400 shrink-0">
+                  <CloudOff className="w-5 h-5" />
+                </div>
+                <div>
+                  <p className="text-xs font-bold tracking-tight">
+                    {t("IndexedDB Local Storage Active (Offline Mode)")}
+                  </p>
+                  <p className="text-[11px] text-amber-700 dark:text-amber-300/80 mt-0.5">
+                    {t("Firestore is unreachable. Transactions and sales are securely stored in your browser's local IndexedDB and will auto-sync when online.")}
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 self-stretch sm:self-auto justify-end">
+                <button
+                  type="button"
+                  onClick={() => setShowStorageModal(true)}
+                  className="px-3 py-1.5 bg-amber-100 hover:bg-amber-200 dark:bg-amber-900/40 dark:hover:bg-amber-900/60 text-amber-900 dark:text-amber-200 rounded-xl text-xs font-bold transition-all cursor-pointer"
+                >
+                  {t("Storage Details")}
+                </button>
+                <button
+                  type="button"
+                  onClick={handleManualSync}
+                  disabled={isSyncing}
+                  className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 shadow-xs disabled:opacity-50"
+                >
+                  <RefreshCw className={cn("w-3.5 h-3.5", isSyncing && "animate-spin")} />
+                  {t("Retry Sync")}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Sync Feedback Toast */}
+          <AnimatePresence>
+            {syncFeedback && (
+              <motion.div
+                initial={{ opacity: 0, y: -8 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -8 }}
+                className={cn(
+                  "p-3.5 rounded-xl text-xs font-semibold flex items-center justify-between gap-3 shadow-md border",
+                  syncFeedback.type === "success" 
+                    ? "bg-emerald-50 dark:bg-emerald-950/40 text-emerald-800 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800" 
+                    : syncFeedback.type === "error"
+                    ? "bg-red-50 dark:bg-red-950/40 text-red-800 dark:text-red-300 border-red-200 dark:border-red-800"
+                    : "bg-sky-50 dark:bg-sky-950/40 text-sky-800 dark:text-sky-300 border-sky-200 dark:border-sky-800"
+                )}
+              >
+                <div className="flex items-center gap-2">
+                  {syncFeedback.type === "success" ? (
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                  ) : syncFeedback.type === "error" ? (
+                    <AlertCircle className="w-4 h-4 text-red-600 shrink-0" />
+                  ) : (
+                    <RefreshCw className="w-4 h-4 text-sky-600 animate-spin shrink-0" />
+                  )}
+                  <span>{syncFeedback.message}</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setSyncFeedback(null)}
+                  className="p-1 hover:bg-black/5 dark:hover:bg-white/5 rounded text-current opacity-70 hover:opacity-100 cursor-pointer"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
           <AnimatePresence mode="wait">
             <motion.div
               key={activeView}
@@ -1068,6 +1397,221 @@ export default function App() {
           </AnimatePresence>
         </div>
       </main>
+
+      {/* IndexedDB Local Storage Diagnostics & Management Modal */}
+      <AnimatePresence>
+        {showStorageModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 15 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 15 }}
+              className="bg-white dark:bg-zinc-900 max-w-lg w-full rounded-2xl border border-slate-200 dark:border-zinc-800 shadow-2xl p-6 space-y-6 relative overflow-hidden"
+            >
+              <div className="flex items-start justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-indigo-50 dark:bg-indigo-950/40 text-indigo-600 dark:text-indigo-400 flex items-center justify-center border border-indigo-100 dark:border-indigo-900/30">
+                    <Database className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-bold text-slate-900 dark:text-neutral-100">
+                      IndexedDB Local Storage Fallback
+                    </h3>
+                    <p className="text-xs text-slate-500 dark:text-neutral-400">
+                      Database: <span className="font-mono font-semibold">modern_pos_offline_db</span> (v1)
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowStorageModal(false)}
+                  className="p-2 text-slate-400 hover:text-slate-700 dark:hover:text-neutral-200 rounded-xl transition-colors cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Status and Metric Cards */}
+              <div className="grid grid-cols-2 gap-3">
+                <div className="p-3.5 bg-slate-50 dark:bg-zinc-850 rounded-xl border border-slate-100 dark:border-zinc-800">
+                  <div className="flex items-center justify-between">
+                    <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Cached Transactions</p>
+                    <ReceiptIndianRupee className="w-4 h-4 text-slate-400" />
+                  </div>
+                  <p className="text-xl font-black text-slate-900 dark:text-neutral-100 mt-1 font-mono">
+                    {offlineStats.transactionsCount}
+                  </p>
+                  <p className="text-[10px] text-slate-500 mt-0.5">In indexeddb: transactions</p>
+                </div>
+
+                <div className="p-3.5 bg-slate-50 dark:bg-zinc-850 rounded-xl border border-slate-100 dark:border-zinc-800">
+                  <div className="flex items-center justify-between">
+                    <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Cached Daily Sales</p>
+                    <ShoppingCart className="w-4 h-4 text-slate-400" />
+                  </div>
+                  <p className="text-xl font-black text-slate-900 dark:text-neutral-100 mt-1 font-mono">
+                    {offlineStats.salesCount}
+                  </p>
+                  <p className="text-[10px] text-slate-500 mt-0.5">In indexeddb: sales_records</p>
+                </div>
+
+                <div className="p-3.5 bg-slate-50 dark:bg-zinc-850 rounded-xl border border-slate-100 dark:border-zinc-800">
+                  <div className="flex items-center justify-between">
+                    <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Pending Sync Queue</p>
+                    <RefreshCw className={cn("w-4 h-4", offlineStats.pendingSyncCount > 0 ? "text-amber-500" : "text-slate-400")} />
+                  </div>
+                  <p className={cn(
+                    "text-xl font-black mt-1 font-mono",
+                    offlineStats.pendingSyncCount > 0 ? "text-amber-600 dark:text-amber-400" : "text-slate-900 dark:text-neutral-100"
+                  )}>
+                    {offlineStats.pendingSyncCount}
+                  </p>
+                  <p className="text-[10px] text-slate-500 mt-0.5">Offline mutations queued</p>
+                </div>
+
+                <div className="p-3.5 bg-slate-50 dark:bg-zinc-850 rounded-xl border border-slate-100 dark:border-zinc-800">
+                  <div className="flex items-center justify-between">
+                    <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Storage Engine</p>
+                    <HardDrive className="w-4 h-4 text-emerald-500" />
+                  </div>
+                  <p className="text-sm font-bold text-emerald-600 dark:text-emerald-400 mt-1">
+                    {offlineStats.isStorageReady ? "Active & Healthy" : "Initializing..."}
+                  </p>
+                  <p className="text-[10px] text-slate-500 mt-0.5">
+                    {offlineStats.lastSyncTime ? `Synced: ${formatDate(new Date(offlineStats.lastSyncTime))}` : "Sync pending"}
+                  </p>
+                </div>
+              </div>
+
+              {/* Status explanation */}
+              <div className="p-3.5 bg-slate-50 dark:bg-zinc-950 rounded-xl border border-slate-150 dark:border-zinc-800 space-y-1.5 text-xs text-slate-600 dark:text-neutral-400">
+                <p className="font-bold text-slate-800 dark:text-neutral-200">
+                  Offline Fallback Guarantee:
+                </p>
+                <p className="leading-relaxed">
+                  When internet connectivity or Firestore cloud services are unreachable or restricted, all transaction entries, sales records, and ledger mutations remain 100% durable in IndexedDB and are queued for automatic background replication once connectivity is restored.
+                </p>
+              </div>
+
+              {/* Action Buttons */}
+              <div className="space-y-2 pt-2 border-t border-slate-100 dark:border-zinc-800">
+                <button
+                  type="button"
+                  onClick={handleManualSync}
+                  disabled={isSyncing}
+                  className="w-full py-2.5 bg-slate-950 dark:bg-[#d4af37] dark:text-black text-white hover:bg-slate-850 font-bold text-xs uppercase tracking-wider rounded-xl transition-all flex items-center justify-center gap-2 cursor-pointer shadow-md disabled:opacity-50"
+                >
+                  <RefreshCw className={cn("w-4 h-4", isSyncing && "animate-spin")} />
+                  <span>{isSyncing ? "Synchronizing with Firestore..." : "Synchronize with Cloud Firestore"}</span>
+                </button>
+
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={handleTestOfflineWrite}
+                    className="py-2.5 bg-slate-100 hover:bg-slate-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-slate-700 dark:text-neutral-200 font-semibold text-xs rounded-xl transition-all cursor-pointer flex items-center justify-center gap-1.5"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>Test Offline Write</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      if (window.confirm("Are you sure you want to clear the pending sync queue?")) {
+                        await clearAllPendingSyncQueue();
+                        await refreshStorageStats();
+                        setSyncFeedback({ type: "info", message: "Pending sync queue reset." });
+                      }
+                    }}
+                    className="py-2.5 bg-slate-100 hover:bg-red-50 hover:text-red-600 dark:bg-zinc-800 dark:hover:bg-red-950/40 text-slate-600 dark:text-neutral-300 font-semibold text-xs rounded-xl transition-all cursor-pointer flex items-center justify-center gap-1.5"
+                  >
+                    <span>Clear Sync Queue</span>
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Mobile Bottom Quick Navigation Bar */}
+      <nav 
+        id="mobile-bottom-nav" 
+        className="lg:hidden fixed bottom-0 left-0 right-0 h-16 bg-white/95 border-t border-slate-200/90 z-30 flex items-center justify-around px-1 shadow-2xl print:hidden safe-area-bottom backdrop-blur-md"
+      >
+        <button
+          type="button"
+          onClick={() => {
+            setActiveView("dashboard");
+            setIsSidebarOpen(false);
+          }}
+          className={cn(
+            "flex flex-col items-center justify-center flex-1 py-1.5 px-1 transition-all rounded-xl cursor-pointer",
+            activeView === "dashboard" ? "text-blue-600 font-extrabold" : "text-slate-500 hover:text-slate-800"
+          )}
+        >
+          <LayoutDashboard className="w-5 h-5 mb-0.5" />
+          <span className="text-[10px] tracking-tight leading-none">{t("Dashboard")}</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => {
+            setActiveView("newSale");
+            setIsSidebarOpen(false);
+          }}
+          className={cn(
+            "flex flex-col items-center justify-center flex-1 py-1.5 px-1 transition-all rounded-xl cursor-pointer",
+            activeView === "newSale" ? "text-blue-600 font-extrabold" : "text-slate-500 hover:text-slate-800"
+          )}
+        >
+          <ShoppingCart className="w-5 h-5 mb-0.5" />
+          <span className="text-[10px] tracking-tight leading-none">{t("New Sale")}</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => {
+            setActiveView("transactions");
+            setIsSidebarOpen(false);
+          }}
+          className={cn(
+            "flex flex-col items-center justify-center flex-1 py-1.5 px-1 transition-all rounded-xl cursor-pointer",
+            activeView === "transactions" ? "text-blue-600 font-extrabold" : "text-slate-500 hover:text-slate-800"
+          )}
+        >
+          <ArrowUpDown className="w-5 h-5 mb-0.5" />
+          <span className="text-[10px] tracking-tight leading-none">{t("Transactions")}</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => {
+            setActiveView("salesList");
+            setIsSidebarOpen(false);
+          }}
+          className={cn(
+            "flex flex-col items-center justify-center flex-1 py-1.5 px-1 transition-all rounded-xl cursor-pointer",
+            activeView === "salesList" ? "text-blue-600 font-extrabold" : "text-slate-500 hover:text-slate-800"
+          )}
+        >
+          <FileText className="w-5 h-5 mb-0.5" />
+          <span className="text-[10px] tracking-tight leading-none">{t("Sales Ledger")}</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setIsSidebarOpen(prev => !prev)}
+          className={cn(
+            "flex flex-col items-center justify-center flex-1 py-1.5 px-1 transition-all rounded-xl cursor-pointer",
+            isSidebarOpen ? "text-blue-600 font-extrabold" : "text-slate-500 hover:text-slate-800"
+          )}
+        >
+          <Menu className="w-5 h-5 mb-0.5" />
+          <span className="text-[10px] tracking-tight leading-none">{t("Menu")}</span>
+        </button>
+      </nav>
     </div>
   );
 }

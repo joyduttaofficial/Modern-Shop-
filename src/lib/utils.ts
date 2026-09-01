@@ -22,7 +22,8 @@ export function computeDynamicPurchases(
   supplierTransactions.forEach((tx) => {
     if (tx.type === "payment") {
       const current = supplierPaymentsMap.get(tx.supplierId) || 0;
-      supplierPaymentsMap.set(tx.supplierId, current + (tx.totalAmount || 0));
+      const lessVal = (tx as any).lessAmount || 0;
+      supplierPaymentsMap.set(tx.supplierId, current + (tx.totalAmount || 0) + lessVal);
     } else if (tx.type === "return") {
       const isAutoCompanion = tx.refNo?.startsWith("RET-PUR-") || tx.notes?.includes("Auto adjustment on purchase");
       const isDueAdjusted = tx.notes?.includes("Automatically adjusted from due") || tx.paymentMethod === "Due Adjusted";

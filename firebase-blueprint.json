@@ -98,6 +98,7 @@
         "totalAmount": { "type": "number" },
         "paidAmount": { "type": "number" },
         "dueAmount": { "type": "number" },
+        "lessAmount": { "type": "number" },
         "paymentMethod": { "type": "string" },
         "notes": { "type": "string" },
         "createdAt": { "type": "string", "format": "date-time" }

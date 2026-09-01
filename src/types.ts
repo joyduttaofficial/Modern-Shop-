@@ -116,6 +116,7 @@ export interface SupplierTransaction {
   totalAmount: number; // Purchase total, Return total, Payment amount
   paidAmount?: number; // Paid at purchase time
   dueAmount?: number;  // Due after purchase
+  lessAmount?: number; // Add Less / Discount amount deducted from due
   paymentMethod?: string; // Cash, Bank name, etc.
   notes?: string;
   createdAt: string;

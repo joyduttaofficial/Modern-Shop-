@@ -2,7 +2,7 @@ import React, { useState, useEffect } from "react";
 import { User } from "firebase/auth";
 import { collection, onSnapshot, addDoc, deleteDoc, doc, query, orderBy, where, getDocs, increment } from "firebase/firestore";
 import { db, OperationType, handleFirestoreError, updateDoc } from "@/src/lib/firebase";
-import { Supplier, SupplierTransaction, UserRole, Bank } from "@/src/types";
+import { Supplier, SupplierTransaction, UserRole, Bank, Transaction } from "@/src/types";
 import { cn, formatCurrency } from "@/src/lib/utils";
 import { 
   Users, Plus, Trash2, CreditCard, History, Wallet, UserCircle, Landmark, X, Eye, Pencil, 
@@ -93,6 +93,8 @@ export default function Suppliers({
   const [modalExchangeRate, setModalExchangeRate] = useState("140");
   const [modalInrTotalAmount, setModalInrTotalAmount] = useState("");
   const [modalInrPaidAmount, setModalInrPaidAmount] = useState("");
+  const [modalLessAmount, setModalLessAmount] = useState("");
+  const [modalInrLessAmount, setModalInrLessAmount] = useState("");
 
   const handleModalExchangeRateChange = (rateVal: string) => {
     setModalExchangeRate(rateVal);
@@ -109,6 +111,13 @@ export default function Suppliers({
       } else if (modalInrPaidAmount) {
         const computedBDT = (parseFloat(modalInrPaidAmount) * rateFloat) / 100;
         setModalPaidAmount(computedBDT > 0 ? computedBDT.toFixed(2) : "");
+      }
+      if (modalLessAmount) {
+        const computedLessINR = (parseFloat(modalLessAmount) * 100) / rateFloat;
+        setModalInrLessAmount(computedLessINR > 0 ? computedLessINR.toFixed(2) : "");
+      } else if (modalInrLessAmount) {
+        const computedLessBDT = (parseFloat(modalInrLessAmount) * rateFloat) / 100;
+        setModalLessAmount(computedLessBDT > 0 ? computedLessBDT.toFixed(2) : "");
       }
     }
   };
@@ -140,6 +149,26 @@ export default function Suppliers({
     if (rateFloat > 0) {
       const computedBDT = (inrFloat * rateFloat) / 100;
       setModalPaidAmount(computedBDT > 0 ? computedBDT.toFixed(2) : "");
+    }
+  };
+
+  const handleModalBdtLessChange = (bdtVal: string) => {
+    setModalLessAmount(bdtVal);
+    const bdtFloat = parseFloat(bdtVal) || 0;
+    const rateFloat = parseFloat(modalExchangeRate) || 140;
+    if (rateFloat > 0) {
+      const computedINR = (bdtFloat * 100) / rateFloat;
+      setModalInrLessAmount(computedINR > 0 ? computedINR.toFixed(2) : "");
+    }
+  };
+
+  const handleModalInrLessChange = (inrVal: string) => {
+    setModalInrLessAmount(inrVal);
+    const inrFloat = parseFloat(inrVal) || 0;
+    const rateFloat = parseFloat(modalExchangeRate) || 140;
+    if (rateFloat > 0) {
+      const computedBDT = (inrFloat * rateFloat) / 100;
+      setModalLessAmount(computedBDT > 0 ? computedBDT.toFixed(2) : "");
     }
   };
 
@@ -225,9 +254,12 @@ export default function Suppliers({
       const supplierId = sTx.supplierId;
       
       if (sTx.type === "payment") {
-        // Revert outstanding due: increment back
+        const lessVal = (sTx as any).lessAmount || 0;
+        const totalClearedVal = sTx.totalAmount + lessVal;
+
+        // Revert outstanding due: increment back (total amount paid + less granted)
         await updateDoc(doc(db, "suppliers", supplierId), {
-          purchaseDue: increment(sTx.totalAmount)
+          purchaseDue: increment(totalClearedVal)
         });
 
         // Revert bank balances
@@ -419,17 +451,33 @@ export default function Suppliers({
     }
   }, [editingSupplier]);
 
-  // Generate Unique Supplier Code
-  const getNextSupplierCode = () => {
-    if (suppliers.length === 0) return "BD001";
-    // Check if there are code formats like BDxxx
-    const bdCodes = suppliers
-      .map((s) => parseInt(s.code.replace(/(BD|IND|SUP)/i, "")))
-      .filter((num) => !isNaN(num));
-    const maxNum = bdCodes.length > 0 ? Math.max(...bdCodes) : 0;
+  // Generate Unique Supplier Code (IND01 for India, BD01 for Bangladesh)
+  const getNextSupplierCode = (targetCountry = country) => {
+    const isIndia = targetCountry === "India";
+    const prefix = isIndia ? "IND" : targetCountry === "Bangladesh" ? "BD" : "SUP";
+
+    // Find all matching suppliers for this prefix/country
+    const matchingCodes = suppliers
+      .filter((s) => {
+        if (!s.code) return false;
+        const codeUpper = s.code.toUpperCase();
+        if (isIndia) {
+          return codeUpper.startsWith("IND") || s.country === "India";
+        } else if (targetCountry === "Bangladesh") {
+          return codeUpper.startsWith("BD") || s.country === "Bangladesh";
+        }
+        return codeUpper.startsWith(prefix);
+      })
+      .map((s) => {
+        const cleaned = s.code.toUpperCase().replace(/^(IND|BD|SUP)/i, "");
+        const num = parseInt(cleaned, 10);
+        return isNaN(num) ? 0 : num;
+      })
+      .filter((num) => num > 0);
+
+    const maxNum = matchingCodes.length > 0 ? Math.max(...matchingCodes) : 0;
     const nextNum = maxNum + 1;
-    const prefix = country === "Bangladesh" ? "BD" : country === "India" ? "IND" : "SUP";
-    return `${prefix}${String(nextNum).padStart(3, "0")}`;
+    return `${prefix}${String(nextNum).padStart(2, "0")}`;
   };
 
   // Submit Supplier Add/Update Form
@@ -506,13 +554,22 @@ export default function Suppliers({
     let purchaseDownpayments = 0;
     let purchaseDownpaymentsINR = 0;
 
+    let totalLess = 0;
+    let totalLessINR = 0;
+
     sTransactions.forEach(t => {
       const bdtAmount = t.totalAmount || 0;
       const bdtPaid = t.paidAmount || 0;
+      let bdtLess = (t as any).lessAmount || 0;
+      if (!bdtLess && t.notes) {
+        const lessMatch = t.notes.match(/Less(?:\/Discount)?:\s*(?:৳|BDT)?\s*([\d.]+)/i);
+        if (lessMatch) bdtLess = parseFloat(lessMatch[1]) || 0;
+      }
       
       let rate = 140; // standard default rate: ₹100 = ৳140 (1 INR = ৳1.40)
       let totalINR = 0;
       let paidINR = 0;
+      let lessINR = 0;
 
       if (isIndian) {
         const notes = t.notes || "";
@@ -534,6 +591,13 @@ export default function Suppliers({
         } else {
           paidINR = rate > 0 ? (bdtPaid * 100) / rate : 0;
         }
+
+        const inrLessMatch = notes.match(/INR Less:\s*₹?\s*([\d.]+)/i);
+        if (inrLessMatch) {
+          lessINR = parseFloat(inrLessMatch[1]) || 0;
+        } else if (bdtLess > 0) {
+          lessINR = rate > 0 ? (bdtLess * 100) / rate : 0;
+        }
       }
 
       if (t.type === "purchase") {
@@ -546,6 +610,9 @@ export default function Suppliers({
         totalReturnsINR += totalINR;
       } else if (t.type === "payment") {
         directPayments += bdtAmount;
+        totalLess += bdtLess;
+        totalLessINR += lessINR;
+
         if (isIndian) {
           const notes = t.notes || "";
           const paymentMatch = notes.match(/(?:INR Paid|INR Total):\s*₹?\s*([\d.]+)/i);
@@ -566,8 +633,8 @@ export default function Suppliers({
     const opBal = supplier.openingBalance || 0;
     const opBalINR = isIndian ? (opBal * 100) / 140 : 0;
 
-    const remainingDue = opBal + totalPurchases - totalPayments - totalReturns;
-    const remainingDueINR = opBalINR + totalPurchasesINR - totalPaymentsINR - totalReturnsINR;
+    const remainingDue = opBal + totalPurchases - (totalPayments + totalLess) - totalReturns;
+    const remainingDueINR = opBalINR + totalPurchasesINR - (totalPaymentsINR + totalLessINR) - totalReturnsINR;
 
     return {
       openingBalance: opBal,
@@ -575,12 +642,14 @@ export default function Suppliers({
       grossPurchases: totalPurchases + opBal,
       totalReturns,
       totalPayments,
+      totalLess,
       remainingDue,
       openingBalanceINR: opBalINR,
       totalPurchasesINR,
       grossPurchasesINR: totalPurchasesINR + opBalINR,
       totalReturnsINR,
       totalPaymentsINR,
+      totalLessINR,
       remainingDueINR
     };
   };
@@ -592,15 +661,22 @@ export default function Suppliers({
     setModalRefNo(`TX-${Math.floor(100000 + Math.random() * 900000)}`);
     setModalNotes("");
     setModalPaymentMethod("Cash");
-    setModalExchangeRate("70");
+    setModalExchangeRate("140");
     setModalInrTotalAmount("");
     setModalInrPaidAmount("");
+    setModalLessAmount("");
+    setModalInrLessAmount("");
 
     const finances = getSupplierFinances(s);
     setModalAdjustDue(true);
 
     if (type === "payDue") {
-      setModalAmount(Math.max(0, finances.remainingDue).toFixed(2));
+      const dueVal = Math.max(0, finances.remainingDue);
+      setModalAmount(dueVal.toFixed(2));
+      if (s.country === "India") {
+        const inrVal = (dueVal * 100) / 140;
+        setModalInrPaidAmount(inrVal.toFixed(2));
+      }
     } else if (type === "payReturn") {
       setModalAmount(finances.totalReturns.toFixed(2));
     } else {
@@ -618,12 +694,16 @@ export default function Suppliers({
 
     try {
       const amountVal = parseFloat(modalAmount) || 0;
-      const refTx = {
+      const lessVal = parseFloat(modalLessAmount) || 0;
+      const totalDueReduced = amountVal + lessVal;
+
+      const refTx: SupplierTransaction = {
         supplierId: modalSupplier.id,
         date: modalDate,
         type: "payment", // fallback
         refNo: modalRefNo,
         totalAmount: amountVal,
+        ...(lessVal > 0 ? { lessAmount: lessVal } : {}),
         paymentMethod: modalPaymentMethod,
         notes: modalNotes,
         createdAt: new Date().toISOString()
@@ -631,7 +711,20 @@ export default function Suppliers({
 
       if (activeModal === "payDue") {
         refTx.type = "payment";
-        // Deduct from bank if not Cash and matches a real bank
+        let appendNotes = "";
+        if (modalSupplier.country === "India" && parseFloat(modalExchangeRate) > 0) {
+          const inrPaid = parseFloat(modalInrPaidAmount) || (parseFloat(modalExchangeRate) > 0 ? (amountVal * 100) / parseFloat(modalExchangeRate) : 0);
+          const inrLess = parseFloat(modalInrLessAmount) || (parseFloat(modalExchangeRate) > 0 ? (lessVal * 100) / parseFloat(modalExchangeRate) : 0);
+          appendNotes += ` [Rate: ₹100 = ৳${modalExchangeRate} | INR Paid: ₹${inrPaid.toFixed(2)}${lessVal > 0 ? ` | INR Less: ₹${inrLess.toFixed(2)}` : ""}]`;
+        }
+
+        if (lessVal > 0) {
+          appendNotes += ` [Paid: ৳${amountVal.toFixed(2)} | Less/Discount: ৳${lessVal.toFixed(2)} | Total Cleared: ৳${totalDueReduced.toFixed(2)}]`;
+        }
+
+        refTx.notes = (modalNotes + appendNotes).trim();
+
+        // Deduct from bank if not Cash and matches a real bank (only real paidAmount)
         if (modalPaymentMethod !== "Cash") {
           const bank = banks.find(b => b.name === modalPaymentMethod);
           if (bank?.id) {
@@ -643,9 +736,25 @@ export default function Suppliers({
         }
         await addDoc(collection(db, "supplierTransactions"), refTx);
 
-        // Update supplier document due property for cached list checks
+        // Record companion financial transaction for general ledger (only real paidAmount is expense)
+        if (amountVal > 0) {
+          const companionTx: Transaction = {
+            date: new Date(modalDate + "T12:00:00").toISOString(),
+            type: "expense",
+            category: "Supplier Due Payment",
+            amount: amountVal,
+            paymentMethod: modalPaymentMethod,
+            notes: `Supplier Due Payment to ${modalSupplier.name}. Ref: ${modalRefNo}${appendNotes}`.trim(),
+            createdBy: user.uid,
+            subCategory: modalSupplier.name,
+            supplierId: modalSupplier.id
+          };
+          await addDoc(collection(db, "transactions"), companionTx);
+        }
+
+        // Update supplier document due property: deduct BOTH paid amount and less amount
         await updateDoc(doc(db, "suppliers", modalSupplier.id), {
-          purchaseDue: increment(-amountVal)
+          purchaseDue: increment(-totalDueReduced)
         });
 
       } else if (activeModal === "payReturn") {
@@ -1902,6 +2011,8 @@ export default function Suppliers({
                                 <th className="p-3">Ref/Receipt No</th>
                                 <th className="p-3">Type</th>
                                 <th className="p-3 text-right">Amount Paid (৳)</th>
+                                <th className="p-3 text-right text-indigo-700">Less / Discount (৳)</th>
+                                <th className="p-3 text-right text-slate-900">Total Cleared (৳)</th>
                                 <th className="p-3">Payment Method</th>
                                 <th className="p-3">Notes</th>
                                 <th className="p-3 text-center">Actions</th>
@@ -1910,41 +2021,49 @@ export default function Suppliers({
                             <tbody className="divide-y divide-gray-100 text-xs text-gray-700">
                               {supPayments.length === 0 ? (
                                 <tr>
-                                  <td colSpan={7} className="p-6 text-center text-gray-400 font-medium">No payment outflow logs recorded.</td>
+                                  <td colSpan={9} className="p-6 text-center text-gray-400 font-medium">No payment outflow logs recorded.</td>
                                 </tr>
                               ) : (
-                                supPayments.map((t) => (
-                                  <tr key={t.id} className="hover:bg-slate-50 transition-colors">
-                                    <td className="p-3 font-semibold text-gray-500">{t.date}</td>
-                                    <td className="p-3 font-bold font-mono text-gray-800">{t.refNo}</td>
-                                    <td className="p-3 uppercase">
-                                      <span className="bg-green-100 text-green-700 px-2 py-0.5 rounded text-[10px] font-extrabold">
-                                        payment
-                                      </span>
-                                    </td>
-                                    <td className="p-3 text-right font-bold text-[#00a65a]">{formatCurrency(t.totalAmount)}</td>
-                                    <td className="p-3 font-bold text-gray-600">{t.paymentMethod || "Cash"}</td>
-                                    <td className="p-3 text-gray-500 italic max-w-xs truncate">{t.notes || "—"}</td>
-                                    <td className="p-3 text-center">
-                                      <div className="flex items-center justify-center gap-2">
-                                        <button
-                                          onClick={() => setInvoiceTransaction(t)}
-                                          title="View Voucher"
-                                          className="p-1 text-blue-600 hover:text-blue-800 hover:bg-blue-50 rounded-lg transition-colors cursor-pointer"
-                                        >
-                                          <Receipt className="w-4 h-4" />
-                                        </button>
-                                        <button
-                                          onClick={() => setTxToDelete({ id: t.id!, tx: t })}
-                                          title="Delete Payment"
-                                          className="p-1 text-red-600 hover:text-red-800 hover:bg-red-50 rounded-lg transition-colors cursor-pointer"
-                                        >
-                                          <Trash2 className="w-4 h-4" />
-                                        </button>
-                                      </div>
-                                    </td>
-                                  </tr>
-                                ))
+                                supPayments.map((t) => {
+                                  const lessVal = (t as any).lessAmount || 0;
+                                  const totalCleared = (t.totalAmount || 0) + lessVal;
+                                  return (
+                                    <tr key={t.id} className="hover:bg-slate-50 transition-colors">
+                                      <td className="p-3 font-semibold text-gray-500">{t.date}</td>
+                                      <td className="p-3 font-bold font-mono text-gray-800">{t.refNo}</td>
+                                      <td className="p-3 uppercase">
+                                        <span className="bg-green-100 text-green-700 px-2 py-0.5 rounded text-[10px] font-extrabold">
+                                          payment
+                                        </span>
+                                      </td>
+                                      <td className="p-3 text-right font-bold text-[#00a65a]">{formatCurrency(t.totalAmount)}</td>
+                                      <td className="p-3 text-right font-bold text-indigo-700">
+                                        {lessVal > 0 ? `৳${lessVal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "—"}
+                                      </td>
+                                      <td className="p-3 text-right font-black text-slate-900">{formatCurrency(totalCleared)}</td>
+                                      <td className="p-3 font-bold text-gray-600">{t.paymentMethod || "Cash"}</td>
+                                      <td className="p-3 text-gray-500 italic max-w-xs truncate">{t.notes || "—"}</td>
+                                      <td className="p-3 text-center">
+                                        <div className="flex items-center justify-center gap-2">
+                                          <button
+                                            onClick={() => setInvoiceTransaction(t)}
+                                            title="View Voucher"
+                                            className="p-1 text-blue-600 hover:text-blue-800 hover:bg-blue-50 rounded-lg transition-colors cursor-pointer"
+                                          >
+                                            <Receipt className="w-4 h-4" />
+                                          </button>
+                                          <button
+                                            onClick={() => setTxToDelete({ id: t.id!, tx: t })}
+                                            title="Delete Payment"
+                                            className="p-1 text-red-600 hover:text-red-800 hover:bg-red-50 rounded-lg transition-colors cursor-pointer"
+                                          >
+                                            <Trash2 className="w-4 h-4" />
+                                          </button>
+                                        </div>
+                                      </td>
+                                    </tr>
+                                  );
+                                })
                               )}
                             </tbody>
                             <tfoot className="bg-slate-100/90 font-bold text-xs border-t-2 border-slate-300">
@@ -1955,8 +2074,14 @@ export default function Suppliers({
                                 <td className="p-3 text-right text-emerald-700 font-black text-sm">
                                   {formatCurrency(totalPaymentsTotal)}
                                 </td>
+                                <td className="p-3 text-right text-indigo-700 font-black text-sm">
+                                  {formatCurrency(supPayments.reduce((acc, t) => acc + ((t as any).lessAmount || 0), 0))}
+                                </td>
+                                <td className="p-3 text-right text-slate-900 font-black text-sm">
+                                  {formatCurrency(totalPaymentsTotal + supPayments.reduce((acc, t) => acc + ((t as any).lessAmount || 0), 0))}
+                                </td>
                                 <td colSpan={3} className="p-3 text-[11px] text-gray-500 font-normal">
-                                  Total cash/bank settlements
+                                  Total cash/bank settlements & discount adjustments
                                 </td>
                               </tr>
                             </tfoot>
@@ -2285,42 +2410,38 @@ export default function Suppliers({
                               </>
                             ) : (
                               <>
-                                <div className="grid grid-cols-2 gap-2.5">
-                                  <div>
+                                <div className="grid grid-cols-3 gap-2.5">
+                                  <div className="col-span-1">
                                     <label className="block text-[9px] font-black uppercase text-amber-800 mb-1">Exchange Rate (₹100 = ৳)</label>
                                     <input
                                       type="number"
                                       step="0.01"
                                       value={modalExchangeRate}
-                                      onChange={(e) => {
-                                        setModalExchangeRate(e.target.value);
-                                        const rateFloat = parseFloat(e.target.value) || 0;
-                                        if (rateFloat > 0 && modalAmount) {
-                                          const inrVal = (parseFloat(modalAmount) * 100) / rateFloat;
-                                          setModalInrPaidAmount(inrVal.toFixed(2));
-                                        }
-                                      }}
+                                      onChange={(e) => handleModalExchangeRateChange(e.target.value)}
                                       placeholder="140"
                                       className="w-full p-2 bg-white rounded-xl border border-amber-200 text-xs font-bold text-amber-950 focus:outline-[#f59e0b]"
                                     />
                                   </div>
                                   <div>
-                                    <label className="block text-[9px] font-black uppercase text-emerald-800 mb-1">Converted Settlement (₹ INR)</label>
+                                    <label className="block text-[9px] font-black uppercase text-emerald-800 mb-1">Settlement Paid (₹ INR)</label>
                                     <input
                                       type="number"
                                       step="0.01"
                                       value={modalInrPaidAmount}
-                                      onChange={(e) => {
-                                        setModalInrPaidAmount(e.target.value);
-                                        const inrFloat = parseFloat(e.target.value) || 0;
-                                        const rateFloat = parseFloat(modalExchangeRate) || 140;
-                                        if (rateFloat > 0) {
-                                          const bdtVal = (inrFloat * rateFloat) / 100;
-                                          setModalAmount(bdtVal.toFixed(2));
-                                        }
-                                      }}
+                                      onChange={(e) => handleModalInrPaidChange(e.target.value)}
                                       placeholder="₹0.00"
                                       className="w-full p-2 bg-white rounded-xl border border-emerald-300 text-xs font-bold text-emerald-800 focus:outline-emerald-500"
+                                    />
+                                  </div>
+                                  <div>
+                                    <label className="block text-[9px] font-black uppercase text-indigo-800 mb-1">Add Less / Discount (₹ INR)</label>
+                                    <input
+                                      type="number"
+                                      step="0.01"
+                                      value={modalInrLessAmount}
+                                      onChange={(e) => handleModalInrLessChange(e.target.value)}
+                                      placeholder="₹0.00"
+                                      className="w-full p-2 bg-white rounded-xl border border-indigo-200 text-xs font-bold text-indigo-900 focus:outline-indigo-500"
                                     />
                                   </div>
                                 </div>
@@ -2336,7 +2457,7 @@ export default function Suppliers({
                           </div>
                         )}
 
-                        <div className="grid grid-cols-2 gap-4">
+                        <div className={cn("grid gap-4", activeModal === "payDue" ? "grid-cols-1 sm:grid-cols-3" : "grid-cols-2")}>
                           <div>
                             <label className="block text-xs font-semibold text-gray-600 mb-1">Date</label>
                             <input
@@ -2349,19 +2470,106 @@ export default function Suppliers({
                           </div>
 
                           <div>
-                            <label className="block text-xs font-semibold text-gray-600 mb-1">
-                              {activeModal === "addPurchase" ? "Total Invoice Amount" : "Amount"}
-                            </label>
+                            <div className="flex items-center justify-between mb-1">
+                              <label className="block text-xs font-semibold text-gray-600">
+                                {activeModal === "addPurchase" ? "Total Invoice Amount (৳)" : activeModal === "payDue" ? "Paid Amount (৳ BDT)" : "Amount (৳)"}
+                              </label>
+                              {activeModal === "payDue" && finances.remainingDue > 0 && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setModalAmount(finances.remainingDue.toFixed(2));
+                                    setModalLessAmount("");
+                                    if (modalSupplier.country === "India") {
+                                      const rateFloat = parseFloat(modalExchangeRate) || 140;
+                                      setModalInrPaidAmount(((finances.remainingDue * 100) / rateFloat).toFixed(2));
+                                      setModalInrLessAmount("");
+                                    }
+                                  }}
+                                  className="text-[10px] font-bold text-emerald-600 hover:text-emerald-800 underline cursor-pointer"
+                                >
+                                  Full Due
+                                </button>
+                              )}
+                            </div>
                             <input
                               type="number"
                               required
                               step="any"
                               value={modalAmount}
-                              onChange={(e) => setModalAmount(e.target.value)}
-                              className="w-full p-2.5 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 font-bold"
+                              onChange={(e) => {
+                                if (modalSupplier.country === "India" && activeModal === "payDue") {
+                                  handleModalBdtPaidChange(e.target.value);
+                                } else {
+                                  setModalAmount(e.target.value);
+                                }
+                              }}
+                              className="w-full p-2.5 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-1 focus:ring-emerald-500 font-bold text-emerald-700"
                             />
                           </div>
+
+                          {activeModal === "payDue" && (
+                            <div>
+                              <label className="block text-xs font-semibold text-gray-600 mb-1">
+                                Add Less / Discount (৳ ছাড়)
+                              </label>
+                              <input
+                                type="number"
+                                step="any"
+                                value={modalLessAmount}
+                                onChange={(e) => {
+                                  if (modalSupplier.country === "India") {
+                                    handleModalBdtLessChange(e.target.value);
+                                  } else {
+                                    setModalLessAmount(e.target.value);
+                                  }
+                                }}
+                                placeholder="0.00"
+                                className="w-full p-2.5 rounded-xl border border-indigo-200 text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500 font-bold text-indigo-700 bg-indigo-50/20"
+                              />
+                            </div>
+                          )}
                         </div>
+
+                        {/* Live Due Settlement Calculation Preview for Pay Due */}
+                        {activeModal === "payDue" && (
+                          <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-2xl text-xs space-y-2">
+                            <div className="flex justify-between text-slate-600">
+                              <span>Current Supplier Due:</span>
+                              <span className="font-bold font-mono text-red-600">
+                                ৳{finances.remainingDue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                {modalSupplier.country === "India" && ` (₹${finances.remainingDueINR.toFixed(2)} INR)`}
+                              </span>
+                            </div>
+                            <div className="flex justify-between text-slate-600">
+                              <span>Paid Amount (Cash/Bank Outflow):</span>
+                              <span className="font-bold font-mono text-emerald-700">
+                                - ৳{(parseFloat(modalAmount) || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                              </span>
+                            </div>
+                            {(parseFloat(modalLessAmount) || 0) > 0 && (
+                              <div className="flex justify-between text-indigo-700">
+                                <span>Add Less / Discount (ছাড়):</span>
+                                <span className="font-bold font-mono">
+                                  - ৳{(parseFloat(modalLessAmount) || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                </span>
+                              </div>
+                            )}
+                            <hr className="border-slate-200" />
+                            <div className="flex justify-between text-slate-800 font-bold">
+                              <span>Total Due Cleared:</span>
+                              <span className="font-mono text-indigo-700">
+                                ৳{((parseFloat(modalAmount) || 0) + (parseFloat(modalLessAmount) || 0)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                              </span>
+                            </div>
+                            <div className="flex justify-between font-black text-slate-900 text-sm">
+                              <span>Estimated Remaining Due:</span>
+                              <span className={cn("font-mono", (finances.remainingDue - (parseFloat(modalAmount) || 0) - (parseFloat(modalLessAmount) || 0)) <= 0 ? "text-emerald-700" : "text-slate-900")}>
+                                ৳{Math.max(0, finances.remainingDue - (parseFloat(modalAmount) || 0) - (parseFloat(modalLessAmount) || 0)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                              </span>
+                            </div>
+                          </div>
+                        )}
 
                         {activeModal === "addPurchase" && (
                           <div className="grid grid-cols-2 gap-4">

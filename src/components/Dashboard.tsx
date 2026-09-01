@@ -237,11 +237,14 @@ export default function Dashboard({
       });
 
       // 2. Purchases calculation
+      const seenPurchaseRefs = new Set<string>();
+
       purchasesList.forEach(p => {
         const pTotal = p.totalAmount || 0;
         const pPaid = p.paidAmount || 0;
         totalPurchase += pTotal;
         totalSupplierPayment += pPaid;
+        if (p.refNo) seenPurchaseRefs.add(p.refNo);
 
         let isToday = false;
         try {
@@ -254,6 +257,29 @@ export default function Dashboard({
         if (isToday) {
           todayPurchase += pTotal;
           todaySupplierPayment += pPaid;
+        }
+      });
+
+      // Add purchases from supplierTransactions if not already present in purchasesList
+      supplierTransactionsList.forEach(stx => {
+        if (stx.type === "purchase" && stx.refNo && !seenPurchaseRefs.has(stx.refNo)) {
+          const stxTotal = stx.totalAmount || 0;
+          const stxPaid = stx.paidAmount || 0;
+          totalPurchase += stxTotal;
+          totalSupplierPayment += stxPaid;
+
+          let isToday = false;
+          try {
+            const stxDateStr = stx.date ? format(new Date(stx.date), "yyyy-MM-dd") : "";
+            isToday = stxDateStr === todayFormatted || stx.date === todayFormatted;
+          } catch (e) {
+            isToday = stx.date === todayFormatted;
+          }
+
+          if (isToday) {
+            todayPurchase += stxTotal;
+            todaySupplierPayment += stxPaid;
+          }
         }
       });
 
@@ -277,10 +303,40 @@ export default function Dashboard({
         }
       });
 
-      // 4. Supplier Outstanding Due
+      // 4. Supplier Outstanding Due: dynamically calculate from supplier transactions + opening balance to guarantee 100% precision
       if (suppliersList.length > 0) {
         suppliersList.forEach(s => {
-          totalPurchaseDue += Math.max(0, s.purchaseDue || 0);
+          const sTxs = supplierTransactionsList.filter(t => t.supplierId === s.id);
+          if (sTxs.length > 0) {
+            let sPurchases = 0;
+            let sPayments = 0;
+            let sReturns = 0;
+            let sLess = 0;
+            sTxs.forEach(t => {
+              const bdtAmount = t.totalAmount || 0;
+              const bdtPaid = t.paidAmount || 0;
+              let bdtLess = (t as any).lessAmount || 0;
+              if (!bdtLess && t.notes) {
+                const lessMatch = t.notes.match(/Less(?:\/Discount)?:\s*(?:৳|BDT)?\s*([\d.]+)/i);
+                if (lessMatch) bdtLess = parseFloat(lessMatch[1]) || 0;
+              }
+
+              if (t.type === "purchase") {
+                sPurchases += bdtAmount;
+                sPayments += bdtPaid;
+              } else if (t.type === "payment") {
+                sPayments += bdtAmount;
+                sLess += bdtLess;
+              } else if (t.type === "return") {
+                sReturns += bdtAmount;
+              }
+            });
+            const opBal = s.openingBalance || 0;
+            const dynamicDue = opBal + sPurchases - (sPayments + sLess) - sReturns;
+            totalPurchaseDue += Math.max(0, dynamicDue);
+          } else {
+            totalPurchaseDue += Math.max(0, s.openingBalance || s.purchaseDue || 0);
+          }
         });
       } else {
         purchasesList.forEach(p => {

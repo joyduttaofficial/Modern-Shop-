@@ -689,14 +689,27 @@ export default function Suppliers({
   // Handle all transactions submission
   const handleModalSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!modalSupplier || !modalSupplier.id || !modalAmount) return;
+    if (!modalSupplier || !modalSupplier.id) return;
+
+    const amountVal = parseFloat(modalAmount) || 0;
+    const lessVal = parseFloat(modalLessAmount) || 0;
+    const totalDueReduced = amountVal + lessVal;
+
+    if (activeModal === "payDue") {
+      if (totalDueReduced <= 0) {
+        alert("Please enter a payment amount or a less/discount amount.");
+        return;
+      }
+    } else {
+      if (amountVal <= 0) {
+        alert("Please enter a valid amount.");
+        return;
+      }
+    }
+
     setSubmittingModal(true);
 
     try {
-      const amountVal = parseFloat(modalAmount) || 0;
-      const lessVal = parseFloat(modalLessAmount) || 0;
-      const totalDueReduced = amountVal + lessVal;
-
       const refTx: SupplierTransaction = {
         supplierId: modalSupplier.id,
         date: modalDate,
@@ -704,7 +717,7 @@ export default function Suppliers({
         refNo: modalRefNo,
         totalAmount: amountVal,
         ...(lessVal > 0 ? { lessAmount: lessVal } : {}),
-        paymentMethod: modalPaymentMethod,
+        paymentMethod: amountVal > 0 ? modalPaymentMethod : "Discount / Less (ছাড়)",
         notes: modalNotes,
         createdAt: new Date().toISOString()
       };
@@ -715,17 +728,19 @@ export default function Suppliers({
         if (modalSupplier.country === "India" && parseFloat(modalExchangeRate) > 0) {
           const inrPaid = parseFloat(modalInrPaidAmount) || (parseFloat(modalExchangeRate) > 0 ? (amountVal * 100) / parseFloat(modalExchangeRate) : 0);
           const inrLess = parseFloat(modalInrLessAmount) || (parseFloat(modalExchangeRate) > 0 ? (lessVal * 100) / parseFloat(modalExchangeRate) : 0);
-          appendNotes += ` [Rate: ₹100 = ৳${modalExchangeRate} | INR Paid: ₹${inrPaid.toFixed(2)}${lessVal > 0 ? ` | INR Less: ₹${inrLess.toFixed(2)}` : ""}]`;
+          appendNotes += ` [Rate: ₹100 = ৳${modalExchangeRate}${amountVal > 0 ? ` | INR Paid: ₹${inrPaid.toFixed(2)}` : ""}${lessVal > 0 ? ` | INR Less: ₹${inrLess.toFixed(2)}` : ""}]`;
         }
 
-        if (lessVal > 0) {
+        if (amountVal > 0 && lessVal > 0) {
           appendNotes += ` [Paid: ৳${amountVal.toFixed(2)} | Less/Discount: ৳${lessVal.toFixed(2)} | Total Cleared: ৳${totalDueReduced.toFixed(2)}]`;
+        } else if (lessVal > 0 && amountVal === 0) {
+          appendNotes += ` [Single Entry Less/Discount: ৳${lessVal.toFixed(2)} Cleared from Due]`;
         }
 
         refTx.notes = (modalNotes + appendNotes).trim();
 
         // Deduct from bank if not Cash and matches a real bank (only real paidAmount)
-        if (modalPaymentMethod !== "Cash") {
+        if (amountVal > 0 && modalPaymentMethod !== "Cash") {
           const bank = banks.find(b => b.name === modalPaymentMethod);
           if (bank?.id) {
             await updateDoc(doc(db, "banks", bank.id), {
@@ -2473,30 +2488,34 @@ export default function Suppliers({
                             <div className="flex items-center justify-between mb-1">
                               <label className="block text-xs font-semibold text-gray-600">
                                 {activeModal === "addPurchase" ? "Total Invoice Amount (৳)" : activeModal === "payDue" ? "Paid Amount (৳ BDT)" : "Amount (৳)"}
+                                {activeModal === "payDue" && <span className="text-[10px] text-gray-400 font-normal ml-1">(Optional)</span>}
                               </label>
                               {activeModal === "payDue" && finances.remainingDue > 0 && (
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setModalAmount(finances.remainingDue.toFixed(2));
-                                    setModalLessAmount("");
-                                    if (modalSupplier.country === "India") {
-                                      const rateFloat = parseFloat(modalExchangeRate) || 140;
-                                      setModalInrPaidAmount(((finances.remainingDue * 100) / rateFloat).toFixed(2));
-                                      setModalInrLessAmount("");
-                                    }
-                                  }}
-                                  className="text-[10px] font-bold text-emerald-600 hover:text-emerald-800 underline cursor-pointer"
-                                >
-                                  Full Due
-                                </button>
+                                <div className="flex items-center gap-1.5">
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setModalAmount(finances.remainingDue.toFixed(2));
+                                      setModalLessAmount("");
+                                      if (modalSupplier.country === "India") {
+                                        const rateFloat = parseFloat(modalExchangeRate) || 140;
+                                        setModalInrPaidAmount(((finances.remainingDue * 100) / rateFloat).toFixed(2));
+                                        setModalInrLessAmount("");
+                                      }
+                                    }}
+                                    className="text-[10px] font-bold text-emerald-600 hover:text-emerald-800 underline cursor-pointer"
+                                  >
+                                    Pay Full
+                                  </button>
+                                </div>
                               )}
                             </div>
                             <input
                               type="number"
-                              required
+                              required={activeModal !== "payDue"}
                               step="any"
                               value={modalAmount}
+                              placeholder={activeModal === "payDue" ? "0.00 (or leave 0 for Less only)" : "0.00"}
                               onChange={(e) => {
                                 if (modalSupplier.country === "India" && activeModal === "payDue") {
                                   handleModalBdtPaidChange(e.target.value);
@@ -2510,9 +2529,28 @@ export default function Suppliers({
 
                           {activeModal === "payDue" && (
                             <div>
-                              <label className="block text-xs font-semibold text-gray-600 mb-1">
-                                Add Less / Discount (৳ ছাড়)
-                              </label>
+                              <div className="flex items-center justify-between mb-1">
+                                <label className="block text-xs font-semibold text-gray-600">
+                                  Add Less / Discount (৳ ছাড়)
+                                </label>
+                                {finances.remainingDue > 0 && (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setModalLessAmount(finances.remainingDue.toFixed(2));
+                                      setModalAmount("0");
+                                      if (modalSupplier.country === "India") {
+                                        const rateFloat = parseFloat(modalExchangeRate) || 140;
+                                        setModalInrLessAmount(((finances.remainingDue * 100) / rateFloat).toFixed(2));
+                                        setModalInrPaidAmount("0");
+                                      }
+                                    }}
+                                    className="text-[10px] font-bold text-indigo-600 hover:text-indigo-800 underline cursor-pointer"
+                                  >
+                                    Less Full Due
+                                  </button>
+                                )}
+                              </div>
                               <input
                                 type="number"
                                 step="any"
@@ -2524,7 +2562,7 @@ export default function Suppliers({
                                     setModalLessAmount(e.target.value);
                                   }
                                 }}
-                                placeholder="0.00"
+                                placeholder="0.00 (Single entry Less allowed)"
                                 className="w-full p-2.5 rounded-xl border border-indigo-200 text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500 font-bold text-indigo-700 bg-indigo-50/20"
                               />
                             </div>
@@ -2548,8 +2586,8 @@ export default function Suppliers({
                               </span>
                             </div>
                             {(parseFloat(modalLessAmount) || 0) > 0 && (
-                              <div className="flex justify-between text-indigo-700">
-                                <span>Add Less / Discount (ছাড়):</span>
+                              <div className="flex justify-between text-indigo-700 font-medium">
+                                <span>Add Less / Discount (ছাড় Deduction):</span>
                                 <span className="font-bold font-mono">
                                   - ৳{(parseFloat(modalLessAmount) || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                 </span>
@@ -2560,6 +2598,9 @@ export default function Suppliers({
                               <span>Total Due Cleared:</span>
                               <span className="font-mono text-indigo-700">
                                 ৳{((parseFloat(modalAmount) || 0) + (parseFloat(modalLessAmount) || 0)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                {(parseFloat(modalAmount) || 0) === 0 && (parseFloat(modalLessAmount) || 0) > 0 && (
+                                  <span className="text-[10px] font-sans text-indigo-600 font-normal ml-1.5">(Single Entry Discount / Less)</span>
+                                )}
                               </span>
                             </div>
                             <div className="flex justify-between font-black text-slate-900 text-sm">
@@ -2902,7 +2943,11 @@ export default function Suppliers({
                                   <span className="font-bold text-slate-900 block">
                                     {invoiceTransaction.type === "purchase" && "Supplied Inventory Stocks & Materials Import Purchases"}
                                     {invoiceTransaction.type === "return" && "Stock Credits Return Voucher for Defective Inventories"}
-                                    {invoiceTransaction.type === "payment" && "Acknowledge Settlement payout towards Outstanding Supplier Balance"}
+                                    {invoiceTransaction.type === "payment" && (
+                                      (invoiceTransaction.totalAmount === 0 && (invoiceTransaction.lessAmount || 0) > 0)
+                                        ? "Supplier Due Discount / Less (ছাড় Deduction Entry)"
+                                        : "Acknowledge Settlement payout towards Outstanding Supplier Balance"
+                                    )}
                                   </span>
                                   <span className="text-[10px] text-slate-400 mt-1 block leading-relaxed">
                                     Approved and verified ledger posting under the general suppliers framework.
@@ -2918,7 +2963,7 @@ export default function Suppliers({
                                   )}
                                 </td>
                                 <td className="p-4 text-right font-mono font-black text-slate-950 pr-5 text-sm">
-                                  {formatCurrency(invoiceTransaction.totalAmount)}
+                                  {formatCurrency(invoiceTransaction.totalAmount + (invoiceTransaction.lessAmount || 0))}
                                 </td>
                               </tr>
                             </tbody>
@@ -2947,31 +2992,52 @@ export default function Suppliers({
                         {/* Totals panel */}
                         <div className="flex justify-end">
                           <div className="w-full sm:w-80 space-y-2.5 text-xs text-left p-4 rounded-2xl bg-slate-50 border border-slate-200">
-                            <div className="flex justify-between font-medium text-slate-500 border-b border-slate-150 pb-2">
-                              <span>Gross Invoice Subtotal:</span>
-                              <span className="font-mono text-slate-800 font-bold">{formatCurrency(invoiceTransaction.totalAmount)}</span>
-                            </div>
-                            
-                            {invoiceTransaction.paidAmount !== undefined && (
-                              <div className="flex justify-between font-medium text-slate-500 border-b border-slate-150 pb-2">
-                                <span>Paid Amount:</span>
-                                <span className="font-mono text-emerald-600 font-black">{formatCurrency(invoiceTransaction.paidAmount)}</span>
-                              </div>
-                            )}
+                            {invoiceTransaction.type === "payment" ? (
+                              <>
+                                <div className="flex justify-between font-medium text-slate-500 border-b border-slate-150 pb-2">
+                                  <span>Cash/Bank Paid:</span>
+                                  <span className="font-mono text-emerald-600 font-bold">{formatCurrency(invoiceTransaction.totalAmount || 0)}</span>
+                                </div>
+                                {(invoiceTransaction.lessAmount || 0) > 0 && (
+                                  <div className="flex justify-between font-medium text-indigo-700 border-b border-slate-150 pb-2">
+                                    <span>Less / Discount (ছাড়):</span>
+                                    <span className="font-mono font-bold">{formatCurrency(invoiceTransaction.lessAmount || 0)}</span>
+                                  </div>
+                                )}
+                                <div className="flex justify-between text-base font-black text-slate-900 pt-2.5 border-t-2 border-dashed border-slate-300">
+                                  <span>Net Total Cleared (BDT):</span>
+                                  <span className="font-mono text-indigo-650 text-base">{formatCurrency((invoiceTransaction.totalAmount || 0) + (invoiceTransaction.lessAmount || 0))}</span>
+                                </div>
+                              </>
+                            ) : (
+                              <>
+                                <div className="flex justify-between font-medium text-slate-500 border-b border-slate-150 pb-2">
+                                  <span>Gross Invoice Subtotal:</span>
+                                  <span className="font-mono text-slate-800 font-bold">{formatCurrency(invoiceTransaction.totalAmount)}</span>
+                                </div>
+                                
+                                {invoiceTransaction.paidAmount !== undefined && (
+                                  <div className="flex justify-between font-medium text-slate-500 border-b border-slate-150 pb-2">
+                                    <span>Paid Amount:</span>
+                                    <span className="font-mono text-emerald-600 font-black">{formatCurrency(invoiceTransaction.paidAmount)}</span>
+                                  </div>
+                                )}
 
-                            {invoiceTransaction.dueAmount !== undefined && (
-                              <div className="flex justify-between font-medium text-slate-500 border-b border-slate-150 pb-2">
-                                <span>Adjustment Due:</span>
-                                <span className="font-mono text-rose-600 font-black">
-                                  {formatCurrency(invoiceTransaction.dueAmount)}
-                                </span>
-                              </div>
-                            )}
+                                {invoiceTransaction.dueAmount !== undefined && (
+                                  <div className="flex justify-between font-medium text-slate-500 border-b border-slate-150 pb-2">
+                                    <span>Adjustment Due:</span>
+                                    <span className="font-mono text-rose-600 font-black">
+                                      {formatCurrency(invoiceTransaction.dueAmount)}
+                                    </span>
+                                  </div>
+                                )}
 
-                            <div className="flex justify-between text-base font-black text-slate-900 pt-2.5 border-t-2 border-dashed border-slate-300">
-                              <span>Net Total Cleared (BDT):</span>
-                              <span className="font-mono text-indigo-650 text-base">{formatCurrency(invoiceTransaction.totalAmount)}</span>
-                            </div>
+                                <div className="flex justify-between text-base font-black text-slate-900 pt-2.5 border-t-2 border-dashed border-slate-300">
+                                  <span>Net Total (BDT):</span>
+                                  <span className="font-mono text-indigo-650 text-base">{formatCurrency(invoiceTransaction.totalAmount)}</span>
+                                </div>
+                              </>
+                            )}
                           </div>
                         </div>
                       </div>

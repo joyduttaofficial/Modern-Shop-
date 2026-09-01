@@ -179,6 +179,7 @@ export default function Purchase({
   const [supplierTransactions, setSupplierTransactions] = useState<SupplierTransaction[]>([]);
   const [adjustType, setAdjustType] = useState<"due" | "refund">("due");
   const [payDueAmount, setPayDueAmount] = useState("");
+  const [payLessAmount, setPayLessAmount] = useState("");
 
   useEffect(() => {
     // Generate pre-filled transaction ref
@@ -667,33 +668,50 @@ export default function Purchase({
   // Submit Supplier Due Settlement Payment
   const handleSubmitDuePayment = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!supplierId || !payDueAmount || parseFloat(payDueAmount) <= 0) {
-      alert("Please select a supplier and enter a valid payment amount.");
+    if (!supplierId) {
+      alert("Please select a supplier.");
       return;
     }
+    const paidVal = parseFloat(payDueAmount) || 0;
+    const lessVal = parseFloat(payLessAmount) || 0;
+    const totalDueReduced = paidVal + lessVal;
+
+    if (totalDueReduced <= 0) {
+      alert("Please enter a payment amount or a less/discount amount.");
+      return;
+    }
+
     setIsSubmitting(true);
     try {
-      const paidVal = parseFloat(payDueAmount) || 0;
       const selectedSup = suppliers.find(s => s.id === supplierId);
       const supName = selectedSup ? selectedSup.name : "Unknown Supplier";
 
-      // 1. Add expense transaction
-      const newTx: Transaction = {
-        date: new Date(date).toISOString(),
-        type: "expense",
-        category: "Supplier Due Payment",
-        amount: paidVal,
-        paymentMethod,
-        notes: notes.trim() ? `${notes.trim()} (Paid to ${supName})` : `Supplier Due Settlement for ${supName}`,
-        createdBy: user.uid,
-        subCategory: supName,
-        supplierId
-      };
-      await addDoc(collection(db, "transactions"), newTx);
+      let appendNotes = "";
+      if (paidVal > 0 && lessVal > 0) {
+        appendNotes = ` [Paid: ৳${paidVal.toFixed(2)} | Less/Discount: ৳${lessVal.toFixed(2)} | Cleared: ৳${totalDueReduced.toFixed(2)}]`;
+      } else if (lessVal > 0 && paidVal === 0) {
+        appendNotes = ` [Single Entry Less/Discount: ৳${lessVal.toFixed(2)} Cleared from Due]`;
+      }
 
-      // 2. Decrement purchaseDue on supplier
+      // 1. Add expense transaction (only if cash/bank money was actually paid out)
+      if (paidVal > 0) {
+        const newTx: Transaction = {
+          date: new Date(date + "T12:00:00").toISOString(),
+          type: "expense",
+          category: "Supplier Due Payment",
+          amount: paidVal,
+          paymentMethod,
+          notes: notes.trim() ? `${notes.trim()} (Paid to ${supName})${appendNotes}` : `Supplier Due Settlement for ${supName}${appendNotes}`.trim(),
+          createdBy: user.uid,
+          subCategory: supName,
+          supplierId
+        };
+        await addDoc(collection(db, "transactions"), newTx);
+      }
+
+      // 2. Decrement purchaseDue on supplier (deducts paidVal + lessVal)
       await updateDoc(doc(db, "suppliers", supplierId), {
-        purchaseDue: increment(-paidVal)
+        purchaseDue: increment(-totalDueReduced)
       });
 
       // 3. Log in supplierTransactions
@@ -703,14 +721,15 @@ export default function Purchase({
         type: "payment",
         refNo: refNo || `PAY-${Math.floor(100000 + Math.random() * 900000)}`,
         totalAmount: paidVal,
-        paymentMethod,
-        notes: notes.trim() || "Supplier Due Payment",
+        ...(lessVal > 0 ? { lessAmount: lessVal } : {}),
+        paymentMethod: paidVal > 0 ? paymentMethod : "Discount / Less (ছাড়)",
+        notes: (notes.trim() ? `${notes.trim()}${appendNotes}` : (paidVal === 0 ? `Supplier Discount / Less Clearance${appendNotes}` : `Supplier Due Payment${appendNotes}`)).trim(),
         createdAt: new Date().toISOString()
       };
       await addDoc(collection(db, "supplierTransactions"), sTx);
 
-      // 4. Update bank balance if not Cash
-      if (paymentMethod !== "Cash") {
+      // 4. Update bank balance if not Cash and money was paid
+      if (paidVal > 0 && paymentMethod !== "Cash") {
         const bank = banks.find(b => b.name === paymentMethod);
         if (bank?.id) {
           await updateDoc(doc(db, "banks", bank.id), {
@@ -720,9 +739,10 @@ export default function Purchase({
         }
       }
 
-      alert(`Successfully recorded payment of ৳${paidVal.toLocaleString()} to ${supName}.`);
+      alert(`Successfully recorded due settlement of ৳${totalDueReduced.toLocaleString()}${lessVal > 0 ? ` (Includes ৳${lessVal.toLocaleString()} less/discount)` : ""} for ${supName}.`);
       setSupplierId("");
       setPayDueAmount("");
+      setPayLessAmount("");
       setNotes("");
       setRefNo("");
       setViewState("list");
@@ -741,30 +761,36 @@ export default function Purchase({
     setPaymentToDelete(null);
     try {
       if (!tx.id) return;
-      // 1. Revert Supplier balance (add back paid amount to purchaseDue)
+      const totalAmountVal = tx.totalAmount || 0;
+      const lessAmountVal = (tx as any).lessAmount || 0;
+      const totalRevertDue = totalAmountVal + lessAmountVal;
+
+      // 1. Revert Supplier balance (add back both paid and less amount to purchaseDue)
       await updateDoc(doc(db, "suppliers", tx.supplierId), {
-        purchaseDue: increment(tx.totalAmount)
+        purchaseDue: increment(totalRevertDue)
       });
 
-      // 2. Revert Bank balance if not Cash
-      if (tx.paymentMethod && tx.paymentMethod !== "Cash") {
+      // 2. Revert Bank balance if money was paid out and not Cash
+      if (totalAmountVal > 0 && tx.paymentMethod && tx.paymentMethod !== "Cash") {
         const bank = banks.find(b => b.name === tx.paymentMethod);
         if (bank?.id) {
           await updateDoc(doc(db, "banks", bank.id), {
-            balance: increment(tx.totalAmount),
+            balance: increment(totalAmountVal),
             lastUpdated: new Date().toISOString()
           });
         }
       }
 
       // 3. Delete matching transaction in transactions collection if present
-      const txSnap = await getDocs(collection(db, "transactions"));
-      const matchingTxDoc = txSnap.docs.find(d => {
-        const data = d.data();
-        return (data.supplierId === tx.supplierId || data.notes?.includes(tx.refNo)) && data.category === "Supplier Due Payment" && Math.abs(data.amount - tx.totalAmount) < 0.01;
-      });
-      if (matchingTxDoc) {
-        await deleteDoc(doc(db, "transactions", matchingTxDoc.id));
+      if (totalAmountVal > 0) {
+        const txSnap = await getDocs(collection(db, "transactions"));
+        const matchingTxDoc = txSnap.docs.find(d => {
+          const data = d.data();
+          return (data.supplierId === tx.supplierId || data.notes?.includes(tx.refNo)) && data.category === "Supplier Due Payment" && Math.abs(data.amount - totalAmountVal) < 0.01;
+        });
+        if (matchingTxDoc) {
+          await deleteDoc(doc(db, "transactions", matchingTxDoc.id));
+        }
       }
 
       // 4. Delete supplierTransaction
@@ -1629,30 +1655,62 @@ export default function Purchase({
 
                   {/* Right Fields */}
                   <div className="space-y-4">
-                    <div>
-                      <div className="flex items-center justify-between mb-1">
-                        <label className="block text-sm font-semibold text-gray-700">
-                          Payment Amount (৳) <span className="text-red-500">*</span>
-                        </label>
-                        {selectedSupplierObj && (selectedSupplierObj.purchaseDue || 0) > 0 && (
-                          <button
-                            type="button"
-                            onClick={() => setPayDueAmount((selectedSupplierObj.purchaseDue || 0).toFixed(2))}
-                            className="text-xs font-bold text-emerald-600 hover:text-emerald-800 underline cursor-pointer"
-                          >
-                            Pay Full Due (৳{(selectedSupplierObj.purchaseDue || 0).toLocaleString()})
-                          </button>
-                        )}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <div className="flex items-center justify-between mb-1">
+                          <label className="block text-xs font-semibold text-gray-700">
+                            Paid Amount (৳) <span className="text-gray-400 font-normal text-[10px]">(Optional)</span>
+                          </label>
+                          {selectedSupplierObj && (selectedSupplierObj.purchaseDue || 0) > 0 && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setPayDueAmount((selectedSupplierObj.purchaseDue || 0).toFixed(2));
+                                setPayLessAmount("");
+                              }}
+                              className="text-[10px] font-bold text-emerald-600 hover:text-emerald-800 underline cursor-pointer"
+                            >
+                              Pay Full
+                            </button>
+                          )}
+                        </div>
+                        <input
+                          type="number"
+                          step="0.01"
+                          value={payDueAmount}
+                          onChange={(e) => setPayDueAmount(e.target.value)}
+                          placeholder="0.00 (or leave 0 for Less only)"
+                          className="w-full p-2.5 rounded-2xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-emerald-500 font-bold text-sm text-emerald-700 font-mono"
+                        />
                       </div>
-                      <input
-                        type="number"
-                        step="0.01"
-                        required
-                        value={payDueAmount}
-                        onChange={(e) => setPayDueAmount(e.target.value)}
-                        placeholder="0.00"
-                        className="w-full p-3 rounded-2xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-emerald-500 font-bold text-base text-emerald-700 font-mono"
-                      />
+
+                      <div>
+                        <div className="flex items-center justify-between mb-1">
+                          <label className="block text-xs font-semibold text-gray-700">
+                            Add Less / Discount (৳ ছাড়)
+                          </label>
+                          {selectedSupplierObj && (selectedSupplierObj.purchaseDue || 0) > 0 && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setPayLessAmount((selectedSupplierObj.purchaseDue || 0).toFixed(2));
+                                setPayDueAmount("0");
+                              }}
+                              className="text-[10px] font-bold text-indigo-600 hover:text-indigo-800 underline cursor-pointer"
+                            >
+                              Less Full Due
+                            </button>
+                          )}
+                        </div>
+                        <input
+                          type="number"
+                          step="0.01"
+                          value={payLessAmount}
+                          onChange={(e) => setPayLessAmount(e.target.value)}
+                          placeholder="0.00 (Single entry Less allowed)"
+                          className="w-full p-2.5 rounded-2xl border border-indigo-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 font-bold text-sm text-indigo-700 font-mono bg-indigo-50/20"
+                        />
+                      </div>
                     </div>
 
                     {selectedSupplierObj && (
@@ -1662,14 +1720,29 @@ export default function Purchase({
                           <span className="font-bold font-mono text-red-600">৳{(selectedSupplierObj.purchaseDue || 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}</span>
                         </div>
                         <div className="flex justify-between text-slate-600">
-                          <span>Payment Amount:</span>
+                          <span>Paid Outflow Amount:</span>
                           <span className="font-bold font-mono text-emerald-700">- ৳{(parseFloat(payDueAmount) || 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}</span>
                         </div>
+                        {(parseFloat(payLessAmount) || 0) > 0 && (
+                          <div className="flex justify-between text-indigo-700 font-medium">
+                            <span>Add Less / Discount (ছাড়):</span>
+                            <span className="font-bold font-mono">- ৳{(parseFloat(payLessAmount) || 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}</span>
+                          </div>
+                        )}
                         <hr className="border-emerald-200/60" />
+                        <div className="flex justify-between text-slate-800 font-bold">
+                          <span>Total Due Cleared:</span>
+                          <span className="font-mono text-indigo-700 font-black">
+                            ৳{((parseFloat(payDueAmount) || 0) + (parseFloat(payLessAmount) || 0)).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                            {(parseFloat(payDueAmount) || 0) === 0 && (parseFloat(payLessAmount) || 0) > 0 && (
+                              <span className="text-[10px] font-sans text-indigo-600 font-normal ml-1.5">(Single Entry Less)</span>
+                            )}
+                          </span>
+                        </div>
                         <div className="flex justify-between font-bold text-slate-900 text-sm">
                           <span>Estimated Remaining Due:</span>
                           <span className="font-mono text-slate-900">
-                            ৳{Math.max(0, (selectedSupplierObj.purchaseDue || 0) - (parseFloat(payDueAmount) || 0)).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                            ৳{Math.max(0, (selectedSupplierObj.purchaseDue || 0) - (parseFloat(payDueAmount) || 0) - (parseFloat(payLessAmount) || 0)).toLocaleString('en-US', { minimumFractionDigits: 2 })}
                           </span>
                         </div>
                       </div>
@@ -1681,7 +1754,7 @@ export default function Purchase({
                         rows={3}
                         value={notes}
                         onChange={(e) => setNotes(e.target.value)}
-                        placeholder="Add details about cheque no, online transfer ref, or receipt notes..."
+                        placeholder="Add details about cheque no, online transfer ref, discount clearance, or receipt notes..."
                         className="w-full p-3 rounded-2xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-emerald-500 text-sm text-gray-900 font-medium"
                       />
                     </div>
@@ -2125,7 +2198,9 @@ export default function Purchase({
                         <th className="p-3.5">Payment Ref No</th>
                         <th className="p-3.5">Supplier Name</th>
                         <th className="p-3.5">Payment Method</th>
-                        <th className="p-3.5 text-right font-bold">Paid Amount</th>
+                        <th className="p-3.5 text-right font-bold">Paid Outflow</th>
+                        <th className="p-3.5 text-right font-bold">Less (ছাড়)</th>
+                        <th className="p-3.5 text-right font-bold">Total Cleared</th>
                         <th className="p-3.5 flex-1">Notes</th>
                         <th className="p-3.5 text-center">Actions</th>
                       </tr>
@@ -2133,11 +2208,11 @@ export default function Purchase({
                     <tbody className="divide-y divide-gray-100 text-sm text-gray-700">
                       {loading ? (
                         <tr>
-                          <td colSpan={7} className="p-10 text-center text-gray-400">Loading due payments...</td>
+                          <td colSpan={9} className="p-10 text-center text-gray-400">Loading due payments...</td>
                         </tr>
                       ) : supplierTransactions.filter(t => t.type === "payment").length === 0 ? (
                         <tr>
-                          <td colSpan={7} className="p-6 text-center text-gray-400">No due settlement payments recorded yet.</td>
+                          <td colSpan={9} className="p-6 text-center text-gray-400">No due settlement payments recorded yet.</td>
                         </tr>
                       ) : (
                         supplierTransactions
@@ -2150,18 +2225,30 @@ export default function Purchase({
                           .slice(0, entriesLimit)
                           .map((p) => {
                             const sName = suppliers.find(s => s.id === p.supplierId)?.name || "Unknown Supplier";
+                            const paidAmt = p.totalAmount || 0;
+                            const lessAmt = (p as any).lessAmount || 0;
+                            const clearedAmt = paidAmt + lessAmt;
                             return (
                               <tr key={p.id} className="hover:bg-slate-50 transition-colors">
                                 <td className="p-3.5 font-medium whitespace-nowrap">{p.date}</td>
                                 <td className="p-3.5 font-bold font-mono text-gray-500">{p.refNo}</td>
                                 <td className="p-3.5 font-semibold text-gray-900">{sName}</td>
                                 <td className="p-3.5">
-                                  <span className="px-2.5 py-1 rounded text-xs font-bold bg-emerald-50 text-emerald-800 border border-emerald-200">
+                                  <span className={cn(
+                                    "px-2.5 py-1 rounded text-xs font-bold border",
+                                    paidAmt > 0 ? "bg-emerald-50 text-emerald-800 border-emerald-200" : "bg-indigo-50 text-indigo-800 border-indigo-200"
+                                  )}>
                                     {p.paymentMethod || "Cash"}
                                   </span>
                                 </td>
                                 <td className="p-3.5 text-right font-bold text-emerald-700 font-mono">
-                                  ৳{(p.totalAmount || 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                                  {paidAmt > 0 ? `৳${paidAmt.toLocaleString('en-US', { minimumFractionDigits: 2 })}` : <span className="text-gray-300 font-normal">৳0.00</span>}
+                                </td>
+                                <td className="p-3.5 text-right font-bold text-indigo-700 font-mono">
+                                  {lessAmt > 0 ? `৳${lessAmt.toLocaleString('en-US', { minimumFractionDigits: 2 })}` : <span className="text-gray-300 font-normal">-</span>}
+                                </td>
+                                <td className="p-3.5 text-right font-black text-slate-900 font-mono">
+                                  ৳{clearedAmt.toLocaleString('en-US', { minimumFractionDigits: 2 })}
                                 </td>
                                 <td className="p-3.5 italic text-gray-500 max-w-xs truncate" title={p.notes}>
                                   {p.notes || "-"}

@@ -3,7 +3,7 @@ import { User } from "firebase/auth";
 import { collection, onSnapshot, addDoc, deleteDoc, doc, query, orderBy, increment, where, getDocs } from "firebase/firestore";
 import { db, OperationType, handleFirestoreError, updateDoc } from "@/src/lib/firebase";
 import { Supplier, Bank, UserRole, Transaction, SupplierTransaction, PurchaseItem, Product, StockLedgerEntry } from "@/src/types";
-import { cn, formatCurrency, computeDynamicPurchases } from "@/src/lib/utils";
+import { cn, formatCurrency, computeDynamicPurchases, sortSuppliersByCode } from "@/src/lib/utils";
 import { 
   Plus, Search, Eye, Trash2, Calendar, FileText, Image, ClipboardList, Wallet, Landmark, X, ChevronDown, Check, Download, Printer, RotateCcw
 } from "lucide-react";
@@ -205,7 +205,8 @@ export default function Purchase({
 
     // 2. Snapshot for suppliers
     const unsubSuppliers = onSnapshot(collection(db, "suppliers"), (snap) => {
-      setSuppliers(snap.docs.map(d => ({ id: d.id, ...d.data() } as Supplier)));
+      const list = snap.docs.map(d => ({ id: d.id, ...d.data() } as Supplier));
+      setSuppliers(sortSuppliersByCode(list));
     }, (error) => handleFirestoreError(error, OperationType.LIST, "suppliers"));
 
     // 3. Snapshot for banks
@@ -951,9 +952,9 @@ export default function Purchase({
                         className="w-full p-3 rounded-2xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm font-medium text-gray-900"
                       >
                         <option value="">Select Supplier...</option>
-                        {suppliers.map(s => (
+                        {sortSuppliersByCode(suppliers).map(s => (
                           <option key={s.id} value={s.id}>
-                            {s.name} ({s.code}) - Due: ৳{s.purchaseDue.toFixed(2)}
+                            {s.name} ({s.code}) - Due: ৳{(s.purchaseDue || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                           </option>
                         ))}
                       </select>
@@ -1398,9 +1399,9 @@ export default function Purchase({
                         className="w-full p-3 rounded-2xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm font-medium text-gray-900"
                       >
                         <option value="">Select Supplier...</option>
-                        {suppliers.map(s => (
+                        {sortSuppliersByCode(suppliers).map(s => (
                           <option key={s.id} value={s.id}>
-                            {s.name} ({s.code}) - Due: ৳{s.purchaseDue.toFixed(2)}
+                            {s.name} ({s.code}) - Due: ৳{(s.purchaseDue || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                           </option>
                         ))}
                       </select>
@@ -1606,9 +1607,9 @@ export default function Purchase({
                         className="w-full p-3 rounded-2xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-emerald-500 text-sm font-medium text-gray-900"
                       >
                         <option value="">Select Supplier to Settle Due...</option>
-                        {suppliers.map(s => (
+                        {sortSuppliersByCode(suppliers).map(s => (
                           <option key={s.id} value={s.id}>
-                            {s.name} ({s.code}) - Due: ৳{(s.purchaseDue || 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                            {s.name} ({s.code}) - Due: ৳{(s.purchaseDue || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                           </option>
                         ))}
                       </select>

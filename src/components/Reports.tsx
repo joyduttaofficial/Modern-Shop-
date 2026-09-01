@@ -3,7 +3,7 @@ import { User } from "firebase/auth";
 import { collection, query, where, getDocs, orderBy, doc, onSnapshot } from "firebase/firestore";
 import { db, OperationType, handleFirestoreError } from "@/src/lib/firebase";
 import { Transaction, UserRole, Bank, Employee, Supplier, SupplierTransaction, Product, StockLedgerEntry } from "@/src/types";
-import { cn, computeDynamicPurchases } from "@/src/lib/utils";
+import { cn, computeDynamicPurchases, sortSuppliersByCode } from "@/src/lib/utils";
 import { format, startOfDay, endOfDay, subDays, isWithinInterval, isBefore, startOfMonth, endOfMonth, eachMonthOfInterval, startOfYear, parseISO } from "date-fns";
 import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
@@ -271,7 +271,8 @@ export default function Reports({ user, role }: { user: User; role: UserRole }) 
     }, (err) => { console.error(err); markLoaded(); });
 
     const unsubSup = onSnapshot(collection(db, "suppliers"), (snap) => {
-      setSuppliers(snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Supplier)));
+      const list = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Supplier));
+      setSuppliers(sortSuppliersByCode(list));
       markLoaded();
     }, (err) => { console.error(err); markLoaded(); });
 

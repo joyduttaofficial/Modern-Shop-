@@ -3,7 +3,7 @@ import { User } from "firebase/auth";
 import { collection, onSnapshot, addDoc, deleteDoc, doc, query, orderBy, where, getDocs, increment } from "firebase/firestore";
 import { db, OperationType, handleFirestoreError, updateDoc } from "@/src/lib/firebase";
 import { Supplier, SupplierTransaction, UserRole, Bank, Transaction } from "@/src/types";
-import { cn, formatCurrency } from "@/src/lib/utils";
+import { cn, formatCurrency, sortSuppliersByCode } from "@/src/lib/utils";
 import { 
   Users, Plus, Trash2, CreditCard, History, Wallet, UserCircle, Landmark, X, Eye, Pencil, 
   Search, ArrowDownRight, ArrowUpRight, Check, CheckSquare, ClipboardList, Shield, ChevronDown,
@@ -392,9 +392,9 @@ export default function Suppliers({
   // Load Initial Data
   useEffect(() => {
     // 1. Snapshot for suppliers
-    const qSuppliers = query(collection(db, "suppliers"), orderBy("createdAt", "desc"));
-    const unsubSuppliers = onSnapshot(qSuppliers, (snap) => {
-      setSuppliers(snap.docs.map(d => ({ id: d.id, ...d.data() } as Supplier)));
+    const unsubSuppliers = onSnapshot(collection(db, "suppliers"), (snap) => {
+      const list = snap.docs.map(d => ({ id: d.id, ...d.data() } as Supplier));
+      setSuppliers(sortSuppliersByCode(list));
       setLoading(false);
     }, (error) => handleFirestoreError(error, OperationType.LIST, "suppliers"));
 
@@ -451,12 +451,13 @@ export default function Suppliers({
     }
   }, [editingSupplier]);
 
-  // Generate Unique Supplier Code (IND01 for India, BD01 for Bangladesh)
+  // Generate Unique Supplier Code (IND001 / IND01 for India, BD001 / BD01 for Bangladesh)
   const getNextSupplierCode = (targetCountry = country) => {
     const isIndia = targetCountry === "India";
     const prefix = isIndia ? "IND" : targetCountry === "Bangladesh" ? "BD" : "SUP";
 
     // Find all matching suppliers for this prefix/country
+    let maxDigits = 2;
     const matchingCodes = suppliers
       .filter((s) => {
         if (!s.code) return false;
@@ -469,7 +470,10 @@ export default function Suppliers({
         return codeUpper.startsWith(prefix);
       })
       .map((s) => {
-        const cleaned = s.code.toUpperCase().replace(/^(IND|BD|SUP)/i, "");
+        const cleaned = s.code.toUpperCase().replace(/^(IND|BD|SUP)/i, "").trim();
+        if (cleaned.length > maxDigits) {
+          maxDigits = cleaned.length;
+        }
         const num = parseInt(cleaned, 10);
         return isNaN(num) ? 0 : num;
       })
@@ -477,7 +481,8 @@ export default function Suppliers({
 
     const maxNum = matchingCodes.length > 0 ? Math.max(...matchingCodes) : 0;
     const nextNum = maxNum + 1;
-    return `${prefix}${String(nextNum).padStart(2, "0")}`;
+    const padLength = Math.max(maxDigits, nextNum >= 100 ? 3 : 2);
+    return `${prefix}${String(nextNum).padStart(padLength, "0")}`;
   };
 
   // Submit Supplier Add/Update Form
@@ -887,7 +892,7 @@ export default function Suppliers({
   };
 
   // Filter and search
-  const filteredSuppliers = suppliers.filter((s) => {
+  const filteredSuppliers = sortSuppliersByCode(suppliers).filter((s) => {
     const text = (s.name + s.code + (s.mobile || "") + s.country).toLowerCase();
     return text.includes(searchTerm.toLowerCase());
   });

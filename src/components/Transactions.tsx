@@ -3,7 +3,7 @@ import { User } from "firebase/auth";
 import { collection, addDoc, query, orderBy, onSnapshot, limit, deleteDoc, doc, increment, where, getDocs } from "firebase/firestore";
 import { db, OperationType, handleFirestoreError, updateDoc } from "@/src/lib/firebase";
 import { Transaction, TransactionType, Category, Bank, UserRole, Employee, Supplier } from "@/src/types";
-import { cn, formatCurrency } from "@/src/lib/utils";
+import { cn, formatCurrency, sortSuppliersByCode } from "@/src/lib/utils";
 import {
   saveTransactionsToIndexedDB,
   getTransactionsFromIndexedDB,
@@ -141,7 +141,8 @@ export default function Transactions({
     }, (error) => handleFirestoreError(error, OperationType.LIST, "employees"));
 
     const unsubSuppliers = onSnapshot(collection(db, "suppliers"), (snapshot) => {
-      setSuppliers(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Supplier)));
+      const list = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Supplier));
+      setSuppliers(sortSuppliersByCode(list));
     }, (error) => handleFirestoreError(error, OperationType.LIST, "suppliers"));
 
     return () => {

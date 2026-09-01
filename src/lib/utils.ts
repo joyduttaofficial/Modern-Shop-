@@ -185,3 +185,41 @@ export function compressImage(
     reader.readAsDataURL(file);
   });
 }
+
+/**
+ * Sorts suppliers naturally and number-wise from 1st to last (e.g. BD001, BD002, BD003 ... IND001, IND002 ...)
+ */
+export function sortSuppliersByCode(suppliersList: Supplier[]): Supplier[] {
+  if (!suppliersList || suppliersList.length === 0) return [];
+  return [...suppliersList].sort((a, b) => {
+    const codeA = (a.code || "").trim();
+    const codeB = (b.code || "").trim();
+
+    // Extract alphabet prefix and number, e.g. BD001 -> prefix: "BD", num: 1
+    const matchA = codeA.match(/^([a-zA-Z]+)\s*(\d+)$/);
+    const matchB = codeB.match(/^([a-zA-Z]+)\s*(\d+)$/);
+
+    if (matchA && matchB) {
+      const prefixCmp = matchA[1].toUpperCase().localeCompare(matchB[1].toUpperCase());
+      if (prefixCmp !== 0) {
+        return prefixCmp;
+      }
+      const numA = parseInt(matchA[2], 10);
+      const numB = parseInt(matchB[2], 10);
+      if (numA !== numB) {
+        return numA - numB;
+      }
+    }
+
+    if (codeA && codeB) {
+      const cmp = codeA.localeCompare(codeB, undefined, { numeric: true, sensitivity: "base" });
+      if (cmp !== 0) return cmp;
+    } else if (codeA) {
+      return -1;
+    } else if (codeB) {
+      return 1;
+    }
+
+    return (a.name || "").localeCompare(b.name || "");
+  });
+}

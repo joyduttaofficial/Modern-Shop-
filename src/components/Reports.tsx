@@ -37,8 +37,9 @@ import {
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, LineChart, Line } from "recharts";
+import SectionSalesComparisonReport from "./SectionSalesComparisonReport";
 
-type ReportTab = "daily" | "bank" | "salary" | "supplier" | "purchase" | "attendance" | "transactions" | "inventory" | "unified" | "sales";
+type ReportTab = "daily" | "bank" | "salary" | "supplier" | "purchase" | "attendance" | "transactions" | "inventory" | "unified" | "sales" | "sectionSales";
 
 export function addPdfGlobalLedgerSummary(
   doc: jsPDF,
@@ -110,7 +111,7 @@ export default function Reports({ user, role }: { user: User; role: UserRole }) 
     if (typeof window !== "undefined") {
       try {
         const saved = localStorage.getItem("reports_activeTab") as ReportTab;
-        const validTabs: ReportTab[] = ["daily", "bank", "salary", "supplier", "purchase", "attendance", "transactions", "inventory", "unified", "sales"];
+        const validTabs: ReportTab[] = ["daily", "bank", "salary", "supplier", "purchase", "attendance", "transactions", "inventory", "unified", "sales", "sectionSales"];
         if (saved && validTabs.includes(saved)) {
           return saved;
         }
@@ -782,7 +783,7 @@ export default function Reports({ user, role }: { user: User; role: UserRole }) 
         
         <div className="flex flex-col sm:flex-row sm:items-center gap-3 self-start lg:self-center shrink-0">
           <div className="flex bg-slate-100 p-1 rounded-2xl border border-slate-200 shadow-xs max-w-full overflow-x-auto">
-            {(["daily", "bank", "salary", "supplier", "purchase", "attendance", "transactions", "inventory", "unified", "sales"] as ReportTab[]).map(tab => (
+            {(["daily", "bank", "salary", "supplier", "purchase", "attendance", "transactions", "inventory", "unified", "sales", "sectionSales"] as ReportTab[]).map(tab => (
               <button 
                 key={tab}
                 onClick={() => setActiveTab(tab)}
@@ -793,7 +794,11 @@ export default function Reports({ user, role }: { user: User; role: UserRole }) 
                     : "text-slate-500 hover:text-slate-900 hover:bg-slate-200/50"
                 )}
               >
-                {tab === "sales" ? (language === "bn" ? "বিক্রয় রিপোর্ট" : "Sales Report") : t(tab)}
+                {tab === "sales" 
+                  ? (language === "bn" ? "বিক্রয় রিপোর্ট" : "Sales Report") 
+                  : tab === "sectionSales"
+                    ? (language === "bn" ? "মেনস বনাম লেডিস সেকশন" : "Mens vs Ladies Sales")
+                    : t(tab)}
               </button>
             ))}
           </div>
@@ -1083,6 +1088,22 @@ export default function Reports({ user, role }: { user: User; role: UserRole }) 
           formatCurrency={formatCurrency}
           globalLedgerTotals={globalLedgerTotals}
           onRegisterExporter={(exportFn) => registerExporter("sales", exportFn)}
+          onSwitchToSectionSales={() => setActiveTab("sectionSales")}
+        />
+      )}
+
+      {activeTab === "sectionSales" && (
+        <SectionSalesComparisonReport
+          transactions={transactions}
+          employees={employees}
+          companyName={companyName}
+          companyTagline={companyTagline}
+          companyAddress={companyAddress}
+          companyPhone={companyPhone}
+          companyEmail={companyEmail}
+          formatCurrency={formatCurrency}
+          globalLedgerTotals={globalLedgerTotals}
+          onRegisterExporter={(exportFn) => registerExporter("sectionSales", exportFn)}
         />
       )}
     </div>
@@ -4852,6 +4873,7 @@ function SalesReportSection({
   formatCurrency,
   globalLedgerTotals,
   onRegisterExporter,
+  onSwitchToSectionSales,
 }: {
   transactions: Transaction[];
   employees: Employee[];
@@ -4863,6 +4885,7 @@ function SalesReportSection({
   formatCurrency: (val: number) => string;
   globalLedgerTotals: any;
   onRegisterExporter?: (exportFn: () => void) => void;
+  onSwitchToSectionSales?: () => void;
 }) {
   const { language, t } = useLanguage();
 
@@ -5409,6 +5432,17 @@ function SalesReportSection({
           </button>
 
           <div className="h-6 w-px bg-slate-200 mx-1" />
+
+          {onSwitchToSectionSales && (
+            <button
+              onClick={onSwitchToSectionSales}
+              className="px-3.5 py-2 bg-gradient-to-r from-indigo-600 to-rose-600 hover:from-indigo-700 hover:to-rose-700 text-white rounded-xl text-xs font-black transition-all flex items-center gap-1.5 active:scale-97 cursor-pointer shadow-xs"
+              title={language === "bn" ? "মেনস বনাম লেডিস সেকশন বিক্রয় ও প্রবৃদ্ধি তুলনা" : "Compare Mens vs Ladies Section Sales"}
+            >
+              <span>👔👗</span>
+              <span>{language === "bn" ? "মেনস বনাম লেডিস সেকশন" : "Mens vs Ladies"}</span>
+            </button>
+          )}
 
           <button
             onClick={exportSalesReportPDF}

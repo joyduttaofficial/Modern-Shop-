@@ -47,7 +47,7 @@ const dictionary: Record<string, string> = {
   "transactions": "লেনদেন খতিয়ান",
   "inventory": "ইনভেন্টরি",
   "unified": "একত্রিত খতিয়ান",
-  "sectionSales": "মেনস বনাম লেডিস সেকশন",
+  "sectionSales": "সেকশন হিটম্যাপ ও তুলনা",
   "Sales Mens Section": "সেলস মেনস সেকশন",
   "Sales Ladies Section": "সেলস লেডিস সেকশন",
   "Settings": "সিস্টেম সেটিংস",

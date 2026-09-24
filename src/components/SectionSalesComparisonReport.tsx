@@ -41,6 +41,7 @@ import {
 import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
 import { cn } from "@/src/lib/utils";
+import SectionHeatmapDashboard from "./SectionHeatmapDashboard";
 
 export type SectionType = "mens" | "ladies" | "other";
 
@@ -201,6 +202,7 @@ export default function SectionSalesComparisonReport({
   };
 
   // Filter States
+  const [activeSubView, setActiveSubView] = useState<"heatmap" | "comparative" | "all">("heatmap");
   const [selectedYear, setSelectedYear] = useState<string>("All");
   const [startDate, setStartDate] = useState<string>("");
   const [endDate, setEndDate] = useState<string>("");
@@ -801,6 +803,61 @@ export default function SectionSalesComparisonReport({
         </div>
       </div>
 
+      {/* SUB-VIEW SELECTOR: HEATMAP & BUSINESS FOCUS vs DETAILED COMPARATIVE AUDIT vs FULL VIEW */}
+      <div className="flex flex-wrap items-center gap-2 bg-slate-100 p-1.5 rounded-2xl border border-slate-200 self-start">
+        <button
+          type="button"
+          onClick={() => setActiveSubView("heatmap")}
+          className={cn(
+            "px-4 py-2 rounded-xl text-xs font-black transition-all cursor-pointer flex items-center gap-2",
+            activeSubView === "heatmap" 
+              ? "bg-slate-900 text-white shadow-md active:scale-98" 
+              : "text-slate-600 hover:text-slate-900 hover:bg-slate-200/60"
+          )}
+        >
+          <span>🔥</span>
+          <span>{isBn ? "পারফর্মেন্স হিটম্যাপ ও বিজনেস ফোকাস" : "Performance Heatmap & Business Focus"}</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveSubView("comparative")}
+          className={cn(
+            "px-4 py-2 rounded-xl text-xs font-black transition-all cursor-pointer flex items-center gap-2",
+            activeSubView === "comparative" 
+              ? "bg-slate-900 text-white shadow-md active:scale-98" 
+              : "text-slate-600 hover:text-slate-900 hover:bg-slate-200/60"
+          )}
+        >
+          <span>📊</span>
+          <span>{isBn ? "মেনস বনাম লেডিস প্রবৃদ্ধি ও খতিয়ান" : "Mens vs Ladies Velocity & Ledger"}</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveSubView("all")}
+          className={cn(
+            "px-4 py-2 rounded-xl text-xs font-black transition-all cursor-pointer flex items-center gap-2",
+            activeSubView === "all" 
+              ? "bg-slate-900 text-white shadow-md active:scale-98" 
+              : "text-slate-600 hover:text-slate-900 hover:bg-slate-200/60"
+          )}
+        >
+          <span>📑</span>
+          <span>{isBn ? "একত্রিত সম্পূর্ণ ড্যাশবোর্ড" : "Unified Full Dashboard"}</span>
+        </button>
+      </div>
+
+      {/* 1. HEATMAP & BUSINESS FOCUS DASHBOARD COMPONENT */}
+      {(activeSubView === "heatmap" || activeSubView === "all") && (
+        <SectionHeatmapDashboard
+          transactions={transactions}
+          employees={employees}
+          formatCurrency={formatCurrency}
+          customStaffMap={customStaffMap}
+        />
+      )}
+
       {/* OPTIONAL STAFF SECTION MAPPING DRAWER */}
       {showStaffConfig && (
         <div className="bg-slate-50 border border-slate-200 p-6 rounded-3xl space-y-4 animate-in fade-in duration-200">
@@ -865,8 +922,11 @@ export default function SectionSalesComparisonReport({
         </div>
       )}
 
-      {/* FILTER & PERIOD SELECTOR BENTO */}
-      <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-200/80 space-y-4">
+      {/* 2. DETAILED COMPARATIVE METRICS & CHARTS */}
+      {(activeSubView === "comparative" || activeSubView === "all") && (
+        <>
+          {/* FILTER & PERIOD SELECTOR BENTO */}
+          <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-200/80 space-y-4">
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-3 border-b border-slate-100">
           <div className="flex items-center gap-2">
             <Filter className="w-4 h-4 text-slate-400" />
@@ -1673,6 +1733,8 @@ export default function SectionSalesComparisonReport({
           </table>
         </div>
       </div>
+        </>
+      )}
     </div>
   );
 }

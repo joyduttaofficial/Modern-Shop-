@@ -797,7 +797,7 @@ export default function Reports({ user, role }: { user: User; role: UserRole }) 
                 {tab === "sales" 
                   ? (language === "bn" ? "বিক্রয় রিপোর্ট" : "Sales Report") 
                   : tab === "sectionSales"
-                    ? (language === "bn" ? "মেনস বনাম লেডিস সেকশন" : "Mens vs Ladies Sales")
+                    ? (language === "bn" ? "সেকশন হিটম্যাপ ও তুলনা" : "Section Heatmap & Sales")
                     : t(tab)}
               </button>
             ))}

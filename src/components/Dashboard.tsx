@@ -548,6 +548,15 @@ export default function Dashboard({
     return (p.stock || 0) <= threshold;
   });
 
+  const normalizedRole = (role || "").toLowerCase().trim();
+  const isSuperAdmin = 
+    normalizedRole === "admin" ||
+    normalizedRole === "super_admin" ||
+    normalizedRole === "superadmin" ||
+    normalizedRole === "super admin" ||
+    normalizedRole.includes("super") ||
+    normalizedRole.includes("administrator");
+
   return (
     <div className="space-y-8 animate-in fade-in duration-200">
       <header className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 border-b border-slate-100 pb-5">
@@ -658,74 +667,76 @@ export default function Dashboard({
         </div>
       )}
 
-      {/* Quick Actions Panel */}
-      <div className="print:hidden bg-slate-50 border border-slate-200/60 rounded-2xl p-5 space-y-4">
-        <div className="flex items-center gap-2">
-          <span className="w-1.5 h-6 bg-slate-900 rounded-full" />
-          <h3 className="text-base font-black text-slate-800 uppercase tracking-tight">{t("Quick Actions")}</h3>
-        </div>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <button
-            onClick={() => onNavigate?.("newSale")}
-            className="flex items-center justify-between p-4 bg-white hover:bg-slate-50 border border-slate-150 rounded-xl transition-all hover:scale-[1.01] active:scale-[0.99] cursor-pointer group shadow-xs"
-          >
-            <div className="flex items-center gap-3.5">
-              <div className="w-10 h-10 bg-emerald-50 text-emerald-600 rounded-lg flex items-center justify-center shrink-0 border border-emerald-100 group-hover:bg-emerald-100/50 transition-colors">
-                <ShoppingCart className="w-5 h-5" />
+      {/* Quick Actions Panel - Displayed exclusively for operational staff / other user roles */}
+      {!isSuperAdmin && (
+        <div className="print:hidden bg-slate-50 border border-slate-200/60 rounded-2xl p-5 space-y-4">
+          <div className="flex items-center gap-2">
+            <span className="w-1.5 h-6 bg-slate-900 rounded-full" />
+            <h3 className="text-base font-black text-slate-800 uppercase tracking-tight">{t("Quick Actions")}</h3>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <button
+              onClick={() => onNavigate?.("newSale")}
+              className="flex items-center justify-between p-4 bg-white hover:bg-slate-50 border border-slate-150 rounded-xl transition-all hover:scale-[1.01] active:scale-[0.99] cursor-pointer group shadow-xs"
+            >
+              <div className="flex items-center gap-3.5">
+                <div className="w-10 h-10 bg-emerald-50 text-emerald-600 rounded-lg flex items-center justify-center shrink-0 border border-emerald-100 group-hover:bg-emerald-100/50 transition-colors">
+                  <ShoppingCart className="w-5 h-5" />
+                </div>
+                <div className="text-left">
+                  <p className="font-extrabold text-slate-900 text-sm">{t("New Sale")}</p>
+                  <p className="text-[11px] text-slate-400 font-semibold">{t("Register a fresh counter or digital sale")}</p>
+                </div>
               </div>
-              <div className="text-left">
-                <p className="font-extrabold text-slate-900 text-sm">{t("New Sale")}</p>
-                <p className="text-[11px] text-slate-400 font-semibold">{t("Register a fresh counter or digital sale")}</p>
+              <div className="text-slate-400 group-hover:translate-x-0.5 transition-transform">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" className="w-4 h-4">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
+                </svg>
               </div>
-            </div>
-            <div className="text-slate-400 group-hover:translate-x-0.5 transition-transform">
-              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" className="w-4 h-4">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
-              </svg>
-            </div>
-          </button>
+            </button>
 
-          <button
-            onClick={() => onNavigate?.("transactions", { activeTab: "expense" })}
-            className="flex items-center justify-between p-4 bg-white hover:bg-slate-55 border border-slate-150 rounded-xl transition-all hover:scale-[1.01] active:scale-[0.99] cursor-pointer group shadow-xs"
-          >
-            <div className="flex items-center gap-3.5">
-              <div className="w-10 h-10 bg-rose-50 text-rose-600 rounded-lg flex items-center justify-center shrink-0 border border-rose-100 group-hover:bg-rose-100/50 transition-colors">
-                <TrendingDown className="w-5 h-5" />
+            <button
+              onClick={() => onNavigate?.("transactions", { activeTab: "expense" })}
+              className="flex items-center justify-between p-4 bg-white hover:bg-slate-55 border border-slate-150 rounded-xl transition-all hover:scale-[1.01] active:scale-[0.99] cursor-pointer group shadow-xs"
+            >
+              <div className="flex items-center gap-3.5">
+                <div className="w-10 h-10 bg-rose-50 text-rose-600 rounded-lg flex items-center justify-center shrink-0 border border-rose-100 group-hover:bg-rose-100/50 transition-colors">
+                  <TrendingDown className="w-5 h-5" />
+                </div>
+                <div className="text-left">
+                  <p className="font-extrabold text-slate-900 text-sm">{t("Add Expense")}</p>
+                  <p className="text-[11px] text-slate-400 font-semibold">{t("Log general expenses or business outflows")}</p>
+                </div>
               </div>
-              <div className="text-left">
-                <p className="font-extrabold text-slate-900 text-sm">{t("Add Expense")}</p>
-                <p className="text-[11px] text-slate-400 font-semibold">{t("Log general expenses or business outflows")}</p>
+              <div className="text-slate-400 group-hover:translate-x-0.5 transition-transform">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" className="w-4 h-4">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
+                </svg>
               </div>
-            </div>
-            <div className="text-slate-400 group-hover:translate-x-0.5 transition-transform">
-              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" className="w-4 h-4">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
-              </svg>
-            </div>
-          </button>
+            </button>
 
-          <button
-            onClick={() => onNavigate?.("salaryEntry")}
-            className="flex items-center justify-between p-4 bg-white hover:bg-slate-50 border border-slate-150 rounded-xl transition-all hover:scale-[1.01] active:scale-[0.99] cursor-pointer group shadow-xs"
-          >
-            <div className="flex items-center gap-3.5">
-              <div className="w-10 h-10 bg-indigo-50 text-indigo-600 rounded-lg flex items-center justify-center shrink-0 border border-indigo-100 group-hover:bg-indigo-100/50 transition-colors">
-                <Coins className="w-5 h-5" />
+            <button
+              onClick={() => onNavigate?.("salaryEntry")}
+              className="flex items-center justify-between p-4 bg-white hover:bg-slate-50 border border-slate-150 rounded-xl transition-all hover:scale-[1.01] active:scale-[0.99] cursor-pointer group shadow-xs"
+            >
+              <div className="flex items-center gap-3.5">
+                <div className="w-10 h-10 bg-indigo-50 text-indigo-600 rounded-lg flex items-center justify-center shrink-0 border border-indigo-100 group-hover:bg-indigo-100/50 transition-colors">
+                  <Coins className="w-5 h-5" />
+                </div>
+                <div className="text-left">
+                  <p className="font-extrabold text-slate-900 text-sm">{t("Register Salary")}</p>
+                  <p className="text-[11px] text-slate-400 font-semibold">{t("Add staff payroll payout or advance entry")}</p>
+                </div>
               </div>
-              <div className="text-left">
-                <p className="font-extrabold text-slate-900 text-sm">{t("Register Salary")}</p>
-                <p className="text-[11px] text-slate-400 font-semibold">{t("Add staff payroll payout or advance entry")}</p>
+              <div className="text-slate-400 group-hover:translate-x-0.5 transition-transform">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" className="w-4 h-4">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
+                </svg>
               </div>
-            </div>
-            <div className="text-slate-400 group-hover:translate-x-0.5 transition-transform">
-              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" className="w-4 h-4">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
-              </svg>
-            </div>
-          </button>
+            </button>
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Daily Performance Section (Today) */}
       <div className="space-y-4">

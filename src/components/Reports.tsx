@@ -33,13 +33,121 @@ import {
   Building2,
   UserCheck,
   Award,
-  BookOpen
+  BookOpen,
+  ChevronUp,
+  ChevronsUpDown,
+  ArrowUp,
+  ArrowDown,
+  Flame,
+  Package,
+  PanelLeft,
+  PanelRight
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, LineChart, Line } from "recharts";
 import SectionSalesComparisonReport from "./SectionSalesComparisonReport";
 
 type ReportTab = "daily" | "bank" | "salary" | "supplier" | "purchase" | "attendance" | "transactions" | "inventory" | "unified" | "sales" | "sectionSales";
+
+interface ReportTabConfig {
+  id: ReportTab;
+  labelEn: string;
+  labelBn: string;
+  badgeEn: string;
+  badgeBn: string;
+  icon: React.ComponentType<{ className?: string }>;
+}
+
+const REPORT_TABS_CONFIG: ReportTabConfig[] = [
+  {
+    id: "daily",
+    labelEn: "Daily Statement",
+    labelBn: "দৈনিক স্টেটমেন্ট",
+    badgeEn: "Cash & Ledger",
+    badgeBn: "দৈনিক ক্যাশ লেজার",
+    icon: Calendar
+  },
+  {
+    id: "sales",
+    labelEn: "Sales Report",
+    labelBn: "বিক্রয় রিপোর্ট",
+    badgeEn: "Customer Invoices",
+    badgeBn: "দৈনিক ইনভয়েস",
+    icon: TrendingUp
+  },
+  {
+    id: "sectionSales",
+    labelEn: "Section Heatmap & Sales",
+    labelBn: "সেকশন হিটম্যাপ ও তুলনা",
+    badgeEn: "Mens vs Ladies Focus",
+    badgeBn: "মেনস বনাম লেডিস সেল",
+    icon: Flame
+  },
+  {
+    id: "transactions",
+    labelEn: "Transactions Ledger",
+    labelBn: "লেনদেন হিসাব",
+    badgeEn: "Cash Flow",
+    badgeBn: "আয় ও ব্যয়ের খতিয়ান",
+    icon: FileText
+  },
+  {
+    id: "bank",
+    labelEn: "Bank Accounts",
+    labelBn: "ব্যাংক হিসাব",
+    badgeEn: "Deposits & Withdrawals",
+    badgeBn: "ব্যাংক জমা ও উত্তোলন",
+    icon: Landmark
+  },
+  {
+    id: "salary",
+    labelEn: "Salary & Payroll",
+    labelBn: "বেতন ও সম্মানী",
+    badgeEn: "Staff Payroll",
+    badgeBn: "স্টাফ বেতন ও বোনাস",
+    icon: Wallet
+  },
+  {
+    id: "attendance",
+    labelEn: "Attendance Book",
+    labelBn: "উপস্থিতি খাতা",
+    badgeEn: "Clock-in & Roster",
+    badgeBn: "দৈনিক হাজিরা হিসাব",
+    icon: UserCheck
+  },
+  {
+    id: "purchase",
+    labelEn: "Purchases",
+    labelBn: "ক্রয় রেজিস্টার",
+    badgeEn: "Procurement",
+    badgeBn: "মালামাল ক্রয় ও বাকি",
+    icon: ShoppingCart
+  },
+  {
+    id: "supplier",
+    labelEn: "Suppliers Ledger",
+    labelBn: "সরবরাহকারী লেজার",
+    badgeEn: "Payable Dues",
+    badgeBn: "সরবরাহকারী বাকি হিসাব",
+    icon: Truck
+  },
+  {
+    id: "inventory",
+    labelEn: "Inventory Stock",
+    labelBn: "ইনভেন্টরি স্টক",
+    badgeEn: "Units & Value",
+    badgeBn: "স্টক রেজিস্টার ও মূল্যায়ন",
+    icon: Package
+  },
+  {
+    id: "unified",
+    labelEn: "Unified Ledger",
+    labelBn: "সমন্বিত লেজার",
+    badgeEn: "Complete Index",
+    badgeBn: "একীভূত অডিট লেজার",
+    icon: BookOpen
+  }
+];
 
 export function addPdfGlobalLedgerSummary(
   doc: jsPDF,
@@ -131,6 +239,99 @@ export default function Reports({ user, role }: { user: User; role: UserRole }) 
       }
     }
   }, [activeTab]);
+
+  const [navPosition, setNavPosition] = useState<"left" | "right">(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const saved = localStorage.getItem("reports_nav_position");
+        if (saved === "left" || saved === "right") return saved;
+      } catch (e) {}
+    }
+    return "left";
+  });
+
+  const [iconOnlyMode, setIconOnlyMode] = useState<boolean>(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const saved = localStorage.getItem("reports_menu_icon_only");
+        if (saved !== null) return saved === "true";
+      } catch (e) {}
+    }
+    return true; // Default to pure Icon Only as requested
+  });
+
+  const handleToggleIconOnly = () => {
+    setIconOnlyMode(prev => {
+      const next = !prev;
+      if (typeof window !== "undefined") {
+        try {
+          localStorage.setItem("reports_menu_icon_only", String(next));
+        } catch (e) {}
+      }
+      return next;
+    });
+  };
+
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState<boolean>(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const saved = localStorage.getItem("reports_sidebar_collapsed");
+        if (saved !== null) return saved === "true";
+      } catch (e) {}
+    }
+    return false;
+  });
+
+  const handleToggleSidebarCollapse = () => {
+    setIsSidebarCollapsed(prev => {
+      const next = !prev;
+      if (typeof window !== "undefined") {
+        try {
+          localStorage.setItem("reports_sidebar_collapsed", String(next));
+        } catch (e) {}
+      }
+      return next;
+    });
+  };
+
+  const tabsScrollContainerRef = React.useRef<HTMLDivElement>(null);
+
+  const handleSetNavPosition = (pos: "left" | "right") => {
+    setNavPosition(pos);
+    if (typeof window !== "undefined") {
+      try {
+        localStorage.setItem("reports_nav_position", pos);
+      } catch (e) {}
+    }
+  };
+
+  const scrollTabs = (direction: "up" | "down") => {
+    if (tabsScrollContainerRef.current) {
+      const scrollAmount = direction === "up" ? -160 : 160;
+      tabsScrollContainerRef.current.scrollBy({ top: scrollAmount, behavior: "smooth" });
+    }
+  };
+
+  const currentTabIdx = REPORT_TABS_CONFIG.findIndex(t => t.id === activeTab);
+  const currentTabConfig = REPORT_TABS_CONFIG[currentTabIdx] || REPORT_TABS_CONFIG[0];
+
+  const selectPrevTab = () => {
+    if (currentTabIdx > 0) {
+      const prev = REPORT_TABS_CONFIG[currentTabIdx - 1].id;
+      setActiveTab(prev);
+      const el = document.getElementById(`report-tab-btn-${prev}`);
+      el?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
+  };
+
+  const selectNextTab = () => {
+    if (currentTabIdx < REPORT_TABS_CONFIG.length - 1) {
+      const next = REPORT_TABS_CONFIG[currentTabIdx + 1].id;
+      setActiveTab(next);
+      const el = document.getElementById(`report-tab-btn-${next}`);
+      el?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
+  };
 
   // Dynamic company settings context
   const [companyName, setCompanyName] = useState("Modern Pro");
@@ -770,38 +971,48 @@ export default function Reports({ user, role }: { user: User; role: UserRole }) 
   };
 
   return (
-    <div className="space-y-8 animate-in fade-in duration-300">
-      <header className="flex flex-col lg:flex-row lg:items-center justify-between gap-6 pb-2 border-b border-gray-100">
+    <div className="space-y-6 animate-in fade-in duration-300">
+      <header className="flex flex-col lg:flex-row lg:items-center justify-between gap-5 pb-3 border-b border-slate-200 dark:border-zinc-800">
         <div>
           <div className="flex items-center gap-2 mb-1">
-            <span className="w-2.5 h-2.5 bg-green-500 rounded-full animate-ping" />
-            <span className="text-xs font-bold text-green-600 uppercase tracking-widest">Enterprise Ledger Console</span>
+            <span className="w-2 h-2 bg-black dark:bg-white rounded-full" />
+            <span className="text-xs font-black text-slate-900 dark:text-neutral-100 uppercase tracking-widest">Enterprise Ledger Console</span>
           </div>
-          <h2 className="text-4xl font-extrabold tracking-tight text-gray-900">{t("Business Intelligence")}</h2>
-          <p className="text-gray-500 font-medium">{t("Deep dive into your shop's performance, attendance and finance history.")}</p>
+          <h2 className="text-3xl sm:text-4xl font-black tracking-tight text-black dark:text-white">{t("Business Intelligence")}</h2>
+          <p className="text-slate-600 dark:text-neutral-400 font-medium text-xs sm:text-sm">{t("Deep dive into your shop's performance, attendance and finance history.")}</p>
         </div>
         
-        <div className="flex flex-col sm:flex-row sm:items-center gap-3 self-start lg:self-center shrink-0">
-          <div className="flex bg-slate-100 p-1 rounded-2xl border border-slate-200 shadow-xs max-w-full overflow-x-auto">
-            {(["daily", "bank", "salary", "supplier", "purchase", "attendance", "transactions", "inventory", "unified", "sales", "sectionSales"] as ReportTab[]).map(tab => (
-              <button 
-                key={tab}
-                onClick={() => setActiveTab(tab)}
-                className={cn(
-                  "px-4 py-2 rounded-xl text-xs font-extrabold uppercase tracking-wider transition-all duration-250 shrink-0",
-                  activeTab === tab 
-                    ? "bg-slate-900 text-white shadow-md active:scale-98" 
-                    : "text-slate-500 hover:text-slate-900 hover:bg-slate-200/50"
-                )}
-              >
-                {tab === "sales" 
-                  ? (language === "bn" ? "বিক্রয় রিপোর্ট" : "Sales Report") 
-                  : tab === "sectionSales"
-                    ? (language === "bn" ? "সেকশন হিটম্যাপ ও তুলনা" : "Section Heatmap & Sales")
-                    : t(tab)}
-              </button>
-            ))}
+        <div className="flex flex-wrap items-center gap-2.5 self-start lg:self-center shrink-0">
+          {/* Active Tab Chip Indicator - Pure Black & White */}
+          <div className="flex items-center gap-2 px-3 py-2 bg-white dark:bg-zinc-900 rounded-xl border border-slate-300 dark:border-zinc-700 text-xs font-bold text-black dark:text-white shadow-2xs">
+            {React.createElement(currentTabConfig?.icon || FileText, { className: "w-4 h-4 text-black dark:text-white shrink-0" })}
+            <span className="truncate max-w-[140px] sm:max-w-[190px]">
+              {language === "bn" ? currentTabConfig?.labelBn : currentTabConfig?.labelEn}
+            </span>
+            <span className="text-[10px] bg-black text-white dark:bg-white dark:text-black font-mono px-1.5 py-0.5 rounded-full font-black">
+              {currentTabIdx + 1}/{REPORT_TABS_CONFIG.length}
+            </span>
           </div>
+
+          {/* Quick Position Switcher in Header - Pure Black & White */}
+          <button
+            type="button"
+            onClick={() => handleSetNavPosition(navPosition === "left" ? "right" : "left")}
+            className="flex items-center gap-1.5 px-3 py-2 bg-white dark:bg-zinc-900 hover:bg-slate-100 dark:hover:bg-zinc-800 text-black dark:text-white rounded-xl text-xs font-bold transition-all border border-slate-300 dark:border-zinc-700 shadow-2xs cursor-pointer active:scale-95"
+            title={language === "bn" ? `মেনু অবস্থান পরিবর্তন করুন (এখন ${navPosition === "left" ? "বাঁ দিকে" : "ডানদিকে"} আছে)` : `Toggle Sidebar position (Currently on ${navPosition})`}
+          >
+            {navPosition === "left" ? (
+              <>
+                <PanelLeft className="w-3.5 h-3.5 text-black dark:text-white" />
+                <span className="text-[11px] font-bold">{language === "bn" ? "ডানদিকে নিন ➔" : "Move to Right ➔"}</span>
+              </>
+            ) : (
+              <>
+                <span className="text-[11px] font-bold">{language === "bn" ? "⬅️ বাঁ দিকে নিন" : "⬅️ Move to Left"}</span>
+                <PanelRight className="w-3.5 h-3.5 text-black dark:text-white" />
+              </>
+            )}
+          </button>
           
           <button 
             type="button"
@@ -813,13 +1024,164 @@ export default function Reports({ user, role }: { user: User; role: UserRole }) 
                 exportToCSV(activeTab);
               }
             }}
-            className="flex items-center justify-center gap-2 px-5 py-3 bg-slate-900 text-white rounded-xl font-bold text-xs uppercase tracking-wider hover:bg-slate-800 transition-all shadow-sm active:scale-97 cursor-pointer border border-transparent"
+            className="flex items-center justify-center gap-2 px-4 py-2 bg-black hover:bg-slate-800 text-white rounded-xl font-bold text-xs uppercase tracking-wider transition-all shadow-sm active:scale-97 cursor-pointer border border-black"
           >
-            <Download className="w-4 h-4" /> 
+            <Download className="w-4 h-4 text-white" /> 
             <span>CSV</span>
           </button>
         </div>
       </header>
+
+      {/* Two-Column Responsive Layout: Vertical Side Rail on Left or Right + Main Report Content */}
+      <div className={cn(
+        "flex flex-col gap-5 items-start",
+        navPosition === "left" ? "lg:flex-row" : "lg:flex-row-reverse"
+      )}>
+        {/* Simple, Pure White Background Navigation Rail - Monochrome Black & White Only */}
+        <aside className={cn(
+          "shrink-0 sticky top-4 z-20 transition-all duration-200 mx-auto lg:mx-0",
+          iconOnlyMode ? "w-14 sm:w-16" : "w-56 sm:w-64"
+        )}>
+          <div className="bg-white dark:bg-zinc-900 rounded-2xl p-2 border border-slate-300 dark:border-zinc-700 shadow-sm flex flex-col items-center gap-1.5 transition-all">
+            {/* Top Bar with Arrow Up/Down Toggle Button & Controls */}
+            <div className="flex items-center justify-between w-full pb-1 border-b border-slate-200 dark:border-zinc-800 gap-1">
+              {/* Arrow Up/Down Toggle Button to Quickly Collapse or Expand Entire Sidebar Vertically */}
+              <button
+                type="button"
+                onClick={handleToggleSidebarCollapse}
+                className="flex-1 py-1.5 px-1.5 rounded-lg bg-black hover:bg-slate-800 text-white dark:bg-white dark:hover:bg-slate-100 dark:text-black flex items-center justify-center gap-1 text-[10px] font-black transition-all cursor-pointer shadow-xs active:scale-95"
+                title={isSidebarCollapsed 
+                  ? (language === "bn" ? "মেনু সম্পূর্ণ খুলুন (Expand Sidebar)" : "Expand Sidebar Vertically") 
+                  : (language === "bn" ? "মেনু সংকুচিত করুন (Collapse Sidebar)" : "Collapse Sidebar Vertically")}
+              >
+                {isSidebarCollapsed ? (
+                  <>
+                    <ChevronDown className="w-3.5 h-3.5 stroke-[3]" />
+                    {!iconOnlyMode && <span>{language === "bn" ? "খুলুন" : "Expand"}</span>}
+                  </>
+                ) : (
+                  <>
+                    <ChevronUp className="w-3.5 h-3.5 stroke-[3]" />
+                    {!iconOnlyMode && <span>{language === "bn" ? "সংকুচিত" : "Collapse"}</span>}
+                  </>
+                )}
+              </button>
+
+              {!isSidebarCollapsed && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => handleSetNavPosition(navPosition === "left" ? "right" : "left")}
+                    className="p-1.5 rounded-lg bg-white hover:bg-slate-100 dark:bg-zinc-850 dark:hover:bg-zinc-800 text-black dark:text-white border border-slate-250 dark:border-zinc-700 text-[10px] font-bold transition-all cursor-pointer"
+                    title={language === "bn" ? `মেনু অবস্থান পরিবর্তন (এখন ${navPosition === "left" ? "বাঁ দিকে" : "ডানদিকে"} আছে)` : `Move menu to ${navPosition === "left" ? "Right" : "Left"}`}
+                  >
+                    {navPosition === "left" ? <PanelRight className="w-3.5 h-3.5 text-black dark:text-white" /> : <PanelLeft className="w-3.5 h-3.5 text-black dark:text-white" />}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleToggleIconOnly}
+                    className="p-1.5 rounded-lg bg-white hover:bg-slate-100 dark:bg-zinc-850 dark:hover:bg-zinc-800 text-black dark:text-white border border-slate-250 dark:border-zinc-700 text-[10px] font-bold transition-all cursor-pointer"
+                    title={iconOnlyMode ? (language === "bn" ? "নাম সহ বড় মেনু দেখুন" : "Show Full Menu") : (language === "bn" ? "শুধু আইকন দেখুন" : "Icon Only Mode")}
+                  >
+                    <Layout className="w-3.5 h-3.5 text-black dark:text-white" />
+                  </button>
+                </>
+              )}
+            </div>
+
+            {/* When collapsed vertically, show only active tab indicator with quick expand */}
+            {isSidebarCollapsed ? (
+              <div className="py-1 flex flex-col items-center gap-1.5 animate-in fade-in zoom-in-95 duration-150">
+                <button
+                  type="button"
+                  onClick={handleToggleSidebarCollapse}
+                  className="w-10 h-10 rounded-xl bg-black text-white dark:bg-white dark:text-black flex items-center justify-center shadow-xs cursor-pointer hover:scale-105 transition-all"
+                  title={`${language === "bn" ? currentTabConfig?.labelBn : currentTabConfig?.labelEn} - ${language === "bn" ? "ক্লিক করে মেনু খুলুন" : "Click to expand menu"}`}
+                >
+                  {React.createElement(currentTabConfig?.icon || FileText, { className: "w-4 h-4" })}
+                </button>
+                <span className="text-[9px] font-mono text-slate-500 dark:text-neutral-400 font-bold">
+                  {currentTabIdx + 1}/{REPORT_TABS_CONFIG.length}
+                </span>
+              </div>
+            ) : (
+              <>
+                {/* UP Button (▲) - Pure Black & White */}
+                <button
+                  type="button"
+                  onClick={() => scrollTabs("up")}
+                  className="w-10 h-8 rounded-xl bg-white hover:bg-slate-100 dark:bg-zinc-850 dark:hover:bg-zinc-800 border border-slate-300 dark:border-zinc-700 hover:border-black dark:hover:border-white text-black dark:text-white flex items-center justify-center transition-all cursor-pointer shadow-2xs active:scale-95 group"
+                  title={language === "bn" ? "উপরে যান (Scroll Up)" : "Scroll Up"}
+                >
+                  <ChevronUp className="w-4 h-4 text-black dark:text-white stroke-[2.5] group-hover:-translate-y-0.5 transition-transform" />
+                </button>
+
+                {/* Scrollable Icon Rail - Pure Black & White */}
+                <div 
+                  ref={tabsScrollContainerRef}
+                  className="max-h-[460px] overflow-y-auto space-y-1.5 p-0.5 scroll-smooth focus:outline-none w-full flex flex-col items-center"
+                  style={{ scrollbarWidth: "thin" }}
+                >
+                  {REPORT_TABS_CONFIG.map((tab) => {
+                    const IconComponent = tab.icon;
+                    const isSelected = activeTab === tab.id;
+                    const label = language === "bn" ? tab.labelBn : tab.labelEn;
+
+                    return (
+                      <div key={tab.id} className="relative group w-full flex justify-center">
+                        <button
+                          id={`report-tab-btn-${tab.id}`}
+                          type="button"
+                          onClick={() => setActiveTab(tab.id)}
+                          className={cn(
+                            "transition-all duration-150 cursor-pointer flex items-center rounded-xl",
+                            iconOnlyMode 
+                              ? "w-10 h-10 justify-center" 
+                              : "w-full p-2.5 gap-2.5 justify-start",
+                            isSelected
+                              ? "bg-black text-white dark:bg-white dark:text-black shadow-md border border-black dark:border-white font-black scale-102"
+                              : "bg-white hover:bg-slate-100 dark:bg-zinc-900 dark:hover:bg-zinc-800 text-slate-800 dark:text-neutral-200 hover:text-black dark:hover:text-white border border-slate-200 dark:border-zinc-800 hover:border-slate-400"
+                          )}
+                          title={label}
+                        >
+                          <IconComponent className={cn("w-4 h-4 shrink-0", isSelected ? "text-white dark:text-black" : "text-black dark:text-white")} />
+                          {!iconOnlyMode && (
+                            <span className={cn("text-xs font-bold truncate", isSelected ? "text-white dark:text-black" : "text-black dark:text-white")}>
+                              {label}
+                            </span>
+                          )}
+                        </button>
+
+                        {/* Floating Hover Tooltip - Pure Black & White */}
+                        {iconOnlyMode && (
+                          <div className={cn(
+                            "absolute z-50 pointer-events-none hidden group-hover:flex items-center px-2.5 py-1 bg-black text-white dark:bg-white dark:text-black text-[11px] font-bold rounded-lg shadow-xl whitespace-nowrap border border-black/40 dark:border-white/40",
+                            navPosition === "left" ? "left-full ml-2" : "right-full mr-2"
+                          )}>
+                            {label}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* DOWN Button (▼) - Pure Black & White */}
+                <button
+                  type="button"
+                  onClick={() => scrollTabs("down")}
+                  className="w-10 h-8 rounded-xl bg-white hover:bg-slate-100 dark:bg-zinc-850 dark:hover:bg-zinc-800 border border-slate-300 dark:border-zinc-700 hover:border-black dark:hover:border-white text-black dark:text-white flex items-center justify-center transition-all cursor-pointer shadow-2xs active:scale-95 group"
+                  title={language === "bn" ? "নিচে যান (Scroll Down)" : "Scroll Down"}
+                >
+                  <ChevronDown className="w-4 h-4 text-black dark:text-white stroke-[2.5] group-hover:translate-y-0.5 transition-transform" />
+                </button>
+              </>
+            )}
+          </div>
+        </aside>
+
+        {/* Main Active Tab Report Content Container */}
+        <main className="flex-1 w-full min-w-0 space-y-8">
 
       {/* RENDER ACTIVE TABS */}
       {activeTab === "daily" && (
@@ -1106,6 +1468,8 @@ export default function Reports({ user, role }: { user: User; role: UserRole }) 
           onRegisterExporter={(exportFn) => registerExporter("sectionSales", exportFn)}
         />
       )}
+        </main>
+      </div>
     </div>
   );
 }

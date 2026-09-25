@@ -1,10 +1,10 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { User } from "firebase/auth";
 import { collection, query, where, orderBy, limit, onSnapshot, getDocs } from "firebase/firestore";
 import { db, OperationType, handleFirestoreError } from "@/src/lib/firebase";
 import { Transaction, Bank, UserRole, Product } from "@/src/types";
 import { PurchaseModel } from "./Purchase";
-import { formatCurrency, cn } from "@/src/lib/utils";
+import { cn } from "@/src/lib/utils";
 import { getTransactionsFromIndexedDB } from "@/src/lib/indexedDbFallback";
 import { 
   TrendingUp, 
@@ -25,7 +25,9 @@ import {
   BarChart4,
   Printer,
   AlertTriangle,
-  Bell
+  Bell,
+  Filter,
+  CheckCircle2
 } from "lucide-react";
 import { 
   XAxis, 
@@ -53,8 +55,88 @@ export default function Dashboard({
   onNavigate?: (view: string, extra?: any) => void;
 }) {
   const { language, t, formatCurrency, formatDate, formatNumber, translateValue } = useLanguage();
+  const normalizedRole = (role || "").toLowerCase().trim();
+  const isSuperAdmin = 
+    normalizedRole === "admin" ||
+    normalizedRole === "super_admin" ||
+    normalizedRole === "superadmin" ||
+    normalizedRole === "super admin" ||
+    normalizedRole.includes("super") ||
+    normalizedRole.includes("administrator");
+
+  // Multi-user input filter:
+  // For Super Admin: defaults to "all" (store-wide calculation), but can select ANY other user to see calculations of that user's input.
+  // For Other Users: defaults to their own UID (displaying total calculation for ONLY their own inputs). They can also select any other user or view all inputs.
+  const [selectedUserFilter, setSelectedUserFilter] = useState<string>(isSuperAdmin ? "all" : (user?.uid || "all"));
+  const [systemUsers, setSystemUsers] = useState<{ uid: string; displayName: string; email: string; role: string }[]>([]);
+
+  // Mode for Other Users: "calculation" (view total calculations) or "inputOnly" (pure quick-entry input mode, hides total calculations)
+  const [viewMode, setViewMode] = useState<"calculation" | "inputOnly">(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const saved = localStorage.getItem("dashboard_view_mode");
+        if (saved === "inputOnly" || saved === "calculation") return saved;
+      } catch (e) {}
+    }
+    return "calculation";
+  });
+
+  useEffect(() => {
+    const unsub = onSnapshot(collection(db, "users"), (snap) => {
+      const list = snap.docs.map(doc => {
+        const d = doc.data();
+        return {
+          uid: d.uid || doc.id,
+          displayName: d.displayName || d.name || d.email || "Staff User",
+          email: d.email || "",
+          role: d.role || "sales"
+        };
+      });
+      setSystemUsers(list);
+    }, (err) => console.warn("Could not load users:", err));
+    return () => unsub();
+  }, []);
+
+  const [rawTransactions, setRawTransactions] = useState<Transaction[]>([]);
+  const [rawPurchases, setRawPurchases] = useState<any[]>([]);
+  const [rawSupplierTransactions, setRawSupplierTransactions] = useState<any[]>([]);
+  const [rawSuppliers, setRawSuppliers] = useState<any[]>([]);
+  const [rawAttendance, setRawAttendance] = useState<any[]>([]);
+  const [rawEmployees, setRawEmployees] = useState<any[]>([]);
+
+  const matchesUser = (item: any) => {
+    if (!selectedUserFilter || selectedUserFilter === "all") return true;
+    if (!item) return false;
+    const targetUser = systemUsers.find(u => u.uid === selectedUserFilter || u.email === selectedUserFilter);
+    const targetEmail = targetUser?.email?.toLowerCase();
+    const targetName = targetUser?.displayName?.toLowerCase();
+
+    if (item.createdBy) {
+      if (item.createdBy === selectedUserFilter) return true;
+      if (targetEmail && typeof item.createdBy === "string" && item.createdBy.toLowerCase() === targetEmail) return true;
+      if (targetName && typeof item.createdBy === "string" && item.createdBy.toLowerCase() === targetName) return true;
+    }
+    if (item.userId && (item.userId === selectedUserFilter || (targetEmail && item.userId === targetEmail))) return true;
+    if (item.employeeId && item.employeeId === selectedUserFilter) return true;
+    if (user?.uid === selectedUserFilter) {
+      if (item.createdBy === user.uid) return true;
+      if (user.email && typeof item.createdBy === "string" && item.createdBy.toLowerCase() === user.email.toLowerCase()) return true;
+    }
+    return false;
+  };
+
+  const activeFilteredUser = selectedUserFilter === "all" 
+    ? null 
+    : systemUsers.find(u => u.uid === selectedUserFilter || u.email === selectedUserFilter) || {
+        uid: selectedUserFilter,
+        displayName: selectedUserFilter === user?.uid ? (user?.displayName || "You") : "Staff User",
+        email: selectedUserFilter === user?.uid ? (user?.email || "") : "",
+        role: selectedUserFilter === user?.uid ? role : "staff"
+      };
+
   const [recentTransactions, setRecentTransactions] = useState<Transaction[]>([]);
   const [banks, setBanks] = useState<Bank[]>([]);
+  const [userNetCash, setUserNetCash] = useState(0);
   const [stats, setStats] = useState({
     // Today metrics
     todaySales: 0,
@@ -103,31 +185,6 @@ export default function Dashboard({
   }, []);
 
   useEffect(() => {
-    const q = query(
-      collection(db, "transactions"),
-      orderBy("date", "desc"),
-      limit(6)
-    );
-
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const txs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Transaction));
-      setRecentTransactions(txs);
-    }, async (error) => {
-      try {
-        const cached = await getTransactionsFromIndexedDB();
-        if (cached.length > 0) {
-          setRecentTransactions(cached.slice(0, 6));
-        }
-      } catch (e) {
-        console.warn("Failed to load cached transactions in Dashboard:", e);
-      }
-      handleFirestoreError(error, OperationType.LIST, "transactions");
-    });
-
-    return () => unsubscribe();
-  }, []);
-
-  useEffect(() => {
     const unsubscribe = onSnapshot(collection(db, "banks"), (snapshot) => {
       const bks = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Bank));
       setBanks(bks);
@@ -136,47 +193,97 @@ export default function Dashboard({
     return () => unsubscribe();
   }, []);
 
+  // Listen to collections and store in reactive state
   useEffect(() => {
-    let all: Transaction[] = [];
-    let purchasesList: any[] = [];
-    let supplierTransactionsList: any[] = [];
-    let suppliersList: any[] = [];
-    let attendanceList: any[] = [];
-    let employeesList: any[] = [];
-
     let initialLoads = 0;
     const checkInitialDone = () => {
       initialLoads++;
       if (initialLoads >= 6) setLoading(false);
     };
 
-    const recomputeStats = () => {
-      const today = startOfDay(new Date());
-      const firstOfMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
-      const todayFormatted = format(new Date(), "yyyy-MM-dd");
+    const unsubTxs = onSnapshot(collection(db, "transactions"), (snap) => {
+      setRawTransactions(snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Transaction)));
+      checkInitialDone();
+    }, (err) => { console.error(err); checkInitialDone(); });
 
-      let todaySales = 0;
-      let todayWholesale = 0;
-      let todayBankDeposit = 0;
-      let todayBankWithdraw = 0;
-      let todayExpense = 0;
-      let todayPurchase = 0;
-      let todaySupplierPayment = 0;
-      let todayEmployeePresent = 0;
-      let todayEmployeeAbsent = 0;
-      let todayPreviousCash = 0;
+    const unsubPur = onSnapshot(collection(db, "purchases"), (snap) => {
+      setRawPurchases(snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as any)));
+      checkInitialDone();
+    }, (err) => { console.error(err); checkInitialDone(); });
 
-      let totalSales = 0;
-      let totalWholesale = 0;
-      let totalBankDeposit = 0;
-      let totalBankWithdraw = 0;
-      let totalExpense = 0;
-      let totalPurchase = 0;
-      let totalPurchaseDue = 0;
-      let totalSupplierPayment = 0;
-      let totalEmployeeAbsentMonth = 0;
+    const unsubSupTx = onSnapshot(collection(db, "supplierTransactions"), (snap) => {
+      setRawSupplierTransactions(snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as any)));
+      checkInitialDone();
+    }, (err) => { console.error(err); checkInitialDone(); });
 
-      // 1. Transactions calculations
+    const unsubSuppliers = onSnapshot(collection(db, "suppliers"), (snap) => {
+      setRawSuppliers(snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as any)));
+      checkInitialDone();
+    }, (err) => { console.error(err); checkInitialDone(); });
+
+    const unsubAtt = onSnapshot(collection(db, "attendance"), (snap) => {
+      setRawAttendance(snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as any)));
+      checkInitialDone();
+    }, (err) => { console.error(err); checkInitialDone(); });
+
+    const unsubEmp = onSnapshot(collection(db, "employees"), (snap) => {
+      setRawEmployees(snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as any)));
+      checkInitialDone();
+    }, (err) => { console.error(err); checkInitialDone(); });
+
+    return () => {
+      unsubTxs();
+      unsubPur();
+      unsubSupTx();
+      unsubSuppliers();
+      unsubAtt();
+      unsubEmp();
+    };
+  }, []);
+
+  // Reactive Stats Recomputation triggered on data changes or user filter change
+  useEffect(() => {
+    const today = startOfDay(new Date());
+    const todayFormatted = format(new Date(), "yyyy-MM-dd");
+
+    // Filter datasets according to the active user input filter
+    const all = rawTransactions.filter(matchesUser);
+    const purchasesList = rawPurchases.filter(matchesUser);
+    const supplierTransactionsList = rawSupplierTransactions.filter(matchesUser);
+    const suppliersList = rawSuppliers;
+    const attendanceList = rawAttendance;
+    const employeesList = rawEmployees;
+
+    // Update recent transactions to show entries input by this user
+    const sortedTxs = [...all].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+    setRecentTransactions(sortedTxs.slice(0, 6));
+
+    // Calculate Net Cash input by this user (Inflows - Outflows)
+    const netCash = all.reduce((sum, tx) => (tx.type === "income" ? sum + tx.amount : sum - tx.amount), 0);
+    setUserNetCash(netCash);
+
+    let todaySales = 0;
+    let todayWholesale = 0;
+    let todayBankDeposit = 0;
+    let todayBankWithdraw = 0;
+    let todayExpense = 0;
+    let todayPurchase = 0;
+    let todaySupplierPayment = 0;
+    let todayEmployeePresent = 0;
+    let todayEmployeeAbsent = 0;
+    let todayPreviousCash = 0;
+
+    let totalSales = 0;
+    let totalWholesale = 0;
+    let totalBankDeposit = 0;
+    let totalBankWithdraw = 0;
+    let totalExpense = 0;
+    let totalPurchase = 0;
+    let totalPurchaseDue = 0;
+    let totalSupplierPayment = 0;
+    let totalEmployeeAbsentMonth = 0;
+
+    // 1. Transactions calculations
       all.forEach(tx => {
         let isToday = false;
         try {
@@ -492,53 +599,7 @@ export default function Dashboard({
         return { name: dayLabel, income: dayIncome, expense: dayExpense };
       });
       setTrendChartData(days);
-    };
-
-    const unsubTxs = onSnapshot(collection(db, "transactions"), (snap) => {
-      all = snap.docs.map(doc => doc.data() as Transaction);
-      recomputeStats();
-      checkInitialDone();
-    }, (err) => { console.error(err); checkInitialDone(); });
-
-    const unsubPur = onSnapshot(collection(db, "purchases"), (snap) => {
-      purchasesList = snap.docs.map(doc => doc.data() as any);
-      recomputeStats();
-      checkInitialDone();
-    }, (err) => { console.error(err); checkInitialDone(); });
-
-    const unsubSupTx = onSnapshot(collection(db, "supplierTransactions"), (snap) => {
-      supplierTransactionsList = snap.docs.map(doc => doc.data() as any);
-      recomputeStats();
-      checkInitialDone();
-    }, (err) => { console.error(err); checkInitialDone(); });
-
-    const unsubSuppliers = onSnapshot(collection(db, "suppliers"), (snap) => {
-      suppliersList = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as any));
-      recomputeStats();
-      checkInitialDone();
-    }, (err) => { console.error(err); checkInitialDone(); });
-
-    const unsubAtt = onSnapshot(collection(db, "attendance"), (snap) => {
-      attendanceList = snap.docs.map(doc => doc.data() as any);
-      recomputeStats();
-      checkInitialDone();
-    }, (err) => { console.error(err); checkInitialDone(); });
-
-    const unsubEmp = onSnapshot(collection(db, "employees"), (snap) => {
-      employeesList = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as any));
-      recomputeStats();
-      checkInitialDone();
-    }, (err) => { console.error(err); checkInitialDone(); });
-
-    return () => {
-      unsubTxs();
-      unsubPur();
-      unsubSupTx();
-      unsubSuppliers();
-      unsubAtt();
-      unsubEmp();
-    };
-  }, []);
+  }, [rawTransactions, rawPurchases, rawSupplierTransactions, rawSuppliers, rawAttendance, rawEmployees, selectedUserFilter, systemUsers]);
 
   const totalBankLastCash = banks.reduce((sum, b) => sum + b.balance, 0);
 
@@ -547,15 +608,6 @@ export default function Dashboard({
     const threshold = p.minStock !== undefined ? p.minStock : 10;
     return (p.stock || 0) <= threshold;
   });
-
-  const normalizedRole = (role || "").toLowerCase().trim();
-  const isSuperAdmin = 
-    normalizedRole === "admin" ||
-    normalizedRole === "super_admin" ||
-    normalizedRole === "superadmin" ||
-    normalizedRole === "super admin" ||
-    normalizedRole.includes("super") ||
-    normalizedRole.includes("administrator");
 
   return (
     <div className="space-y-8 animate-in fade-in duration-200">
@@ -585,6 +637,111 @@ export default function Dashboard({
           {t("Print Ledger Report")}
         </button>
       </header>
+
+      {/* Multi-User Calculation & Input Filter Scope Bar */}
+      <div className="bg-white border border-slate-200 rounded-2xl p-4 sm:p-5 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div className="flex items-center gap-3.5">
+          <div className="w-10 h-10 rounded-xl bg-slate-100 text-slate-800 flex items-center justify-center shrink-0 border border-slate-200 shadow-2xs">
+            <Users className="w-5 h-5 text-slate-700" />
+          </div>
+          <div>
+            <div className="flex items-center gap-2 flex-wrap">
+              <h3 className="text-sm font-black text-slate-900 uppercase tracking-tight">
+                {selectedUserFilter === "all" 
+                  ? t("Store-Wide Total Calculation (All Users)") 
+                  : `${t("Total Calculation for Inputs by")}: ${activeFilteredUser?.displayName || t("Selected User")}`}
+              </h3>
+              <span className={cn(
+                "text-[10px] font-extrabold uppercase px-2 py-0.5 rounded-full border",
+                selectedUserFilter === "all" 
+                  ? "bg-slate-100 text-slate-700 border-slate-250" 
+                  : "bg-emerald-50 text-emerald-700 border-emerald-200 animate-in fade-in"
+              )}>
+                {selectedUserFilter === "all" 
+                  ? t("Global Store Overview") 
+                  : (selectedUserFilter === user.uid ? t("Your Inputs Only") : t("Filtered User Input"))}
+              </span>
+            </div>
+            <p className="text-xs text-slate-500 font-medium mt-0.5">
+              {selectedUserFilter === "all"
+                ? t("Calculating aggregated metrics across all staff & counter entries.")
+                : `${t("Displaying metrics and calculations exclusively for records inputted by")} ${activeFilteredUser?.displayName || t("this user")}.`}
+            </p>
+          </div>
+        </div>
+
+        {/* User filter selector dropdown and mode toggle */}
+        <div className="flex items-center gap-2.5 flex-wrap">
+          <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-250 rounded-xl px-3 py-1.5 shadow-2xs">
+            <Filter className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+            <select
+              value={selectedUserFilter}
+              onChange={(e) => setSelectedUserFilter(e.target.value)}
+              className="bg-transparent text-xs font-bold text-slate-800 outline-none cursor-pointer py-1 pr-2"
+              title={t("Filter total calculation by input of any user")}
+            >
+              <option value="all">👥 {t("All Users (Total Calculation)")}</option>
+              <option value={user.uid}>👤 {t("My Inputs Only")} ({user.displayName?.split(" ")[0] || "Me"})</option>
+              {systemUsers.length > 0 && (
+                <optgroup label={t("Select Any Other User")}>
+                  {systemUsers
+                    .filter(u => u.uid !== user.uid)
+                    .map(u => (
+                      <option key={u.uid} value={u.uid}>
+                        {u.displayName} ({u.role || "staff"})
+                      </option>
+                    ))}
+                </optgroup>
+              )}
+            </select>
+          </div>
+
+          {selectedUserFilter !== "all" && (
+            <button
+              onClick={() => setSelectedUserFilter("all")}
+              className="text-xs font-bold px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl transition cursor-pointer"
+              title={t("Reset to all users")}
+            >
+              {t("Reset to All")}
+            </button>
+          )}
+
+          {/* Mode toggle for other users: Total Calculation vs Input-Only mode */}
+          {!isSuperAdmin && (
+            <div className="flex items-center bg-slate-100 p-1 rounded-xl border border-slate-200">
+              <button
+                type="button"
+                onClick={() => {
+                  setViewMode("calculation");
+                  try { localStorage.setItem("dashboard_view_mode", "calculation"); } catch(e) {}
+                }}
+                className={cn(
+                  "px-2.5 py-1 text-xs font-black rounded-lg transition-all cursor-pointer flex items-center gap-1",
+                  viewMode === "calculation" ? "bg-white text-slate-900 shadow-2xs" : "text-slate-500 hover:text-slate-800"
+                )}
+              >
+                <TrendingUp className="w-3 h-3 text-emerald-600" />
+                <span>{t("Total Calculations")}</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setViewMode("inputOnly");
+                  try { localStorage.setItem("dashboard_view_mode", "inputOnly"); } catch(e) {}
+                }}
+                className={cn(
+                  "px-2.5 py-1 text-xs font-black rounded-lg transition-all cursor-pointer flex items-center gap-1",
+                  viewMode === "inputOnly" ? "bg-white text-slate-900 shadow-2xs" : "text-slate-500 hover:text-slate-800"
+                )}
+                title={t("Switch to input-only mode to register sales and expenses without calculation cards")}
+              >
+                <ShoppingCart className="w-3 h-3 text-indigo-600" />
+                <span>{t("Input Only Mode")}</span>
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
 
       {/* Low Stock Notifications Alert Banner */}
       {lowStockItems.length > 0 && (
@@ -738,8 +895,35 @@ export default function Dashboard({
         </div>
       )}
 
-      {/* Daily Performance Section (Today) */}
-      <div className="space-y-4">
+      {/* Input-Only Mode Notice for Operational Staff */}
+      {viewMode === "inputOnly" && !isSuperAdmin && (
+        <div className="bg-slate-50 border border-slate-200 rounded-2xl p-6 text-center space-y-3">
+          <div className="w-12 h-12 mx-auto rounded-full bg-slate-200 text-slate-800 flex items-center justify-center">
+            <ShoppingCart className="w-6 h-6" />
+          </div>
+          <div className="space-y-1">
+            <h4 className="text-base font-black text-slate-900 uppercase tracking-tight">{t("Quick Input Mode Active")}</h4>
+            <p className="text-xs text-slate-500 max-w-lg mx-auto">
+              {t("You are in data-entry mode. Use the Quick Actions panel above to log new sales, expenses, and payroll entries. Total calculations and store lifetime analytics are collapsed.")}
+            </p>
+          </div>
+          <button
+            onClick={() => {
+              setViewMode("calculation");
+              try { localStorage.setItem("dashboard_view_mode", "calculation"); } catch(e) {}
+            }}
+            className="inline-flex items-center gap-2 px-4 py-2 bg-slate-900 text-white rounded-xl text-xs font-bold hover:bg-slate-800 transition cursor-pointer"
+          >
+            <TrendingUp className="w-4 h-4 text-emerald-400" />
+            <span>{t("Display Total Calculations")}</span>
+          </button>
+        </div>
+      )}
+
+      {(viewMode === "calculation" || isSuperAdmin) && (
+        <>
+          {/* Daily Performance Section (Today) */}
+          <div className="space-y-4">
         <div className="flex items-center gap-2">
           <span className="w-1.5 h-6 bg-rose-600 rounded-full animate-pulse" />
           <h3 className="text-base font-black text-slate-800 uppercase tracking-tight">{t("Today's Shop Ledger Snapshot")}</h3>
@@ -870,12 +1054,12 @@ export default function Dashboard({
             scope="Total"
           />
           <StatCard 
-            title="Total Bank Last Cash" 
-            value={totalBankLastCash} 
+            title={selectedUserFilter === "all" ? t("Total Bank Last Cash") : t("User Net Cash Balance")} 
+            value={selectedUserFilter === "all" ? totalBankLastCash : userNetCash} 
             icon={Wallet} 
             color="sky" 
-            description="Combined remaining cash inside all banks now"
-            scope="Active Balance"
+            description={selectedUserFilter === "all" ? t("Combined remaining cash inside all banks now") : t("Net cash balance calculated from inputs by this user")}
+            scope={selectedUserFilter === "all" ? "Active Balance" : "User Net Cash"}
           />
           <StatCard 
             title="Total Expense Amount" 
@@ -1177,6 +1361,8 @@ export default function Dashboard({
           </table>
         </div>
       </div>
+        </>
+      )}
     </div>
   );
 }

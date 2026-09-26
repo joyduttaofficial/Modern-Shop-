@@ -14,7 +14,7 @@ import {
   Wallet, Landmark, ArrowUpRight, ArrowDownLeft, ArrowUpDown, 
   PlusCircle, MinusCircle, Calendar, ChevronRight, Info, Percent, AlertCircle, 
   DollarSign, Calculator, History, UserCheck, Users, RefreshCw,
-  Pencil, Check, X
+  Pencil, Check, X, CheckCircle2
 } from "lucide-react";
 import { motion } from "motion/react";
 import { format } from "date-fns";
@@ -30,39 +30,66 @@ export default function Transactions({
   initialActiveTab?: "income" | "expense";
   onClearInitialActiveTab?: () => void;
 }) {
-  const [workspaceTab, setWorkspaceTab] = useState<"inout" | "opening" | "banks" | "loans" | "ledgers">(() => {
+  const normalizedRole = (role || "").toLowerCase().trim();
+  const isAdmin =
+    normalizedRole === "admin" ||
+    normalizedRole === "super_admin" ||
+    normalizedRole === "superadmin" ||
+    normalizedRole === "super admin" ||
+    normalizedRole.includes("super") ||
+    normalizedRole.includes("administrator");
+
+  const [workspaceTab, setWorkspaceTab] = useState<"inputDesk" | "inout" | "opening" | "banks" | "loans" | "ledgers">(() => {
+    if (!isAdmin) return "inputDesk";
     if (typeof window !== "undefined") {
       try {
         const saved = localStorage.getItem("transactions_workspaceTab") as any;
-        if (saved && ["inout", "opening", "banks", "loans", "ledgers"].includes(saved)) {
+        if (saved && ["inputDesk", "inout", "opening", "banks", "loans", "ledgers"].includes(saved)) {
           return saved;
         }
       } catch (e) {
         console.warn("Could not read transactions_workspaceTab:", e);
       }
     }
-    return "inout";
+    return "inputDesk";
   });
 
   useEffect(() => {
-    if (typeof window !== "undefined") {
+    if (typeof window !== "undefined" && isAdmin) {
       try {
         localStorage.setItem("transactions_workspaceTab", workspaceTab);
       } catch (e) {
         console.warn("Could not save transactions_workspaceTab:", e);
       }
     }
-  }, [workspaceTab]);
+  }, [workspaceTab, isAdmin]);
+
   const [activeTab, setActiveTab] = useState<TransactionType>(initialActiveTab || "income");
+
+  const [inputAction, setInputAction] = useState<"income" | "expense" | "bank_deposit" | "bank_credit" | "bank_transfer" | "loan">(
+    initialActiveTab === "expense" ? "expense" : "income"
+  );
+  const [loanDeskMode, setLoanDeskMode] = useState<"deposit" | "credit">("deposit");
+  const [recentFilter, setRecentFilter] = useState<"all" | "income" | "expense">("all");
+
+  const [successBanner, setSuccessBanner] = useState<string | null>(null);
+  const showFeedback = (msg: string) => {
+    setSuccessBanner(msg);
+    setTimeout(() => {
+      setSuccessBanner(prev => (prev === msg ? null : prev));
+    }, 4500);
+  };
 
   useEffect(() => {
     if (initialActiveTab) {
       setActiveTab(initialActiveTab);
+      setInputAction(initialActiveTab);
       if (onClearInitialActiveTab) {
         onClearInitialActiveTab();
       }
     }
   }, [initialActiveTab]);
+
   const [currentAction, setCurrentAction] = useState<
     "income" | "prev_cash" | "expense" | "bank_deposit" | "bank_credit" | "loan_deposit" | "loan_credit"
   >("income");
@@ -269,7 +296,7 @@ export default function Transactions({
         setEmployeeId("");
         setSupplierId("");
         
-        alert(`Successfully recorded ${activePayments.length} supplier payments.`);
+        showFeedback(`✓ Successfully recorded ${activePayments.length} supplier payments.`);
       } catch (error) {
         handleFirestoreError(error, OperationType.CREATE, "transactions");
       } finally {
@@ -337,7 +364,7 @@ export default function Transactions({
       setSubCategory("");
       setEmployeeId("");
       setSupplierId("");
-      alert("Transaction successfully recorded in system ledger.");
+      showFeedback(`✓ ${computedType === "income" ? "Income" : "Expense"} entry of ৳${numAmount.toLocaleString()} successfully recorded.`);
     } catch (error) {
       const errStr = error instanceof Error ? error.message : String(error);
       const isOfflineErr = !navigator.onLine || 
@@ -450,7 +477,7 @@ export default function Transactions({
 
       setTransferAmount("");
       setTransferNotes("");
-      alert("Successfully completed account balance transfer.");
+      showFeedback(`✓ Successfully transferred ৳${amt.toLocaleString()} from ${transferSource} to ${transferTarget}.`);
     } catch (error) {
       alert("Transfer failed: " + error);
     } finally {
@@ -501,7 +528,7 @@ export default function Transactions({
           lastUpdated: nowStr
         });
 
-        alert(`Successfully deposited ৳${amt.toLocaleString()} into ${selectedBank}.`);
+        showFeedback(`✓ Successfully deposited ৳${amt.toLocaleString()} into ${selectedBank}.`);
       } else if (bankSubTab === "credit") {
         const newTx: Transaction = {
           date: nowStr,
@@ -520,7 +547,7 @@ export default function Transactions({
           lastUpdated: nowStr
         });
 
-        alert(`Successfully withdrew ৳${amt.toLocaleString()} from ${selectedBank} into Cash drawer.`);
+        showFeedback(`✓ Successfully withdrew ৳${amt.toLocaleString()} from ${selectedBank} into Cash drawer.`);
       }
 
       setBankActionAmount("");
@@ -667,196 +694,1258 @@ export default function Transactions({
     .filter(tx => tx.type === "expense" && tx.date.startsWith(currentMonthStr))
     .reduce((sum, x) => sum + x.amount, 0);
 
-  return (
+  const quickIncomeCats = [
+    "Counter Sales",
+    "Wholesale Sales",
+    "Customer Receipt",
+    "Service Charge",
+    "Previous Cash",
+    "Other Income"
+  ];
+
+  const quickExpenseCats = [
+    "Shop Rent",
+    "Electricity & Utilities",
+    "Food & Tea",
+    "Transport & Delivery",
+    "Office Supplies",
+    "Staff Salary",
+    "Supplier Due Payment",
+    "Repairs & Maintenance",
+    "Other"
+  ];
+
+  const myRecentTransactions = transactions
+    .filter(tx => {
+      if (isAdmin) return true;
+      if (tx.createdBy && (tx.createdBy === user.uid || (user.email && tx.createdBy.toLowerCase() === user.email.toLowerCase()))) {
+        return true;
+      }
+      return true;
+    })
+    .filter(tx => {
+      if (recentFilter === "all") return true;
+      return tx.type === recentFilter;
+    })
+    .slice(0, 30);
+
+  const renderInputDesk = () => (
     <div className="space-y-6 animate-in fade-in duration-200">
-      
-      {/* Dynamic Bento metrics panel */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        {/* Cash in Hand */}
-        <div id="drawer-cash-metric" className="bg-gradient-to-br from-emerald-500 to-teal-600 p-5 rounded-3xl text-white shadow-lg border border-emerald-400/20 relative overflow-hidden">
-          <div className="absolute right-3 bottom-0 opacity-10 pointer-events-none">
-            <Wallet className="w-24 h-24 stroke-[1.5]" />
+      {/* Top Banner / Header */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-4">
+        <div>
+          <div className="flex items-center gap-2">
+            <h3 className="text-xl font-black text-slate-900 tracking-tight">Transaction Input Desk</h3>
+            <span className="text-[10px] font-black uppercase tracking-wider bg-emerald-50 text-emerald-700 border border-emerald-200 px-2.5 py-0.5 rounded-full flex items-center gap-1">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+              Fast Entry Mode
+            </span>
           </div>
-          <p className="text-[10px] font-bold uppercase tracking-widest text-emerald-100/90 flex items-center gap-1.5 leading-none mb-2">
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-200 animate-pulse"></span>
-            Cash Drawer Balance
+          <p className="text-xs font-semibold text-slate-400 mt-1">
+            User-friendly direct entry for cash receipts, business expenses, bank operations, and loans.
           </p>
-          <h3 className="text-2xl font-black font-mono tracking-tight text-white mb-1">
-            {formatCurrency(calculatedCashInHand)}
-          </h3>
-          <p className="text-[10px] text-emerald-150/80 font-medium">Accumulative localized physical tender</p>
         </div>
-
-        {/* Bank balances */}
-        <div id="bank-assets-metric" className="bg-gradient-to-br from-indigo-500 to-blue-600 p-5 rounded-3xl text-white shadow-lg border border-indigo-400/20 relative overflow-hidden">
-          <div className="absolute right-3 bottom-0 opacity-10 pointer-events-none">
-            <Landmark className="w-24 h-24 stroke-[1.5]" />
-          </div>
-          <p className="text-[10px] font-bold uppercase tracking-widest text-indigo-105 flex items-center gap-1.5 leading-none mb-2">
-            <span className="w-1.5 h-1.5 rounded-full bg-indigo-200"></span>
-            Combined Bank Assets
-          </p>
-          <h3 className="text-2xl font-black font-mono tracking-tight text-white mb-1">
-            {formatCurrency(calculatedBankBalance)}
-          </h3>
-          <p className="text-[10px] text-indigo-150/85 font-medium">Across {banks.length} registered electronic portals</p>
-        </div>
-
-        {/* Loan balance */}
-        <div id="loans-liabilities-metric" className="bg-gradient-to-br from-amber-500 to-orange-600 p-5 rounded-3xl text-white shadow-lg border border-amber-400/20 relative overflow-hidden">
-          <div className="absolute right-3 bottom-0 opacity-10 pointer-events-none">
-            <RefreshCw className="w-24 h-24 stroke-[1.5]" />
-          </div>
-          <p className="text-[10px] font-bold uppercase tracking-widest text-amber-100 flex items-center gap-1.5 leading-none mb-2">
-            <span className="w-1.5 h-1.5 rounded-full bg-amber-200"></span>
-            Unsettled Loan Debt
-          </p>
-          <h3 className="text-2xl font-black font-mono tracking-tight text-white mb-1">
-            {formatCurrency(outstandingLoanBalance)}
-          </h3>
-          <p className="text-[10px] text-amber-100/80 font-medium">Repaid: {formatCurrency(totalLoansRepaid)} so far</p>
-        </div>
-
-        {/* Month flow stats */}
-        <div id="monthly-outlay-metric" className="bg-gradient-to-br from-slate-800 to-slate-900 p-5 rounded-3xl text-white shadow-lg border border-slate-700/30 relative overflow-hidden">
-          <div className="absolute right-3 bottom-0 opacity-10 pointer-events-none">
-            <Calculator className="w-24 h-24 stroke-[1.5]" />
-          </div>
-          <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400 flex items-center gap-1.5 leading-none mb-2">
-            <span className="w-1.5 h-1.5 rounded-full bg-slate-450"></span>
-            Monthly Flow ({format(new Date(), "MMMM")})
-          </p>
-          <div className="flex flex-col gap-0.5">
-            <div className="flex items-center justify-between text-xs font-semibold">
-              <span className="text-slate-400 font-bold">In:</span>
-              <span className="text-emerald-400 font-mono font-black">+{formatCurrency(monthlyInflow)}</span>
-            </div>
-            <div className="flex items-center justify-between text-xs font-semibold">
-              <span className="text-slate-400 font-bold">Out:</span>
-              <span className="text-rose-400 font-mono font-black">-{formatCurrency(monthlyOutflow)}</span>
-            </div>
-          </div>
-          <p className="text-[10px] text-slate-500 font-medium mt-1.5 pt-1.5 border-t border-slate-700/50">Current financial month activity</p>
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-bold text-slate-600 bg-slate-100 px-3 py-1.5 rounded-xl border border-slate-200/80">
+            👤 {user.displayName?.split(" ")[0] || "Staff"} ({role || "Accountant"})
+          </span>
         </div>
       </div>
 
-      {/* Primary Workspace Navigation & Area */}
-      <div className="bg-white rounded-3xl border border-slate-200/60 shadow-xl shadow-slate-100/40 overflow-hidden min-h-[580px] grid grid-cols-1 lg:grid-cols-12 divide-y lg:divide-y-0 lg:divide-x divide-slate-100">
-        
-        {/* High-fidelity Sidebar Control Rail */}
-        <div className="lg:col-span-3 p-4 sm:p-5 space-y-4 sm:space-y-6 bg-slate-50/70">
-          <div>
-            <h2 className="text-lg font-black text-slate-800 tracking-tight">Financial Hub</h2>
-            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mt-0.5">Organized Cash flow registries</p>
+      {/* Success Notification Alert */}
+      {successBanner && (
+        <div className="bg-emerald-50 border border-emerald-200 text-emerald-900 px-4 py-3.5 rounded-2xl flex items-center justify-between text-xs font-bold shadow-xs animate-in fade-in slide-in-from-top-1">
+          <div className="flex items-center gap-2.5">
+            <div className="w-6 h-6 rounded-full bg-emerald-500 text-white flex items-center justify-center shrink-0">
+              <Check className="w-3.5 h-3.5" />
+            </div>
+            <span>{successBanner}</span>
           </div>
+          <button 
+            type="button" 
+            onClick={() => setSuccessBanner(null)} 
+            className="text-emerald-600 hover:text-emerald-950 p-1 cursor-pointer"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
 
-          <nav className="flex flex-row lg:flex-col gap-1.5 overflow-x-auto pb-2 lg:pb-0 scrollbar-none">
-            <button
-              id="tab-inout"
-              onClick={() => setWorkspaceTab("inout")}
-              className={cn(
-                "flex-1 lg:w-full min-w-max lg:min-w-0 flex items-center justify-between px-3.5 sm:px-4 py-2.5 sm:py-3 rounded-xl sm:rounded-2xl text-xs font-bold transition-all uppercase tracking-wider text-left border cursor-pointer shrink-0",
-                workspaceTab === "inout" 
-                  ? "bg-white text-slate-900 border-slate-205 shadow-sm font-black text-indigo-700" 
-                  : "bg-transparent text-slate-505 border-transparent hover:bg-slate-100/80 hover:text-slate-950"
-              )}
-            >
-              <span className="flex items-center gap-2 sm:gap-2.5">
-                <ArrowUpDown className="w-4 h-4 text-emerald-500 shrink-0" />
-                Inflows & Outflows
-              </span>
-              <ChevronRight className="w-3.5 h-3.5 opacity-50 hidden lg:block" />
-            </button>
-
-            <button
-              id="tab-opening"
-              onClick={() => setWorkspaceTab("opening")}
-              className={cn(
-                "flex-1 lg:w-full min-w-max lg:min-w-0 flex items-center justify-between px-3.5 sm:px-4 py-2.5 sm:py-3 rounded-xl sm:rounded-2xl text-xs font-bold transition-all uppercase tracking-wider text-left border cursor-pointer shrink-0",
-                workspaceTab === "opening" 
-                  ? "bg-white text-slate-900 border-slate-205 shadow-sm font-black text-indigo-700" 
-                  : "bg-transparent text-slate-505 border-transparent hover:bg-slate-100/80 hover:text-slate-950"
-              )}
-            >
-              <span className="flex items-center gap-2 sm:gap-2.5">
-                <Wallet className="w-4 h-4 text-indigo-500 shrink-0" />
-                Previous / Opening Cash
-              </span>
-              <ChevronRight className="w-3.5 h-3.5 opacity-50 hidden lg:block" />
-            </button>
-
-            <button
-              id="tab-banks"
-              onClick={() => setWorkspaceTab("banks")}
-              className={cn(
-                "flex-1 lg:w-full min-w-max lg:min-w-0 flex items-center justify-between px-3.5 sm:px-4 py-2.5 sm:py-3 rounded-xl sm:rounded-2xl text-xs font-bold transition-all uppercase tracking-wider text-left border cursor-pointer shrink-0",
-                workspaceTab === "banks" 
-                  ? "bg-white text-slate-900 border-slate-205 shadow-sm font-black text-indigo-700" 
-                  : "bg-transparent text-slate-505 border-transparent hover:bg-slate-100/80 hover:text-slate-950"
-              )}
-            >
-              <span className="flex items-center gap-2 sm:gap-2.5">
-                <Landmark className="w-4 h-4 text-sky-550 shrink-0" />
-                Bank Operations
-              </span>
-              <span className="bg-sky-50 text-sky-700 border border-sky-100 text-[9px] px-1.5 py-0.5 rounded-md font-bold ml-1.5">
-                {banks.length}
-              </span>
-            </button>
-
-            <button
-              id="tab-loans"
-              onClick={() => setWorkspaceTab("loans")}
-              className={cn(
-                "flex-1 lg:w-full min-w-max lg:min-w-0 flex items-center justify-between px-3.5 sm:px-4 py-2.5 sm:py-3 rounded-xl sm:rounded-2xl text-xs font-bold transition-all uppercase tracking-wider text-left border cursor-pointer shrink-0",
-                workspaceTab === "loans" 
-                  ? "bg-white text-slate-900 border-slate-205 shadow-sm font-black text-indigo-700" 
-                  : "bg-transparent text-slate-505 border-transparent hover:bg-slate-100/80 hover:text-slate-950"
-              )}
-            >
-              <span className="flex items-center gap-2 sm:gap-2.5">
-                <RefreshCw className="w-4 h-4 text-amber-500 shrink-0" />
-                Debt & loan Desk
-              </span>
-              <ChevronRight className="w-3.5 h-3.5 opacity-50 hidden lg:block" />
-            </button>
-
-            <button
-              id="tab-ledgers"
-              onClick={() => setWorkspaceTab("ledgers")}
-              className={cn(
-                "flex-1 lg:w-full min-w-max lg:min-w-0 flex items-center justify-between px-3.5 sm:px-4 py-2.5 sm:py-3 rounded-xl sm:rounded-2xl text-xs font-bold transition-all uppercase tracking-wider text-left border cursor-pointer shrink-0",
-                workspaceTab === "ledgers" 
-                  ? "bg-white text-slate-900 border-slate-205 shadow-sm font-black text-indigo-700" 
-                  : "bg-transparent text-slate-505 border-transparent hover:bg-slate-100/80 hover:text-slate-950"
-              )}
-            >
-              <span className="flex items-center gap-2 sm:gap-2.5">
-                <History className="w-4 h-4 text-slate-600 shrink-0" />
-                Unified Ledger List
-              </span>
-              <span className="bg-slate-100 text-slate-700 text-[9px] px-1.5 py-0.5 rounded-md font-bold ml-1.5">
-                {transactions.length}
-              </span>
-            </button>
-          </nav>
-
-          {/* Quick info tip context block */}
-          <div className="bg-slate-100/60 p-4 rounded-2xl border border-slate-200/50 space-y-1.5 hidden lg:block">
-            <span className="inline-flex items-center gap-1 text-[10px] font-black tracking-widest text-slate-400 uppercase">
-              <Info className="w-3 h-3 text-slate-500" /> Accounting Shield
+      {/* Action Type Selector Buttons */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
+        <button
+          type="button"
+          onClick={() => {
+            setInputAction("income");
+            setActiveTab("income");
+            setCategory("Income");
+            setCurrentAction("income");
+          }}
+          className={cn(
+            "p-3 rounded-2xl border text-left transition-all cursor-pointer flex flex-col justify-between gap-2",
+            inputAction === "income"
+              ? "bg-emerald-600 text-white border-emerald-600 shadow-md font-bold"
+              : "bg-white text-slate-700 border-slate-200 hover:bg-slate-50"
+          )}
+        >
+          <div className="flex items-center justify-between">
+            <span className={cn("w-7 h-7 rounded-xl flex items-center justify-center text-xs", inputAction === "income" ? "bg-white/20 text-white" : "bg-emerald-50 text-emerald-600")}>
+              <ArrowDownLeft className="w-4 h-4" />
             </span>
-            <p className="text-[11px] text-slate-500 leading-relaxed font-semibold">
-              Always balance cash withdrawals & bank credits with physical deposit ledgers to keep business balance sheets accurate.
-            </p>
+            <span className="text-[10px] font-black uppercase opacity-75">Inflow</span>
           </div>
+          <span className="text-xs font-black tracking-tight">Income / Cash In</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => {
+            setInputAction("expense");
+            setActiveTab("expense");
+            setCategory("Shop Expense");
+            setCurrentAction("expense");
+          }}
+          className={cn(
+            "p-3 rounded-2xl border text-left transition-all cursor-pointer flex flex-col justify-between gap-2",
+            inputAction === "expense"
+              ? "bg-rose-600 text-white border-rose-600 shadow-md font-bold"
+              : "bg-white text-slate-700 border-slate-200 hover:bg-slate-50"
+          )}
+        >
+          <div className="flex items-center justify-between">
+            <span className={cn("w-7 h-7 rounded-xl flex items-center justify-center text-xs", inputAction === "expense" ? "bg-white/20 text-white" : "bg-rose-50 text-rose-600")}>
+              <ArrowUpRight className="w-4 h-4" />
+            </span>
+            <span className="text-[10px] font-black uppercase opacity-75">Outflow</span>
+          </div>
+          <span className="text-xs font-black tracking-tight">Expense / Cash Out</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => {
+            setInputAction("bank_deposit");
+            setBankSubTab("deposit");
+            setCurrentAction("bank_deposit");
+          }}
+          className={cn(
+            "p-3 rounded-2xl border text-left transition-all cursor-pointer flex flex-col justify-between gap-2",
+            inputAction === "bank_deposit"
+              ? "bg-sky-600 text-white border-sky-600 shadow-md font-bold"
+              : "bg-white text-slate-700 border-slate-200 hover:bg-slate-50"
+          )}
+        >
+          <div className="flex items-center justify-between">
+            <span className={cn("w-7 h-7 rounded-xl flex items-center justify-center text-xs", inputAction === "bank_deposit" ? "bg-white/20 text-white" : "bg-sky-50 text-sky-600")}>
+              <Landmark className="w-4 h-4" />
+            </span>
+            <span className="text-[10px] font-black uppercase opacity-75">Bank</span>
+          </div>
+          <span className="text-xs font-black tracking-tight">Bank Deposit</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => {
+            setInputAction("bank_credit");
+            setBankSubTab("credit");
+            setCurrentAction("bank_credit");
+          }}
+          className={cn(
+            "p-3 rounded-2xl border text-left transition-all cursor-pointer flex flex-col justify-between gap-2",
+            inputAction === "bank_credit"
+              ? "bg-amber-600 text-white border-amber-600 shadow-md font-bold"
+              : "bg-white text-slate-700 border-slate-200 hover:bg-slate-50"
+          )}
+        >
+          <div className="flex items-center justify-between">
+            <span className={cn("w-7 h-7 rounded-xl flex items-center justify-center text-xs", inputAction === "bank_credit" ? "bg-white/20 text-white" : "bg-amber-50 text-amber-600")}>
+              <Wallet className="w-4 h-4" />
+            </span>
+            <span className="text-[10px] font-black uppercase opacity-75">Cash Hand</span>
+          </div>
+          <span className="text-xs font-black tracking-tight">Bank Withdrawal</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => {
+            setInputAction("bank_transfer");
+            setBankSubTab("transfer");
+          }}
+          className={cn(
+            "p-3 rounded-2xl border text-left transition-all cursor-pointer flex flex-col justify-between gap-2",
+            inputAction === "bank_transfer"
+              ? "bg-indigo-600 text-white border-indigo-600 shadow-md font-bold"
+              : "bg-white text-slate-700 border-slate-200 hover:bg-slate-50"
+          )}
+        >
+          <div className="flex items-center justify-between">
+            <span className={cn("w-7 h-7 rounded-xl flex items-center justify-center text-xs", inputAction === "bank_transfer" ? "bg-white/20 text-white" : "bg-indigo-50 text-indigo-600")}>
+              <ArrowUpDown className="w-4 h-4" />
+            </span>
+            <span className="text-[10px] font-black uppercase opacity-75">Internal</span>
+          </div>
+          <span className="text-xs font-black tracking-tight">Account Transfer</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => {
+            setInputAction("loan");
+            setCategory(loanDeskMode === "deposit" ? "Loan Deposit" : "Loan Credit");
+            setActiveTab(loanDeskMode === "deposit" ? "income" : "expense");
+          }}
+          className={cn(
+            "p-3 rounded-2xl border text-left transition-all cursor-pointer flex flex-col justify-between gap-2",
+            inputAction === "loan"
+              ? "bg-purple-600 text-white border-purple-600 shadow-md font-bold"
+              : "bg-white text-slate-700 border-slate-200 hover:bg-slate-50"
+          )}
+        >
+          <div className="flex items-center justify-between">
+            <span className={cn("w-7 h-7 rounded-xl flex items-center justify-center text-xs", inputAction === "loan" ? "bg-white/20 text-white" : "bg-purple-50 text-purple-600")}>
+              <RefreshCw className="w-4 h-4" />
+            </span>
+            <span className="text-[10px] font-black uppercase opacity-75">Liability</span>
+          </div>
+          <span className="text-xs font-black tracking-tight">Loan Desk</span>
+        </button>
+      </div>
+
+      {/* Main Two-Column Layout */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+        {/* Form Container */}
+        <div className="lg:col-span-7 bg-white p-5 sm:p-6 rounded-2xl border border-slate-200/80 shadow-xs space-y-5">
+          {/* INCOME FORM */}
+          {inputAction === "income" && (
+            <form onSubmit={handleSubmit} className="space-y-4">
+              <div className="border-b border-slate-100 pb-3">
+                <span className="text-xs font-black uppercase tracking-wider text-emerald-600 flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
+                  Record Cash / Bank Inflow
+                </span>
+              </div>
+
+              {/* Amount */}
+              <div className="space-y-1">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">Amount in BDT (৳)</label>
+                <div className="relative">
+                  <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 font-black text-lg">৳</span>
+                  <input
+                    type="number"
+                    step="0.01"
+                    required
+                    placeholder="0.00"
+                    value={amount}
+                    onChange={(e) => setAmount(e.target.value)}
+                    className="w-full pl-9 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl text-xl font-mono font-black focus:bg-white focus:border-emerald-600 outline-none transition-all shadow-2xs"
+                  />
+                </div>
+              </div>
+
+              {/* Quick Category Chips */}
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">Quick Category</label>
+                <div className="flex flex-wrap gap-1.5">
+                  {quickIncomeCats.map(cat => (
+                    <button
+                      key={cat}
+                      type="button"
+                      onClick={() => {
+                        setCategory(cat === "Previous Cash" ? "Previous Cash" : "Income");
+                        setSubCategory(cat);
+                      }}
+                      className={cn(
+                        "px-2.5 py-1 text-xs font-bold rounded-lg border transition-all cursor-pointer",
+                        subCategory === cat 
+                          ? "bg-emerald-50 border-emerald-300 text-emerald-800 shadow-2xs font-extrabold" 
+                          : "bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100"
+                      )}
+                    >
+                      {cat}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                {/* Reference / SubCategory */}
+                <div className="space-y-1">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">Reference / Category</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Retail sale, wholesale receipt..."
+                    value={subCategory}
+                    onChange={(e) => setSubCategory(e.target.value)}
+                    className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl font-semibold text-xs outline-none focus:bg-white focus:border-emerald-600"
+                  />
+                </div>
+
+                {/* Date & Time */}
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between pl-1">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Date & Time</label>
+                    <button 
+                      type="button"
+                      onClick={() => setDate(format(new Date(), "yyyy-MM-dd'T'HH:mm"))}
+                      className="text-[9px] font-bold text-emerald-600 hover:underline cursor-pointer"
+                    >
+                      Set to Now
+                    </button>
+                  </div>
+                  <input
+                    type="datetime-local"
+                    required
+                    value={date}
+                    onChange={(e) => setDate(e.target.value)}
+                    className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl font-semibold text-xs outline-none focus:bg-white focus:border-emerald-600"
+                  />
+                </div>
+              </div>
+
+              {/* Payment Method (Balances hidden) */}
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">Payment Method</label>
+                <div className="grid grid-cols-2 gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setPaymentMethod("Cash")}
+                    className={cn(
+                      "py-2.5 px-3 rounded-xl border text-xs font-bold flex items-center justify-center gap-2 cursor-pointer transition-all",
+                      paymentMethod === "Cash" 
+                        ? "bg-slate-900 text-white border-slate-900 shadow-xs" 
+                        : "bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100"
+                    )}
+                  >
+                    <Wallet className="w-4 h-4" />
+                    Cash Drawer
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPaymentMethod(banks[0]?.name || "Bank")}
+                    className={cn(
+                      "py-2.5 px-3 rounded-xl border text-xs font-bold flex items-center justify-center gap-2 cursor-pointer transition-all",
+                      paymentMethod !== "Cash" 
+                        ? "bg-slate-900 text-white border-slate-900 shadow-xs" 
+                        : "bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100"
+                    )}
+                  >
+                    <Landmark className="w-4 h-4" />
+                    Bank Account
+                  </button>
+                </div>
+                {paymentMethod !== "Cash" && (
+                  <select
+                    value={paymentMethod}
+                    onChange={(e) => setPaymentMethod(e.target.value)}
+                    className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold outline-none cursor-pointer"
+                  >
+                    {banks.map(b => (
+                      <option key={b.id} value={b.name}>
+                        {b.name}{isAdmin ? ` (৳${b.balance.toFixed(2)})` : ""}
+                      </option>
+                    ))}
+                  </select>
+                )}
+              </div>
+
+              {/* Memo */}
+              <div className="space-y-1">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">Transaction Note (Optional)</label>
+                <input
+                  type="text"
+                  placeholder="Memo for audit verification..."
+                  value={notes}
+                  onChange={(e) => setNotes(e.target.value)}
+                  className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold outline-none focus:bg-white focus:border-emerald-600"
+                />
+              </div>
+
+              <button
+                type="submit"
+                disabled={loading}
+                className="w-full py-3.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-2xl font-black text-xs uppercase tracking-wider transition-all shadow-md active:scale-[0.99] disabled:opacity-50 cursor-pointer"
+              >
+                {loading ? "Recording Inflow..." : `✓ Record Income Entry (৳${amount || "0.00"})`}
+              </button>
+            </form>
+          )}
+
+          {/* EXPENSE FORM */}
+          {inputAction === "expense" && (
+            <form onSubmit={handleSubmit} className="space-y-4">
+              <div className="border-b border-slate-100 pb-3">
+                <span className="text-xs font-black uppercase tracking-wider text-rose-600 flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-rose-500"></span>
+                  Record Expense / Cash Outflow
+                </span>
+              </div>
+
+              {/* Amount */}
+              <div className="space-y-1">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">
+                  {category === "Supplier Due Payment" ? "Full Allocation (Sum)" : "Amount in BDT (৳)"}
+                </label>
+                <div className="relative">
+                  <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 font-black text-lg">৳</span>
+                  <input
+                    type="number"
+                    step="0.01"
+                    required
+                    placeholder="0.00"
+                    readOnly={category === "Supplier Due Payment"}
+                    value={amount}
+                    onChange={(e) => setAmount(e.target.value)}
+                    className={cn(
+                      "w-full pl-9 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl text-xl font-mono font-black focus:bg-white focus:border-rose-600 outline-none transition-all shadow-2xs",
+                      category === "Supplier Due Payment" && "bg-amber-50/70 border-amber-200 text-amber-950 font-bold cursor-not-allowed"
+                    )}
+                  />
+                </div>
+              </div>
+
+              {/* Quick Category Chips */}
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">Spend Category</label>
+                <div className="flex flex-wrap gap-1.5">
+                  {quickExpenseCats.map(cat => (
+                    <button
+                      key={cat}
+                      type="button"
+                      onClick={() => {
+                        setCategory(cat);
+                        if (cat !== "Supplier Due Payment" && cat !== "Staff Salary") {
+                          setSubCategory(cat);
+                        }
+                      }}
+                      className={cn(
+                        "px-2.5 py-1 text-xs font-bold rounded-lg border transition-all cursor-pointer",
+                        category === cat 
+                          ? "bg-rose-50 border-rose-300 text-rose-800 shadow-2xs font-extrabold" 
+                          : "bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100"
+                      )}
+                    >
+                      {cat}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Category dropdown */}
+              <div className="space-y-1">
+                <select
+                  required
+                  value={category}
+                  onChange={(e) => {
+                    setCategory(e.target.value);
+                    setSubCategory("");
+                  }}
+                  className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl font-semibold text-xs outline-none focus:bg-white focus:border-rose-600"
+                >
+                  <option value="">Select Spend Category...</option>
+                  <option value="Shop Rent">Shop Rent</option>
+                  <option value="Electricity & Utilities">Electricity & Utilities</option>
+                  <option value="Food & Tea">Food & Tea</option>
+                  <option value="Transport & Delivery">Transport & Delivery</option>
+                  <option value="Office Supplies">Office Supplies</option>
+                  <option value="Supplier Due Payment">Supplier Due Settlement</option>
+                  <option value="Staff Salary">Staff Monthly Salary</option>
+                  <option value="Employee Advance">Employee Advance Disbursement</option>
+                  <option value="Repairs & Maintenance">Repairs & Maintenance</option>
+                  {categories
+                    .filter(c => c.type === "expense" && !["Supplier Due Payment", "Staff Salary", "Employee Advance", "Shop Rent", "Electricity & Utilities", "Food & Tea", "Transport & Delivery", "Office Supplies", "Repairs & Maintenance"].includes(c.name))
+                    .map(c => (
+                      <option key={c.id} value={c.name}>{c.name}</option>
+                    ))}
+                </select>
+              </div>
+
+              {/* Multi Supplier Payments view */}
+              {category === "Supplier Due Payment" && (
+                <div className="space-y-2 p-3.5 bg-amber-50/50 border border-amber-200 rounded-2xl">
+                  <div className="flex items-center justify-between">
+                    <label className="text-[10px] font-black text-amber-900 uppercase tracking-widest">Supplier Dues Allocation</label>
+                    <span className="text-[10px] font-bold text-amber-700">Total: ৳{amount || "0"}</span>
+                  </div>
+                  <input
+                    type="text"
+                    placeholder="Search supplier..."
+                    value={supplierSearch}
+                    onChange={(e) => setSupplierSearch(e.target.value)}
+                    className="w-full px-3 py-1.5 bg-white border border-amber-200 rounded-lg text-xs outline-none"
+                  />
+                  <div className="max-h-40 overflow-y-auto space-y-1.5 pr-1">
+                    {suppliers
+                      .filter(s => (s.purchaseDue || 0) > 0)
+                      .filter(s => !supplierSearch || s.name.toLowerCase().includes(supplierSearch.toLowerCase()))
+                      .map(sup => {
+                        const val = supplierPayments[sup.id!] || "";
+                        return (
+                          <div key={sup.id} className="flex items-center justify-between p-2 bg-white rounded-lg border border-amber-100 text-xs">
+                            <div className="min-w-0 pr-2">
+                              <p className="font-bold text-slate-800 truncate">{sup.name}</p>
+                              <p className="text-[10px] text-amber-700 font-semibold">Due: ৳{(sup.purchaseDue || 0).toLocaleString()}</p>
+                            </div>
+                            <input
+                              type="number"
+                              step="0.01"
+                              placeholder="0.00"
+                              value={val}
+                              onChange={(e) => setSupplierPayments(p => ({...p, [sup.id!]: e.target.value}))}
+                              className="w-24 px-2 py-1 border border-slate-200 rounded-md font-mono text-right text-xs outline-none"
+                            />
+                          </div>
+                        );
+                      })}
+                  </div>
+                </div>
+              )}
+
+              {/* Employee selector */}
+              {(category === "Staff Salary" || category === "Employee Advance") && (
+                <div className="space-y-1 p-3.5 bg-sky-50/40 border border-sky-100 rounded-2xl">
+                  <label className="text-[10px] font-black text-sky-800 uppercase tracking-widest">Select Active Staff Employee</label>
+                  <select
+                    required
+                    value={employeeId}
+                    onChange={(e) => setEmployeeId(e.target.value)}
+                    className="w-full px-4 py-2 bg-white border border-slate-200 rounded-xl font-semibold text-xs outline-none text-slate-800"
+                  >
+                    <option value="">Select registered employee...</option>
+                    {employees.map(emp => (
+                      <option key={emp.id} value={emp.id}>{emp.name} ({emp.role})</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
+              {/* Reference / Sub-category */}
+              {!(["Staff Salary", "Employee Advance", "Supplier Due Payment"].includes(category)) && (
+                <div className="space-y-1">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">Reference / Specific Description</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Electric bill for September, office tea & snacks..."
+                    value={subCategory}
+                    onChange={(e) => setSubCategory(e.target.value)}
+                    className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl font-semibold text-xs outline-none focus:bg-white focus:border-rose-600"
+                  />
+                </div>
+              )}
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                {/* Date & Time */}
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between pl-1">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Date & Time</label>
+                    <button 
+                      type="button"
+                      onClick={() => setDate(format(new Date(), "yyyy-MM-dd'T'HH:mm"))}
+                      className="text-[9px] font-bold text-rose-600 hover:underline cursor-pointer"
+                    >
+                      Set to Now
+                    </button>
+                  </div>
+                  <input
+                    type="datetime-local"
+                    required
+                    value={date}
+                    onChange={(e) => setDate(e.target.value)}
+                    className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl font-semibold text-xs outline-none focus:bg-white focus:border-rose-600"
+                  />
+                </div>
+
+                {/* Payment Method */}
+                <div className="space-y-1">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">Payment Method</label>
+                  <select
+                    value={paymentMethod}
+                    onChange={(e) => setPaymentMethod(e.target.value)}
+                    className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold outline-none cursor-pointer"
+                  >
+                    <option value="Cash">Cash Drawer</option>
+                    {banks.map(b => (
+                      <option key={b.id} value={b.name}>
+                        {b.name}{isAdmin ? ` (৳${b.balance.toFixed(2)})` : ""}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              {/* Memo */}
+              <div className="space-y-1">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">Expense Memo (Optional)</label>
+                <input
+                  type="text"
+                  placeholder="Memo for audit verification..."
+                  value={notes}
+                  onChange={(e) => setNotes(e.target.value)}
+                  className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold outline-none focus:bg-white focus:border-rose-600"
+                />
+              </div>
+
+              <button
+                type="submit"
+                disabled={loading}
+                className="w-full py-3.5 bg-rose-600 hover:bg-rose-700 text-white rounded-2xl font-black text-xs uppercase tracking-wider transition-all shadow-md active:scale-[0.99] disabled:opacity-50 cursor-pointer"
+              >
+                {loading ? "Recording Expense..." : `✓ Record Expense Entry (৳${amount || "0.00"})`}
+              </button>
+            </form>
+          )}
+
+          {/* BANK DEPOSIT FORM */}
+          {inputAction === "bank_deposit" && (
+            <form onSubmit={handleBankAction} className="space-y-4">
+              <div className="border-b border-slate-100 pb-3">
+                <span className="text-xs font-black uppercase tracking-wider text-sky-600 flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-sky-500"></span>
+                  Deposit Cash Into Bank Account
+                </span>
+                <p className="text-[11px] text-slate-400 font-medium mt-0.5">Moves liquid physical cash from your counter drawer into a bank account.</p>
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">Target Bank Gateway</label>
+                <select
+                  required
+                  value={bankActionBankName}
+                  onChange={(e) => setBankActionBankName(e.target.value)}
+                  className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl font-semibold text-xs outline-none focus:bg-white focus:border-sky-600 cursor-pointer"
+                >
+                  <option value="">Select Target Bank...</option>
+                  {banks.map(b => (
+                    <option key={b.id} value={b.name}>
+                      {b.name}{isAdmin ? ` (Current: ৳${b.balance.toLocaleString()})` : ""}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">Deposit Amount (BDT)</label>
+                <div className="relative">
+                  <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 font-black text-lg">৳</span>
+                  <input
+                    type="number"
+                    required
+                    placeholder="0.00"
+                    value={bankActionAmount}
+                    onChange={(e) => setBankActionAmount(e.target.value)}
+                    className="w-full pl-9 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl text-xl font-mono font-black focus:bg-white focus:border-sky-600 outline-none transition-all shadow-2xs"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">Transaction Note (Optional)</label>
+                <input
+                  type="text"
+                  value={bankActionNotes}
+                  onChange={(e) => setBankActionNotes(e.target.value)}
+                  placeholder="e.g. Deposited daily sales cash at local branch..."
+                  className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl font-semibold text-xs outline-none focus:bg-white focus:border-sky-600"
+                />
+              </div>
+
+              <button
+                type="submit"
+                disabled={loading}
+                className="w-full py-3.5 bg-sky-600 hover:bg-sky-700 text-white rounded-2xl font-black uppercase text-xs tracking-wider transition-all shadow-md active:scale-[0.99] disabled:opacity-50 cursor-pointer"
+              >
+                {loading ? "Recording Deposit..." : `✓ Record Bank Deposit (৳${bankActionAmount || "0.00"})`}
+              </button>
+            </form>
+          )}
+
+          {/* BANK WITHDRAWAL FORM */}
+          {inputAction === "bank_credit" && (
+            <form onSubmit={handleBankAction} className="space-y-4">
+              <div className="border-b border-slate-100 pb-3">
+                <span className="text-xs font-black uppercase tracking-wider text-amber-600 flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-amber-500"></span>
+                  Withdraw Cash From Bank Account
+                </span>
+                <p className="text-[11px] text-slate-400 font-medium mt-0.5">Withdraws funds from a registered bank account into your physical cash hand drawer.</p>
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">Source Bank Gateway</label>
+                <select
+                  required
+                  value={bankActionBankName}
+                  onChange={(e) => setBankActionBankName(e.target.value)}
+                  className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl font-semibold text-xs outline-none focus:bg-white focus:border-amber-600 cursor-pointer"
+                >
+                  <option value="">Select Source Bank...</option>
+                  {banks.map(b => (
+                    <option key={b.id} value={b.name}>
+                      {b.name}{isAdmin ? ` (Current: ৳${b.balance.toLocaleString()})` : ""}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">Withdrawal Amount (BDT)</label>
+                <div className="relative">
+                  <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 font-black text-lg">৳</span>
+                  <input
+                    type="number"
+                    required
+                    placeholder="0.00"
+                    value={bankActionAmount}
+                    onChange={(e) => setBankActionAmount(e.target.value)}
+                    className="w-full pl-9 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl text-xl font-mono font-black focus:bg-white focus:border-amber-600 outline-none transition-all shadow-2xs"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">Transaction Note (Optional)</label>
+                <input
+                  type="text"
+                  value={bankActionNotes}
+                  onChange={(e) => setBankActionNotes(e.target.value)}
+                  placeholder="e.g. ATM withdrawal, cheque encashment reference..."
+                  className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl font-semibold text-xs outline-none focus:bg-white focus:border-amber-600"
+                />
+              </div>
+
+              <button
+                type="submit"
+                disabled={loading}
+                className="w-full py-3.5 bg-amber-600 hover:bg-amber-700 text-white rounded-2xl font-black uppercase text-xs tracking-wider transition-all shadow-md active:scale-[0.99] disabled:opacity-50 cursor-pointer"
+              >
+                {loading ? "Recording Withdrawal..." : `✓ Record Bank Withdrawal (৳${bankActionAmount || "0.00"})`}
+              </button>
+            </form>
+          )}
+
+          {/* BANK TRANSFER FORM */}
+          {inputAction === "bank_transfer" && (
+            <form onSubmit={handleBankTransfer} className="space-y-4">
+              <div className="border-b border-slate-100 pb-3">
+                <span className="text-xs font-black uppercase tracking-wider text-indigo-600 flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-indigo-500"></span>
+                  Inter-Account Transfer
+                </span>
+                <p className="text-[11px] text-slate-400 font-medium mt-0.5">Directly reallocate funds between different gateways or from drawer to bank.</p>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">From Account</label>
+                  <select
+                    required
+                    value={transferSource}
+                    onChange={(e) => setTransferSource(e.target.value)}
+                    className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl font-semibold outline-none text-xs cursor-pointer"
+                  >
+                    <option value="">Select Source...</option>
+                    <option value="Cash">Cash Drawer</option>
+                    {banks.map(b => <option key={b.id} value={b.name}>{b.name}</option>)}
+                  </select>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">To Account</label>
+                  <select
+                    required
+                    value={transferTarget}
+                    onChange={(e) => setTransferTarget(e.target.value)}
+                    className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl font-semibold outline-none text-xs cursor-pointer"
+                  >
+                    <option value="">Select Target...</option>
+                    <option value="Cash">Cash Drawer</option>
+                    {banks.map(b => <option key={b.id} value={b.name}>{b.name}</option>)}
+                  </select>
+                </div>
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">Transfer Amount (BDT)</label>
+                <div className="relative">
+                  <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 font-black text-lg">৳</span>
+                  <input
+                    type="number"
+                    required
+                    placeholder="0.00"
+                    value={transferAmount}
+                    onChange={(e) => setTransferAmount(e.target.value)}
+                    className="w-full pl-9 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl text-xl font-mono font-black focus:bg-white focus:border-indigo-600 outline-none transition-all shadow-2xs"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">Transfer Note (Optional)</label>
+                <input
+                  type="text"
+                  placeholder="e.g. Monthly liquidity adjustment..."
+                  value={transferNotes}
+                  onChange={(e) => setTransferNotes(e.target.value)}
+                  className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl font-semibold text-xs outline-none focus:bg-white focus:border-indigo-600"
+                />
+              </div>
+
+              <button
+                type="submit"
+                disabled={loading}
+                className="w-full py-3.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-2xl font-black uppercase text-xs tracking-wider transition-all shadow-md active:scale-[0.99] disabled:opacity-50 cursor-pointer"
+              >
+                {loading ? "Executing Transfer..." : `✓ Execute Account Transfer (৳${transferAmount || "0.00"})`}
+              </button>
+            </form>
+          )}
+
+          {/* LOAN / DEBT FORM */}
+          {inputAction === "loan" && (
+            <form onSubmit={handleSubmit} className="space-y-4">
+              <div className="border-b border-slate-100 pb-3 flex items-center justify-between">
+                <div>
+                  <span className="text-xs font-black uppercase tracking-wider text-purple-600 flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full bg-purple-500"></span>
+                    Debt & Loan Registry Desk
+                  </span>
+                  <p className="text-[11px] text-slate-400 font-medium mt-0.5">Record loan receipts from lenders or repayments made to creditors.</p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2 bg-slate-100 p-1 rounded-xl">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setLoanDeskMode("deposit");
+                    setCategory("Loan Deposit");
+                    setActiveTab("income");
+                  }}
+                  className={cn(
+                    "py-2 text-xs font-bold rounded-lg transition-all cursor-pointer",
+                    loanDeskMode === "deposit" ? "bg-white text-emerald-700 shadow-xs" : "text-slate-500"
+                  )}
+                >
+                  Receive Loan (Inflow)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setLoanDeskMode("credit");
+                    setCategory("Loan Credit");
+                    setActiveTab("expense");
+                  }}
+                  className={cn(
+                    "py-2 text-xs font-bold rounded-lg transition-all cursor-pointer",
+                    loanDeskMode === "credit" ? "bg-white text-orange-700 shadow-xs" : "text-slate-500"
+                  )}
+                >
+                  Repay Loan (Outflow)
+                </button>
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">Amount in BDT (৳)</label>
+                <div className="relative">
+                  <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 font-black text-lg">৳</span>
+                  <input
+                    type="number"
+                    step="0.01"
+                    required
+                    placeholder="0.00"
+                    value={amount}
+                    onChange={(e) => setAmount(e.target.value)}
+                    className="w-full pl-9 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl text-xl font-mono font-black focus:bg-white focus:border-purple-600 outline-none transition-all shadow-2xs"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">Lender / Borrower Name</label>
+                <input
+                  type="text"
+                  required
+                  placeholder="e.g. Bank Loan, Uncle Rafiq, Investor..."
+                  value={subCategory}
+                  onChange={(e) => setSubCategory(e.target.value)}
+                  className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl font-semibold text-xs outline-none focus:bg-white focus:border-purple-600"
+                />
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="space-y-1">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">Payment Method</label>
+                  <select
+                    value={paymentMethod}
+                    onChange={(e) => setPaymentMethod(e.target.value)}
+                    className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold outline-none cursor-pointer"
+                  >
+                    <option value="Cash">Cash Drawer</option>
+                    {banks.map(b => (
+                      <option key={b.id} value={b.name}>{b.name}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">Date & Time</label>
+                  <input
+                    type="datetime-local"
+                    required
+                    value={date}
+                    onChange={(e) => setDate(e.target.value)}
+                    className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl font-semibold text-xs outline-none focus:bg-white focus:border-purple-600"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">Audit Notes (Optional)</label>
+                <input
+                  type="text"
+                  placeholder="Memo or repayment terms..."
+                  value={notes}
+                  onChange={(e) => setNotes(e.target.value)}
+                  className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold outline-none focus:bg-white focus:border-purple-600"
+                />
+              </div>
+
+              <button
+                type="submit"
+                disabled={loading}
+                className="w-full py-3.5 bg-purple-600 hover:bg-purple-700 text-white rounded-2xl font-black uppercase text-xs tracking-wider transition-all shadow-md active:scale-[0.99] disabled:opacity-50 cursor-pointer"
+              >
+                {loading ? "Recording Loan Entry..." : `✓ Record Loan Entry (৳${amount || "0.00"})`}
+              </button>
+            </form>
+          )}
         </div>
 
-        {/* Modular workspace views with polished structures */}
-        <div className="lg:col-span-9 p-6 lg:p-8 flex flex-col justify-between">
+        {/* Right Column: Recent Transactions Stream */}
+        <div className="lg:col-span-5 bg-white p-5 sm:p-6 rounded-2xl border border-slate-200/80 shadow-xs space-y-4">
+          <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+            <div>
+              <h4 className="text-sm font-black text-slate-900 uppercase tracking-tight">Recent Entries</h4>
+              <p className="text-[10px] font-semibold text-slate-400">Review transactions recorded by you</p>
+            </div>
+            <div className="flex items-center gap-1 bg-slate-100 p-0.5 rounded-lg text-[10px] font-bold">
+              <button 
+                type="button"
+                onClick={() => setRecentFilter("all")} 
+                className={cn("px-2 py-0.5 rounded cursor-pointer transition-all", recentFilter === "all" ? "bg-white text-slate-900 shadow-2xs font-extrabold" : "text-slate-500")}
+              >
+                All
+              </button>
+              <button 
+                type="button"
+                onClick={() => setRecentFilter("income")} 
+                className={cn("px-2 py-0.5 rounded cursor-pointer transition-all", recentFilter === "income" ? "bg-white text-emerald-700 shadow-2xs font-extrabold" : "text-slate-500")}
+              >
+                + In
+              </button>
+              <button 
+                type="button"
+                onClick={() => setRecentFilter("expense")} 
+                className={cn("px-2 py-0.5 rounded cursor-pointer transition-all", recentFilter === "expense" ? "bg-white text-rose-700 shadow-2xs font-extrabold" : "text-slate-500")}
+              >
+                - Out
+              </button>
+            </div>
+          </div>
+
+          <div className="space-y-2.5 max-h-[520px] overflow-y-auto pr-1">
+            {myRecentTransactions.length === 0 ? (
+              <div className="text-center py-12 bg-slate-50 rounded-2xl border border-dashed border-slate-200">
+                <p className="text-xs font-bold text-slate-400">No recent entries</p>
+                <p className="text-[10px] text-slate-400 mt-0.5">Transactions you record will appear here for verification.</p>
+              </div>
+            ) : (
+              myRecentTransactions.map(tx => {
+                const isIncome = tx.type === "income";
+                return (
+                  <div key={tx.id} className="p-3 bg-slate-50/70 hover:bg-slate-50 border border-slate-200/60 rounded-xl flex items-center justify-between gap-3 group transition-all">
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <div className={cn(
+                        "w-7 h-7 rounded-lg flex items-center justify-center shrink-0 text-xs font-black",
+                        isIncome ? "bg-emerald-100 text-emerald-700" : "bg-rose-100 text-rose-700"
+                      )}>
+                        {isIncome ? "+" : "-"}
+                      </div>
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <p className="text-xs font-bold text-slate-800 truncate leading-none">{tx.category}</p>
+                          {tx.subCategory && (
+                            <span className="text-[9px] bg-slate-200/70 text-slate-600 px-1 py-0.2 rounded font-semibold truncate leading-none">
+                              {tx.subCategory}
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-[10px] text-slate-400 font-medium mt-0.5 truncate">
+                          {format(new Date(tx.date), "MMM d, hh:mm a")} • {tx.paymentMethod}
+                        </p>
+                        {tx.notes && (
+                          <p className="text-[10px] text-slate-500 italic mt-0.5 truncate max-w-[180px]">
+                            "{tx.notes}"
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <span className={cn(
+                        "text-xs font-mono font-black",
+                        isIncome ? "text-emerald-600" : "text-rose-600"
+                      )}>
+                        {isIncome ? "+" : "-"}৳{tx.amount.toLocaleString()}
+                      </span>
+                      {canDelete && (
+                        <button
+                          type="button"
+                          onClick={() => setTransactionToDelete(tx)}
+                          className="opacity-0 group-hover:opacity-100 p-1 text-slate-400 hover:text-rose-600 rounded cursor-pointer transition-opacity"
+                          title="Delete entry"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+
+          <div className="pt-2 border-t border-slate-100 flex items-center gap-2 text-[10px] text-slate-400 font-semibold">
+            <Info className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+            <span>Store lifetime total amounts are confidential and locked.</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="space-y-6 animate-in fade-in duration-200">
+      
+      {/* Dynamic Bento metrics panel - ONLY shown for Admin / Super Admin (Accountant cannot show total amount) */}
+      {isAdmin && (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 animate-in fade-in duration-300">
+          {/* Cash in Hand */}
+          <div id="drawer-cash-metric" className="bg-gradient-to-br from-emerald-500 to-teal-600 p-5 rounded-3xl text-white shadow-lg border border-emerald-400/20 relative overflow-hidden">
+            <div className="absolute right-3 bottom-0 opacity-10 pointer-events-none">
+              <Wallet className="w-24 h-24 stroke-[1.5]" />
+            </div>
+            <p className="text-[10px] font-bold uppercase tracking-widest text-emerald-100/90 flex items-center gap-1.5 leading-none mb-2">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-200 animate-pulse"></span>
+              Cash Drawer Balance
+            </p>
+            <h3 className="text-2xl font-black font-mono tracking-tight text-white mb-1">
+              {formatCurrency(calculatedCashInHand)}
+            </h3>
+            <p className="text-[10px] text-emerald-150/80 font-medium">Accumulative localized physical tender</p>
+          </div>
+
+          {/* Bank balances */}
+          <div id="bank-assets-metric" className="bg-gradient-to-br from-indigo-500 to-blue-600 p-5 rounded-3xl text-white shadow-lg border border-indigo-400/20 relative overflow-hidden">
+            <div className="absolute right-3 bottom-0 opacity-10 pointer-events-none">
+              <Landmark className="w-24 h-24 stroke-[1.5]" />
+            </div>
+            <p className="text-[10px] font-bold uppercase tracking-widest text-indigo-105 flex items-center gap-1.5 leading-none mb-2">
+              <span className="w-1.5 h-1.5 rounded-full bg-indigo-200"></span>
+              Combined Bank Assets
+            </p>
+            <h3 className="text-2xl font-black font-mono tracking-tight text-white mb-1">
+              {formatCurrency(calculatedBankBalance)}
+            </h3>
+            <p className="text-[10px] text-indigo-150/85 font-medium">Across {banks.length} registered electronic portals</p>
+          </div>
+
+          {/* Loan balance */}
+          <div id="loans-liabilities-metric" className="bg-gradient-to-br from-amber-500 to-orange-600 p-5 rounded-3xl text-white shadow-lg border border-amber-400/20 relative overflow-hidden">
+            <div className="absolute right-3 bottom-0 opacity-10 pointer-events-none">
+              <RefreshCw className="w-24 h-24 stroke-[1.5]" />
+            </div>
+            <p className="text-[10px] font-bold uppercase tracking-widest text-amber-100 flex items-center gap-1.5 leading-none mb-2">
+              <span className="w-1.5 h-1.5 rounded-full bg-amber-200"></span>
+              Unsettled Loan Debt
+            </p>
+            <h3 className="text-2xl font-black font-mono tracking-tight text-white mb-1">
+              {formatCurrency(outstandingLoanBalance)}
+            </h3>
+            <p className="text-[10px] text-amber-100/80 font-medium">Repaid: {formatCurrency(totalLoansRepaid)} so far</p>
+          </div>
+
+          {/* Month flow stats */}
+          <div id="monthly-outlay-metric" className="bg-gradient-to-br from-slate-800 to-slate-900 p-5 rounded-3xl text-white shadow-lg border border-slate-700/30 relative overflow-hidden">
+            <div className="absolute right-3 bottom-0 opacity-10 pointer-events-none">
+              <Calculator className="w-24 h-24 stroke-[1.5]" />
+            </div>
+            <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400 flex items-center gap-1.5 leading-none mb-2">
+              <span className="w-1.5 h-1.5 rounded-full bg-slate-450"></span>
+              Monthly Flow ({format(new Date(), "MMMM")})
+            </p>
+            <div className="flex flex-col gap-0.5">
+              <div className="flex items-center justify-between text-xs font-semibold">
+                <span className="text-slate-400 font-bold">In:</span>
+                <span className="text-emerald-400 font-mono font-black">+{formatCurrency(monthlyInflow)}</span>
+              </div>
+              <div className="flex items-center justify-between text-xs font-semibold">
+                <span className="text-slate-400 font-bold">Out:</span>
+                <span className="text-rose-400 font-mono font-black">-{formatCurrency(monthlyOutflow)}</span>
+              </div>
+            </div>
+            <p className="text-[10px] text-slate-500 font-medium mt-1.5 pt-1.5 border-t border-slate-700/50">Current financial month activity</p>
+          </div>
+        </div>
+      )}
+
+      {/* Primary Workspace Navigation & Area */}
+      {!isAdmin ? (
+        /* Standalone User-Friendly Transaction Input Page for Accountant & Non-Admin Staff */
+        <div className="bg-white rounded-3xl border border-slate-200/60 shadow-xl shadow-slate-100/40 p-5 sm:p-7 space-y-6">
+          {renderInputDesk()}
+        </div>
+      ) : (
+        /* Multi-Tab Workspace for Administrator */
+        <div className="bg-white rounded-3xl border border-slate-200/60 shadow-xl shadow-slate-100/40 overflow-hidden min-h-[580px] grid grid-cols-1 lg:grid-cols-12 divide-y lg:divide-y-0 lg:divide-x divide-slate-100">
           
-          {/* TAB 1: Inflows & Outflows */}
-          {workspaceTab === "inout" && (
+          {/* High-fidelity Sidebar Control Rail */}
+          <div className="lg:col-span-3 p-4 sm:p-5 space-y-4 sm:space-y-6 bg-slate-50/70">
+            <div>
+              <h2 className="text-lg font-black text-slate-800 tracking-tight">Financial Hub</h2>
+              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mt-0.5">Organized Cash flow registries</p>
+            </div>
+
+            <nav className="flex flex-row lg:flex-col gap-1.5 overflow-x-auto pb-2 lg:pb-0 scrollbar-none">
+              <button
+                id="tab-inputDesk"
+                onClick={() => setWorkspaceTab("inputDesk")}
+                className={cn(
+                  "flex-1 lg:w-full min-w-max lg:min-w-0 flex items-center justify-between px-3.5 sm:px-4 py-2.5 sm:py-3 rounded-xl sm:rounded-2xl text-xs font-bold transition-all uppercase tracking-wider text-left border cursor-pointer shrink-0",
+                  workspaceTab === "inputDesk" 
+                    ? "bg-white text-slate-900 border-slate-205 shadow-sm font-black text-indigo-700" 
+                    : "bg-transparent text-slate-505 border-transparent hover:bg-slate-100/80 hover:text-slate-950"
+                )}
+              >
+                <span className="flex items-center gap-2 sm:gap-2.5">
+                  <PlusCircle className="w-4 h-4 text-emerald-500 shrink-0" />
+                  Fast Input Desk
+                </span>
+                <ChevronRight className="w-3.5 h-3.5 opacity-50 hidden lg:block" />
+              </button>
+
+              <button
+                id="tab-inout"
+                onClick={() => setWorkspaceTab("inout")}
+                className={cn(
+                  "flex-1 lg:w-full min-w-max lg:min-w-0 flex items-center justify-between px-3.5 sm:px-4 py-2.5 sm:py-3 rounded-xl sm:rounded-2xl text-xs font-bold transition-all uppercase tracking-wider text-left border cursor-pointer shrink-0",
+                  workspaceTab === "inout" 
+                    ? "bg-white text-slate-900 border-slate-205 shadow-sm font-black text-indigo-700" 
+                    : "bg-transparent text-slate-505 border-transparent hover:bg-slate-100/80 hover:text-slate-950"
+                )}
+              >
+                <span className="flex items-center gap-2 sm:gap-2.5">
+                  <ArrowUpDown className="w-4 h-4 text-emerald-500 shrink-0" />
+                  Inflows & Outflows
+                </span>
+                <ChevronRight className="w-3.5 h-3.5 opacity-50 hidden lg:block" />
+              </button>
+
+              <button
+                id="tab-opening"
+                onClick={() => setWorkspaceTab("opening")}
+                className={cn(
+                  "flex-1 lg:w-full min-w-max lg:min-w-0 flex items-center justify-between px-3.5 sm:px-4 py-2.5 sm:py-3 rounded-xl sm:rounded-2xl text-xs font-bold transition-all uppercase tracking-wider text-left border cursor-pointer shrink-0",
+                  workspaceTab === "opening" 
+                    ? "bg-white text-slate-900 border-slate-205 shadow-sm font-black text-indigo-700" 
+                    : "bg-transparent text-slate-505 border-transparent hover:bg-slate-100/80 hover:text-slate-950"
+                )}
+              >
+                <span className="flex items-center gap-2 sm:gap-2.5">
+                  <Wallet className="w-4 h-4 text-indigo-500 shrink-0" />
+                  Previous / Opening Cash
+                </span>
+                <ChevronRight className="w-3.5 h-3.5 opacity-50 hidden lg:block" />
+              </button>
+
+              <button
+                id="tab-banks"
+                onClick={() => setWorkspaceTab("banks")}
+                className={cn(
+                  "flex-1 lg:w-full min-w-max lg:min-w-0 flex items-center justify-between px-3.5 sm:px-4 py-2.5 sm:py-3 rounded-xl sm:rounded-2xl text-xs font-bold transition-all uppercase tracking-wider text-left border cursor-pointer shrink-0",
+                  workspaceTab === "banks" 
+                    ? "bg-white text-slate-900 border-slate-205 shadow-sm font-black text-indigo-700" 
+                    : "bg-transparent text-slate-505 border-transparent hover:bg-slate-100/80 hover:text-slate-950"
+                )}
+              >
+                <span className="flex items-center gap-2 sm:gap-2.5">
+                  <Landmark className="w-4 h-4 text-sky-550 shrink-0" />
+                  Bank Operations
+                </span>
+                <span className="bg-sky-50 text-sky-700 border border-sky-100 text-[9px] px-1.5 py-0.5 rounded-md font-bold ml-1.5">
+                  {banks.length}
+                </span>
+              </button>
+
+              <button
+                id="tab-loans"
+                onClick={() => setWorkspaceTab("loans")}
+                className={cn(
+                  "flex-1 lg:w-full min-w-max lg:min-w-0 flex items-center justify-between px-3.5 sm:px-4 py-2.5 sm:py-3 rounded-xl sm:rounded-2xl text-xs font-bold transition-all uppercase tracking-wider text-left border cursor-pointer shrink-0",
+                  workspaceTab === "loans" 
+                    ? "bg-white text-slate-900 border-slate-205 shadow-sm font-black text-indigo-700" 
+                    : "bg-transparent text-slate-505 border-transparent hover:bg-slate-100/80 hover:text-slate-950"
+                )}
+              >
+                <span className="flex items-center gap-2 sm:gap-2.5">
+                  <RefreshCw className="w-4 h-4 text-amber-500 shrink-0" />
+                  Debt & loan Desk
+                </span>
+                <ChevronRight className="w-3.5 h-3.5 opacity-50 hidden lg:block" />
+              </button>
+
+              <button
+                id="tab-ledgers"
+                onClick={() => setWorkspaceTab("ledgers")}
+                className={cn(
+                  "flex-1 lg:w-full min-w-max lg:min-w-0 flex items-center justify-between px-3.5 sm:px-4 py-2.5 sm:py-3 rounded-xl sm:rounded-2xl text-xs font-bold transition-all uppercase tracking-wider text-left border cursor-pointer shrink-0",
+                  workspaceTab === "ledgers" 
+                    ? "bg-white text-slate-900 border-slate-205 shadow-sm font-black text-indigo-700" 
+                    : "bg-transparent text-slate-505 border-transparent hover:bg-slate-100/80 hover:text-slate-950"
+                )}
+              >
+                <span className="flex items-center gap-2 sm:gap-2.5">
+                  <History className="w-4 h-4 text-slate-600 shrink-0" />
+                  Unified Ledger List
+                </span>
+                <span className="bg-slate-100 text-slate-700 text-[9px] px-1.5 py-0.5 rounded-md font-bold ml-1.5">
+                  {transactions.length}
+                </span>
+              </button>
+            </nav>
+
+            {/* Quick info tip context block */}
+            <div className="bg-slate-100/60 p-4 rounded-2xl border border-slate-200/50 space-y-1.5 hidden lg:block">
+              <span className="inline-flex items-center gap-1 text-[10px] font-black tracking-widest text-slate-400 uppercase">
+                <Info className="w-3 h-3 text-slate-500" /> Accounting Shield
+              </span>
+              <p className="text-[11px] text-slate-500 leading-relaxed font-semibold">
+                Always balance cash withdrawals & bank credits with physical deposit ledgers to keep business balance sheets accurate.
+              </p>
+            </div>
+          </div>
+
+          {/* Modular workspace views with polished structures */}
+          <div className="lg:col-span-9 p-6 lg:p-8 flex flex-col justify-between">
+            
+            {/* FAST INPUT DESK FOR ADMIN */}
+            {workspaceTab === "inputDesk" && (
+              <div id="view-input-desk">
+                {renderInputDesk()}
+              </div>
+            )}
+
+            {/* TAB 1: Inflows & Outflows */}
+            {workspaceTab === "inout" && (
             <div id="view-inflows-outflows" className="space-y-6 animate-in fade-in duration-200">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-4">
                 <div>
@@ -1076,7 +2165,7 @@ export default function Transactions({
                         className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl font-semibold text-sm outline-none"
                       >
                         {banks.map(b => (
-                          <option key={b.id} value={b.name}>{b.name} (৳{b.balance.toFixed(2)})</option>
+                          <option key={b.id} value={b.name}>{b.name}{isAdmin ? ` (৳${b.balance.toFixed(2)})` : ""}</option>
                         ))}
                       </select>
                     )}
@@ -1329,7 +2418,7 @@ export default function Transactions({
                                   <X className="w-3.5 h-3.5" />
                                 </button>
                               </form>
-                            ) : (
+                            ) : isAdmin ? (
                               <div className="flex items-center gap-2">
                                 <span className="font-mono font-black text-xs text-slate-900 bg-white px-3 py-1 bg-white border rounded-xl shadow-sm">
                                   ৳{b.balance.toLocaleString()}
@@ -1346,6 +2435,10 @@ export default function Transactions({
                                   <Pencil className="w-3.5 h-3.5" />
                                 </button>
                               </div>
+                            ) : (
+                              <span className="text-[10px] text-slate-400 font-bold bg-slate-100 px-2.5 py-1 rounded-lg">
+                                Active Gateway
+                              </span>
                             )}
                           </div>
                         ))
@@ -1411,7 +2504,7 @@ export default function Transactions({
                             >
                               <option value="">Select Target Bank...</option>
                               {banks.map(b => (
-                                <option key={b.id} value={b.name}>{b.name} (Current: ৳{b.balance.toLocaleString()})</option>
+                                <option key={b.id} value={b.name}>{b.name}{isAdmin ? ` (Current: ৳${b.balance.toLocaleString()})` : ""}</option>
                               ))}
                             </select>
                           </div>
@@ -1472,7 +2565,7 @@ export default function Transactions({
                             >
                               <option value="">Select Source Bank...</option>
                               {banks.map(b => (
-                                <option key={b.id} value={b.name}>{b.name} (Current: ৳{b.balance.toLocaleString()})</option>
+                                <option key={b.id} value={b.name}>{b.name}{isAdmin ? ` (Current: ৳${b.balance.toLocaleString()})` : ""}</option>
                               ))}
                             </select>
                           </div>
@@ -1862,6 +2955,7 @@ export default function Transactions({
 
         </div>
       </div>
+      )}
 
       {/* Re-usable premium Deletion Modal box */}
       {transactionToDelete && (

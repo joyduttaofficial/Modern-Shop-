@@ -66,12 +66,13 @@ export default function Dashboard({
 
   // Multi-user input filter:
   // For Super Admin: defaults to "all" (store-wide calculation), but can select ANY other user to see calculations of that user's input.
-  // For Other Users: defaults to their own UID (displaying total calculation for ONLY their own inputs). They can also select any other user or view all inputs.
-  const [selectedUserFilter, setSelectedUserFilter] = useState<string>(isSuperAdmin ? "all" : (user?.uid || "all"));
+  // For Other Users (including Accountant): defaults to their own UID (displaying calculation for ONLY their own inputs). Cannot select store-wide total calculation.
+  const [selectedUserFilter, setSelectedUserFilter] = useState<string>(isSuperAdmin ? "all" : (user?.uid || ""));
   const [systemUsers, setSystemUsers] = useState<{ uid: string; displayName: string; email: string; role: string }[]>([]);
 
-  // Mode for Other Users: "calculation" (view total calculations) or "inputOnly" (pure quick-entry input mode, hides total calculations)
+  // Mode for Users: Super Admin sees total calculations. Accountants and other non-admin staff are strictly in inputOnly mode (cannot show total amounts)
   const [viewMode, setViewMode] = useState<"calculation" | "inputOnly">(() => {
+    if (!isSuperAdmin) return "inputOnly";
     if (typeof window !== "undefined") {
       try {
         const saved = localStorage.getItem("dashboard_view_mode");
@@ -670,33 +671,35 @@ export default function Dashboard({
           </div>
         </div>
 
-        {/* User filter selector dropdown and mode toggle */}
+        {/* User filter selector dropdown and mode indicator */}
         <div className="flex items-center gap-2.5 flex-wrap">
-          <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-250 rounded-xl px-3 py-1.5 shadow-2xs">
-            <Filter className="w-3.5 h-3.5 text-slate-500 shrink-0" />
-            <select
-              value={selectedUserFilter}
-              onChange={(e) => setSelectedUserFilter(e.target.value)}
-              className="bg-transparent text-xs font-bold text-slate-800 outline-none cursor-pointer py-1 pr-2"
-              title={t("Filter total calculation by input of any user")}
-            >
-              <option value="all">👥 {t("All Users (Total Calculation)")}</option>
-              <option value={user.uid}>👤 {t("My Inputs Only")} ({user.displayName?.split(" ")[0] || "Me"})</option>
-              {systemUsers.length > 0 && (
-                <optgroup label={t("Select Any Other User")}>
-                  {systemUsers
-                    .filter(u => u.uid !== user.uid)
-                    .map(u => (
-                      <option key={u.uid} value={u.uid}>
-                        {u.displayName} ({u.role || "staff"})
-                      </option>
-                    ))}
-                </optgroup>
-              )}
-            </select>
-          </div>
+          {isSuperAdmin && (
+            <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-250 rounded-xl px-3 py-1.5 shadow-2xs">
+              <Filter className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+              <select
+                value={selectedUserFilter}
+                onChange={(e) => setSelectedUserFilter(e.target.value)}
+                className="bg-transparent text-xs font-bold text-slate-800 outline-none cursor-pointer py-1 pr-2"
+                title={t("Filter total calculation by input of any user")}
+              >
+                <option value="all">👥 {t("All Users (Total Calculation)")}</option>
+                <option value={user.uid}>👤 {t("My Inputs Only")} ({user.displayName?.split(" ")[0] || "Me"})</option>
+                {systemUsers.length > 0 && (
+                  <optgroup label={t("Select Any Other User")}>
+                    {systemUsers
+                      .filter(u => u.uid !== user.uid)
+                      .map(u => (
+                        <option key={u.uid} value={u.uid}>
+                          {u.displayName} ({u.role || "staff"})
+                        </option>
+                      ))}
+                  </optgroup>
+                )}
+              </select>
+            </div>
+          )}
 
-          {selectedUserFilter !== "all" && (
+          {isSuperAdmin && selectedUserFilter !== "all" && (
             <button
               onClick={() => setSelectedUserFilter("all")}
               className="text-xs font-bold px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl transition cursor-pointer"
@@ -706,38 +709,10 @@ export default function Dashboard({
             </button>
           )}
 
-          {/* Mode toggle for other users: Total Calculation vs Input-Only mode */}
           {!isSuperAdmin && (
-            <div className="flex items-center bg-slate-100 p-1 rounded-xl border border-slate-200">
-              <button
-                type="button"
-                onClick={() => {
-                  setViewMode("calculation");
-                  try { localStorage.setItem("dashboard_view_mode", "calculation"); } catch(e) {}
-                }}
-                className={cn(
-                  "px-2.5 py-1 text-xs font-black rounded-lg transition-all cursor-pointer flex items-center gap-1",
-                  viewMode === "calculation" ? "bg-white text-slate-900 shadow-2xs" : "text-slate-500 hover:text-slate-800"
-                )}
-              >
-                <TrendingUp className="w-3 h-3 text-emerald-600" />
-                <span>{t("Total Calculations")}</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setViewMode("inputOnly");
-                  try { localStorage.setItem("dashboard_view_mode", "inputOnly"); } catch(e) {}
-                }}
-                className={cn(
-                  "px-2.5 py-1 text-xs font-black rounded-lg transition-all cursor-pointer flex items-center gap-1",
-                  viewMode === "inputOnly" ? "bg-white text-slate-900 shadow-2xs" : "text-slate-500 hover:text-slate-800"
-                )}
-                title={t("Switch to input-only mode to register sales and expenses without calculation cards")}
-              >
-                <ShoppingCart className="w-3 h-3 text-indigo-600" />
-                <span>{t("Input Only Mode")}</span>
-              </button>
+            <div className="flex items-center gap-1.5 bg-indigo-50 border border-indigo-200/60 rounded-xl px-3 py-1.5 text-indigo-700 font-bold text-xs">
+              <ShoppingCart className="w-3.5 h-3.5" />
+              <span>{t("Input Only Mode Active")}</span>
             </div>
           )}
         </div>
@@ -895,7 +870,7 @@ export default function Dashboard({
         </div>
       )}
 
-      {/* Input-Only Mode Notice for Operational Staff */}
+      {/* Input-Only Mode Notice for Operational Staff & Accountants */}
       {viewMode === "inputOnly" && !isSuperAdmin && (
         <div className="bg-slate-50 border border-slate-200 rounded-2xl p-6 text-center space-y-3">
           <div className="w-12 h-12 mx-auto rounded-full bg-slate-200 text-slate-800 flex items-center justify-center">
@@ -904,23 +879,13 @@ export default function Dashboard({
           <div className="space-y-1">
             <h4 className="text-base font-black text-slate-900 uppercase tracking-tight">{t("Quick Input Mode Active")}</h4>
             <p className="text-xs text-slate-500 max-w-lg mx-auto">
-              {t("You are in data-entry mode. Use the Quick Actions panel above to log new sales, expenses, and payroll entries. Total calculations and store lifetime analytics are collapsed.")}
+              {t("You are in data-entry mode. Use the Quick Actions panel above to log new sales, expenses, and payroll entries. Store lifetime total calculations are hidden.")}
             </p>
           </div>
-          <button
-            onClick={() => {
-              setViewMode("calculation");
-              try { localStorage.setItem("dashboard_view_mode", "calculation"); } catch(e) {}
-            }}
-            className="inline-flex items-center gap-2 px-4 py-2 bg-slate-900 text-white rounded-xl text-xs font-bold hover:bg-slate-800 transition cursor-pointer"
-          >
-            <TrendingUp className="w-4 h-4 text-emerald-400" />
-            <span>{t("Display Total Calculations")}</span>
-          </button>
         </div>
       )}
 
-      {(viewMode === "calculation" || isSuperAdmin) && (
+      {isSuperAdmin && viewMode === "calculation" && (
         <>
           {/* Daily Performance Section (Today) */}
           <div className="space-y-4">

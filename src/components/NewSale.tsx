@@ -4,7 +4,7 @@ import { collection, onSnapshot, query, orderBy, doc, getDocs, writeBatch, setDo
 import { db, OperationType, handleFirestoreError } from "@/src/lib/firebase";
 import { Transaction, UserRole, Employee } from "@/src/types";
 import { cn, formatCurrency } from "@/src/lib/utils";
-import { Calendar, UserCircle, Save, CheckCircle, Loader2, Home, ChevronRight, ShoppingCart, Printer, FileText } from "lucide-react";
+import { Calendar, UserCircle, Save, CheckCircle, Loader2, Home, ChevronRight, ShoppingCart, Printer, FileText, Receipt } from "lucide-react";
 import { format, startOfDay, endOfDay } from "date-fns";
 import { useLanguage } from "../contexts/LanguageContext";
 import { exportHtmlToPdf } from "@/src/lib/pdfExport";
@@ -579,6 +579,33 @@ export default function NewSale({
           <ChevronRight className="w-3 h-3" />
           <span className="text-blue-600">{t("Sales")}</span>
         </div>
+      </div>
+
+      {/* Sales Mode Switcher Banner */}
+      <div className="flex flex-wrap items-center justify-between gap-3 p-2 bg-white rounded-2xl border border-gray-200 shadow-2xs">
+        <div className="flex items-center gap-2">
+          <div className="px-4 py-2 rounded-xl text-xs font-black bg-gray-900 text-white shadow-xs flex items-center gap-2">
+            <UserCircle className="w-4 h-4 text-white" />
+            <span>স্টাফ দৈনিক সেল (Staff Daily Sales)</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              if (typeof window !== "undefined") {
+                window.location.hash = "#counterSale";
+                window.dispatchEvent(new HashChangeEvent("hashchange"));
+              }
+            }}
+            className="px-4 py-2 rounded-xl text-xs font-bold text-gray-700 hover:text-gray-900 hover:bg-gray-50 transition-all flex items-center gap-2 cursor-pointer border border-transparent hover:border-gray-200"
+          >
+            <Receipt className="w-4 h-4 text-gray-700" />
+            <span>কাউন্টার সেল (স্লিপ ভিত্তিক এন্ট্রি)</span>
+          </button>
+        </div>
+
+        <p className="text-[11px] text-gray-500 font-medium hidden md:block px-2">
+          কাউন্টার সেল থেকে স্লিপ অনুযায়ী দ্রুত টাকা ইনপুট ও সমান সমান মিলকরণ করুন
+        </p>
       </div>
 
       {success && (

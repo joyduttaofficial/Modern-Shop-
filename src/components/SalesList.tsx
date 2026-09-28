@@ -23,7 +23,8 @@ import {
   Info, 
   CalendarDays,
   CheckCircle2,
-  Printer
+  Printer,
+  Receipt
 } from "lucide-react";
 import { format, isWithinInterval, startOfDay, endOfDay } from "date-fns";
 import { motion, AnimatePresence } from "motion/react";
@@ -673,6 +674,18 @@ export default function SalesList({ user, role, onEditSales, onNavigateToNewSale
           <p className="text-xs font-semibold text-slate-455 uppercase tracking-wider mt-0.5">{t("Audit log of counter sales & store ledger")}</p>
         </div>
         <div className="flex flex-wrap gap-2">
+          <button
+            onClick={() => {
+              if (typeof window !== "undefined") {
+                window.location.hash = "#counterSale";
+                window.dispatchEvent(new HashChangeEvent("hashchange"));
+              }
+            }}
+            className="px-4 py-2.5 bg-white hover:bg-gray-50 text-gray-900 border border-gray-200 rounded-xl font-bold text-xs uppercase tracking-wider flex items-center justify-center gap-2 transition-all active:scale-[0.98] cursor-pointer shadow-2xs"
+          >
+            <Receipt className="w-4 h-4 text-gray-700" />
+            <span>কাউন্টার সেল (স্লিপ)</span>
+          </button>
           {onNavigateToNewSale && (
             <button
               id="navigate-to-newsale"

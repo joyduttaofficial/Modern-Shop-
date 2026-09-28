@@ -170,9 +170,53 @@
         "name": { "type": "string" }
       },
       "required": ["name"]
+    },
+    "CounterSale": {
+      "title": "Counter Sale",
+      "description": "Fast counter sales slip entries and daily balancing",
+      "type": "object",
+      "properties": {
+        "saleId": { "type": "string" },
+        "dateTime": { "type": "string", "format": "date-time" },
+        "date": { "type": "string" },
+        "time": { "type": "string" },
+        "slips": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "slipNo": { "type": "number" },
+              "amount": { "type": "number" },
+              "notes": { "type": "string" }
+            },
+            "required": ["slipNo", "amount"]
+          }
+        },
+        "totalSlipsAmount": { "type": "number" },
+        "receivedAmount": { "type": "number" },
+        "changeAmount": { "type": "number" },
+        "dueAmount": { "type": "number" },
+        "isBalanced": { "type": "boolean" },
+        "balanceStatus": { "type": "string", "enum": ["equal", "short", "excess"] },
+        "paymentMethod": { "type": "string" },
+        "customerId": { "type": "string" },
+        "dailySerial": { "type": "number" },
+        "customerName": { "type": "string" },
+        "customerPhone": { "type": "string" },
+        "customerAddress": { "type": "string" },
+        "notes": { "type": "string" },
+        "createdBy": { "type": "string" },
+        "transactionId": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["saleId", "dateTime", "date", "slips", "totalSlipsAmount", "receivedAmount", "isBalanced", "paymentMethod", "createdBy", "createdAt"]
     }
   },
   "firestore": {
+    "/counterSales/{saleId}": {
+      "schema": "CounterSale",
+      "description": "Slip-by-slip counter sales entries"
+    },
     "/products/{productId}": {
       "schema": "Product",
       "description": "Inventory product stock balances"

@@ -104,3 +104,27 @@ export async function updateDoc(reference: DocumentReference<any, any>, data: Up
   }
 }
 
+/**
+ * Strips all undefined properties recursively from an object/array so Firestore addDoc/setDoc/updateDoc never rejects it.
+ */
+export function cleanFirestoreData<T>(obj: T): T {
+  if (obj === null || obj === undefined) {
+    return obj;
+  }
+  if (Array.isArray(obj)) {
+    return obj
+      .filter(item => item !== undefined)
+      .map(item => cleanFirestoreData(item)) as unknown as T;
+  }
+  if (typeof obj === "object" && !(obj instanceof Date)) {
+    const cleaned: Record<string, any> = {};
+    for (const [key, value] of Object.entries(obj)) {
+      if (value !== undefined) {
+        cleaned[key] = cleanFirestoreData(value);
+      }
+    }
+    return cleaned as T;
+  }
+  return obj;
+}
+

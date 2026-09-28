@@ -190,8 +190,31 @@ export default function SalaryEntry({ user, role }: { user: User; role: UserRole
                 <tr key={emp.id} className="hover:bg-blue-50/30 transition-colors group">
                   <td className="px-8 py-6">
                     <div className="flex items-center gap-4">
-                      <div className="w-10 h-10 bg-gray-100 rounded-xl flex items-center justify-center font-bold text-gray-500 shrink-0 group-hover:bg-[#D12765] group-hover:text-white transition-all">
-                        {emp.name.charAt(0)}
+                      <div className="w-12 h-12 bg-slate-100 rounded-xl overflow-hidden flex items-center justify-center font-bold text-gray-500 shrink-0 border border-slate-200 group-hover:border-[#D12765] shadow-xs transition-all relative">
+                        {(() => {
+                          const docImg = emp.documents?.find(d => d.type?.startsWith("image/") || d.name?.match(/\.(jpg|jpeg|png|webp|gif)$/i));
+                          const photoSrc = docImg?.data || emp.nidFrontPhoto || emp.birthCertificatePhoto;
+                          if (photoSrc) {
+                            return (
+                              <img 
+                                src={photoSrc} 
+                                alt={emp.name} 
+                                className="w-full h-full object-cover"
+                                onError={(e) => {
+                                  // Fallback to dicebear avatar if image fails to load
+                                  (e.target as HTMLElement).style.display = "none";
+                                }}
+                              />
+                            );
+                          }
+                          return (
+                            <img 
+                              src={`https://api.dicebear.com/7.x/adventurer/svg?seed=${encodeURIComponent(emp.name)}`}
+                              alt={emp.name} 
+                              className="w-full h-full object-cover"
+                            />
+                          );
+                        })()}
                       </div>
                       <div>
                         <p className="font-bold text-gray-900 leading-none mb-1">{emp.name}</p>

@@ -65,6 +65,7 @@ import Attendance from "./components/Attendance";
 import Reports from "./components/Reports";
 import Settings from "./components/Settings";
 import NewSale from "./components/NewSale";
+import CounterSaleView from "./components/CounterSale";
 import SalesList from "./components/SalesList";
 import Suppliers from "./components/Suppliers";
 import Purchase from "./components/Purchase";
@@ -150,11 +151,12 @@ function QuotaExceededOverlay({ onDismiss, databaseId, projectId }: { onDismiss:
   );
 }
 
-type View = "dashboard" | "transactions" | "newSale" | "salesList" | "newEmployee" | "employeesList" | "employees" | "salaryEntry" | "salarySheet" | "addAttendance" | "attendanceList" | "attendance" | "reports" | "settings" | "newSupplier" | "suppliersList" | "suppliers" | "newPurchase" | "purchaseList" | "paySupplierDue" | "newUser" | "usersList" | "rolesList" | "profileView" | "inventory";
+type View = "dashboard" | "transactions" | "counterSale" | "newSale" | "salesList" | "newEmployee" | "employeesList" | "employees" | "salaryEntry" | "salarySheet" | "addAttendance" | "attendanceList" | "attendance" | "reports" | "settings" | "newSupplier" | "suppliersList" | "suppliers" | "newPurchase" | "purchaseList" | "paySupplierDue" | "newUser" | "usersList" | "rolesList" | "profileView" | "inventory";
 
 const VALID_VIEWS: View[] = [
   "dashboard",
   "transactions",
+  "counterSale",
   "newSale",
   "salesList",
   "newEmployee",
@@ -662,7 +664,8 @@ export default function App() {
       label: "Sales Hub", 
       icon: ShoppingCart, 
       children: [
-        { id: "newSale", label: "New Sale Entry" },
+        { id: "counterSale", label: "Counter Sale (স্লিপ সেল)" },
+        { id: "newSale", label: "Staff Daily Sales" },
         { id: "salesList", label: "Sales List / Ledger" }
       ]
     },
@@ -745,7 +748,7 @@ export default function App() {
     }
 
     if (profile.role === "sales") {
-      const allowedForSales = ["dashboard", "sales", "newSale", "salesList", "transactions", "profileView"];
+      const allowedForSales = ["dashboard", "sales", "counterSale", "newSale", "salesList", "transactions", "profileView"];
       return allowedForSales.includes(viewId);
     }
 
@@ -1062,6 +1065,7 @@ export default function App() {
               <h1 className="text-lg font-extrabold text-slate-900 tracking-tight">
                 {t(activeView === "dashboard" ? "Dashboard" : 
                    activeView === "transactions" ? "Transactions" :
+                   activeView === "counterSale" ? "Counter Sale" :
                    activeView === "newSale" ? "New Sale" :
                    activeView === "salesList" ? "Sales Ledger" :
                    activeView === "newEmployee" ? "New Employee" :
@@ -1297,6 +1301,14 @@ export default function App() {
                   role={profile.role} 
                   initialActiveTab={initialActiveTab}
                   onClearInitialActiveTab={() => setInitialActiveTab("income")}
+                />
+              )}
+              {activeView === "counterSale" && (
+                <CounterSaleView 
+                  user={user} 
+                  role={profile.role} 
+                  onNavigateToStaffSales={() => setActiveView("newSale")}
+                  onNavigateToSalesLedger={() => setActiveView("salesList")}
                 />
               )}
               {activeView === "newSale" && (

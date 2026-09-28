@@ -72,5 +72,17 @@ service cloud.firestore {
     match /departments/{departmentId} {
       allow write: if isSignedIn();
     }
+
+    match /counterSales/{saleId} {
+      allow write: if isSignedIn();
+    }
+
+    match /customers/{customerId} {
+      allow write: if isSignedIn();
+    }
+
+    match /customerPayments/{paymentId} {
+      allow write: if isSignedIn();
+    }
   }
 }

@@ -180,3 +180,64 @@ export interface PurchaseModel {
   createdAt: string;
 }
 
+export interface SlipItem {
+  slipNo: number;
+  amount: number;
+  notes?: string;
+}
+
+export interface CounterSale {
+  id?: string;
+  saleId: string; // Day-based sequential ID e.g. CS-260928-01 (দিন অনুযায়ী)
+  customerId?: string; // Optional day-based customer token/ID
+  dailySerial?: number; // e.g. 1, 2, 3 for that day
+  dateTime: string; // ISO date-time string
+  date: string; // YYYY-MM-DD
+  time: string; // HH:mm:ss
+  slips: SlipItem[];
+  totalSlipsAmount: number;
+  discountAmount?: number; // Discount subtracted from total (টোটাল থেকে মাইনাস)
+  netPayable?: number; // totalSlipsAmount - discountAmount
+  receivedAmount: number;
+  changeAmount: number;
+  dueAmount: number;
+  isBalanced: boolean; // true if netPayable === receivedAmount (সমান সমান)
+  balanceStatus: "equal" | "short" | "excess"; // "equal" = সমান সমান
+  paymentMethod: string;
+  customerName?: string;
+  customerPhone?: string; // Optional mobile / phone
+  customerAddress?: string; // Optional address
+  notes?: string;
+  createdBy: string;
+  transactionId?: string;
+  createdAt: string;
+}
+
+export interface CustomerProfile {
+  id?: string;
+  name: string;
+  phone?: string;
+  address?: string;
+  totalPurchases: number;
+  totalPaid: number;
+  totalDue: number;
+  totalDiscount: number;
+  lastTransactionDate?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CustomerPayment {
+  id?: string;
+  customerId: string;
+  customerName: string;
+  customerPhone?: string;
+  date: string;
+  amount: number;
+  paymentMethod: string;
+  notes?: string;
+  receivedBy: string;
+  transactionId?: string;
+  createdAt: string;
+}
+

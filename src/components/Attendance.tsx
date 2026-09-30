@@ -34,7 +34,15 @@ import {
   X,
   Plus,
   TrendingUp,
-  UserCircle
+  UserCircle,
+  Coffee,
+  Utensils,
+  Grid,
+  List,
+  AlertTriangle,
+  ShieldAlert,
+  Award,
+  FileText
 } from "lucide-react";
 import { format, startOfMonth, endOfMonth, eachDayOfInterval, isSameDay, startOfToday, addDays, subDays, parseISO, startOfDay, endOfDay } from "date-fns";
 import { motion, AnimatePresence } from "motion/react";
@@ -58,7 +66,7 @@ export default function AttendancePage({
 }: { 
   user: User; 
   role: UserRole; 
-  mode?: "add" | "list";
+  mode?: "add" | "list" | "breakfastBoard";
   onSuccess?: () => void;
 }) {
   const [employees, setEmployees] = useState<Employee[]>([]);
@@ -71,6 +79,33 @@ export default function AttendancePage({
   const [lunchDurationLimit, setLunchDurationLimit] = useState(60);
   const [halfDayThreshold, setHalfDayThreshold] = useState("11:30");
   const [attendanceToDelete, setAttendanceToDelete] = useState<{ id: string; empName: string; prettyDate: string } | null>(null);
+
+  // Tab navigation between Add Entry, Breakfast Board, and List/Reports
+  const [viewMode, setViewMode] = useState<"add" | "breakfastBoard" | "list">(
+    mode === "breakfastBoard" ? "breakfastBoard" : mode === "list" ? "list" : "add"
+  );
+
+  useEffect(() => {
+    if (mode === "breakfastBoard") setViewMode("breakfastBoard");
+    else if (mode === "list") setViewMode("list");
+    else setViewMode("add");
+  }, [mode]);
+
+  // Attendance & Breakfast Allowance Settings from Firestore
+  const [breakfastAllowanceAmount, setBreakfastAllowanceAmount] = useState(20);
+  const [deductBreakfastOnLate, setDeductBreakfastOnLate] = useState(true);
+  const [deductBreakfastOnAbsent, setDeductBreakfastOnAbsent] = useState(true);
+  const [gracePeriodMinutes, setGracePeriodMinutes] = useState(0);
+
+  // Breakfast Board View States
+  const [breakfastFilter, setBreakfastFilter] = useState<"all" | "eligible" | "late_deducted" | "late_only" | "absent">("all");
+  const [selectedDeptFilter, setSelectedDeptFilter] = useState("all");
+  const [boardLayout, setBoardLayout] = useState<"cards" | "table">("cards");
+  const [companyInfo, setCompanyInfo] = useState<{ name: string; address: string; phone: string }>({
+    name: "Modern Pro",
+    address: "Dhaka, Bangladesh",
+    phone: "+880 1234 567890"
+  });
   
   // Custom detailed timings / submit states for phone and desktop views
   const [selectedEmpForTime, setSelectedEmpForTime] = useState<Employee | null>(null);
@@ -94,7 +129,7 @@ export default function AttendancePage({
     let queryStart: Date;
     let queryEnd: Date;
 
-    if (mode === "list") {
+    if (viewMode === "list") {
       if (filterType === "month") {
         try {
           const [year, month] = selectedMonth.split("-").map(Number);
@@ -124,12 +159,27 @@ export default function AttendancePage({
       setEmployees(emps);
     }, (error) => handleFirestoreError(error, OperationType.LIST, "employees"));
 
+    const unsubCompany = onSnapshot(doc(db, "settings", "company"), (docSnap) => {
+      if (docSnap.exists()) {
+        const d = docSnap.data();
+        setCompanyInfo({
+          name: d.companyName || "Modern Pro",
+          address: d.companyAddress || "Dhaka, Bangladesh",
+          phone: d.companyPhone || "+880 1234 567890"
+        });
+      }
+    });
+
     const unsubSettings = onSnapshot(doc(db, "settings", "attendance"), (doc) => {
       if (doc.exists()) {
         const data = doc.data();
         setLateThreshold(data.lateThreshold || "10:00");
         setLunchDurationLimit(data.lunchDurationLimit ?? 60);
         setHalfDayThreshold(data.halfDayThreshold || "11:30");
+        setBreakfastAllowanceAmount(data.breakfastAllowanceAmount ?? 20);
+        setDeductBreakfastOnLate(data.deductBreakfastOnLate ?? true);
+        setDeductBreakfastOnAbsent(data.deductBreakfastOnAbsent ?? true);
+        setGracePeriodMinutes(data.gracePeriodMinutes ?? 0);
       }
     }, (error) => handleFirestoreError(error, OperationType.LIST, "settings"));
 
@@ -147,8 +197,8 @@ export default function AttendancePage({
       (error) => handleFirestoreError(error, OperationType.LIST, "attendance")
     );
 
-    return () => { unsubEmps(); unsubSettings(); unsubAttendance(); };
-  }, [selectedDate, selectedMonth, mode, filterType, startDate, endDate]);
+    return () => { unsubEmps(); unsubCompany(); unsubSettings(); unsubAttendance(); };
+  }, [selectedDate, selectedMonth, viewMode, filterType, startDate, endDate]);
 
   const getAttendanceForDay = (empId: string, date: Date) => {
     return attendance.find(a => 
@@ -160,6 +210,264 @@ export default function AttendancePage({
   const isLate = (time: string) => {
     if (!time) return false;
     return time > lateThreshold;
+  };
+
+  // Calculation helper for Late Duration
+  const getLateDetails = (checkIn?: string) => {
+    if (!checkIn) {
+      return { isLate: false, minutesLate: 0, formattedDuration: "০ মিনিট" };
+    }
+    try {
+      const [h, m] = checkIn.split(":").map(Number);
+      const [thH, thM] = lateThreshold.split(":").map(Number);
+      if (isNaN(h) || isNaN(m) || isNaN(thH) || isNaN(thM)) {
+        return { isLate: false, minutesLate: 0, formattedDuration: "০ মিনিট" };
+      }
+      const checkInMins = h * 60 + m;
+      const cutoffMins = thH * 60 + thM + (gracePeriodMinutes || 0);
+
+      if (checkInMins > cutoffMins) {
+        const diff = checkInMins - (thH * 60 + thM);
+        const hours = Math.floor(diff / 60);
+        const mins = diff % 60;
+        let formatted = "";
+        if (hours > 0 && mins > 0) {
+          formatted = `${hours} ঘণ্টা ${mins} মিনিট দেরি`;
+        } else if (hours > 0) {
+          formatted = `${hours} ঘণ্টা দেরি`;
+        } else {
+          formatted = `${mins} মিনিট দেরি`;
+        }
+        return { isLate: true, minutesLate: diff, formattedDuration: formatted };
+      }
+      return { isLate: false, minutesLate: 0, formattedDuration: "০ মিনিট" };
+    } catch {
+      return { isLate: false, minutesLate: 0, formattedDuration: "০ মিনিট" };
+    }
+  };
+
+  // Calculation helper for Breakfast Allowance & Eligibility
+  const getBreakfastStatus = (emp: Employee, record?: Attendance) => {
+    if (!record || !record.status) {
+      return {
+        eligible: false,
+        amount: 0,
+        badgeText: "হাজিরা বাকি",
+        reason: "আজকের উপস্থিতি এখনও রেকর্ড করা হয়নি",
+        category: "not_marked" as const,
+        lateInfo: getLateDetails(undefined)
+      };
+    }
+
+    if (record.status === "absent" || record.status === "leave") {
+      return {
+        eligible: false,
+        amount: 0,
+        badgeText: "নাস্তার টাকা পাবে না",
+        reason: record.status === "absent" ? "অনুপস্থিত থাকায় নাস্তার টাকা কর্তন" : "ছুটিতে থাকায় নাস্তার টাকা প্রযোজ্য নয়",
+        category: "absent" as const,
+        lateInfo: getLateDetails(undefined)
+      };
+    }
+
+    if (record.status === "holiday") {
+      return {
+        eligible: false,
+        amount: 0,
+        badgeText: "ছুটির দিন",
+        reason: "অফিস সরকারি বা সাপ্তাহিক বন্ধ",
+        category: "holiday" as const,
+        lateInfo: getLateDetails(undefined)
+      };
+    }
+
+    const lateInfo = getLateDetails(record.checkIn);
+    const isLateArrival = lateInfo.isLate || record.status === "late" || record.status === "half-day";
+
+    if (isLateArrival && deductBreakfastOnLate) {
+      return {
+        eligible: false,
+        amount: 0,
+        badgeText: "নাস্তার টাকা কর্তন (পাবে না)",
+        reason: `সকাল ${lateThreshold} এর পরে (${record.checkIn || "দেরিতে"}) আসায় নাস্তার টাকা কর্তন (${lateInfo.formattedDuration})`,
+        category: "late_deducted" as const,
+        lateInfo
+      };
+    }
+
+    return {
+      eligible: true,
+      amount: breakfastAllowanceAmount,
+      badgeText: `নাস্তা পাবে (৳${breakfastAllowanceAmount})`,
+      reason: `সকাল ${lateThreshold} এর আগে সময়মতো উপস্থিত (${record.checkIn || "০৯:০০"})`,
+      category: "eligible" as const,
+      lateInfo
+    };
+  };
+
+  const getEmployeePhoto = (emp: Employee) => {
+    if (emp.photo) return emp.photo;
+    if (emp.nidFrontPhoto) return emp.nidFrontPhoto;
+    const docImg = emp.documents?.find(d => d.type?.startsWith("image/"));
+    if (docImg) return docImg.data;
+    return null;
+  };
+
+  const formatTime12 = (time24?: string) => {
+    if (!time24) return "--:--";
+    try {
+      const [h, m] = time24.split(":").map(Number);
+      if (isNaN(h) || isNaN(m)) return time24;
+      const period = h >= 12 ? "PM" : "AM";
+      const h12 = h % 12 || 12;
+      return `${String(h12).padStart(2, "0")}:${String(m).padStart(2, "0")} ${period}`;
+    } catch {
+      return time24;
+    }
+  };
+
+  const handleDownloadBreakfastBoardPdf = () => {
+    const doc = new jsPDF({
+      orientation: "portrait",
+      unit: "mm",
+      format: "a4"
+    });
+
+    const formattedDate = format(selectedDate, "dd MMMM yyyy, EEEE");
+    
+    // Header background
+    doc.setFillColor(248, 250, 252);
+    doc.rect(0, 0, 210, 42, "F");
+
+    doc.setFontSize(16);
+    doc.setFont("helvetica", "bold");
+    doc.setTextColor(15, 23, 42);
+    doc.text(companyInfo.name || "Modern Pro", 14, 15);
+
+    doc.setFontSize(11);
+    doc.setFont("helvetica", "bold");
+    doc.setTextColor(217, 119, 6);
+    doc.text("Daily Staff Breakfast Allowance & Late Arrival Monitoring Sheet", 14, 22);
+
+    doc.setFontSize(8.5);
+    doc.setFont("helvetica", "normal");
+    doc.setTextColor(71, 85, 105);
+    doc.text(`Date: ${formattedDate} | Generated: ${format(new Date(), "hh:mm a")}`, 14, 28);
+    doc.text(`Rules: Late Cut-off: ${lateThreshold} AM | Breakfast Allowance: Tk. ${breakfastAllowanceAmount} | Grace: ${gracePeriodMinutes} mins`, 14, 34);
+
+    // Summary calculation
+    const totalStaff = breakfastBoardEmployees.length;
+    let eligibleCount = 0;
+    let lateCount = 0;
+    let absentCount = 0;
+
+    breakfastBoardEmployees.forEach(emp => {
+      const rec = getAttendanceForDay(emp.id!, selectedDate);
+      const bStatus = getBreakfastStatus(emp, rec);
+      if (bStatus.category === "eligible") eligibleCount++;
+      else if (bStatus.category === "late_deducted") lateCount++;
+      else absentCount++;
+    });
+
+    const totalBreakfastPayable = eligibleCount * breakfastAllowanceAmount;
+    const totalBreakfastDeducted = lateCount * breakfastAllowanceAmount;
+
+    // Draw KPI Summary Bar
+    doc.setDrawColor(226, 232, 240);
+    doc.setFillColor(255, 255, 255);
+    doc.roundedRect(14, 45, 182, 16, 2, 2, "FD");
+
+    doc.setFontSize(8.5);
+    doc.setFont("helvetica", "bold");
+    doc.setTextColor(15, 23, 42);
+    doc.text(`Total Staff: ${totalStaff}`, 18, 54);
+    doc.setTextColor(5, 150, 105);
+    doc.text(`Eligible (Snack): ${eligibleCount} (Tk. ${totalBreakfastPayable})`, 58, 54);
+    doc.setTextColor(225, 29, 72);
+    doc.text(`Late (Deducted): ${lateCount} (Tk. ${totalBreakfastDeducted})`, 118, 54);
+    doc.setTextColor(100, 116, 139);
+    doc.text(`Absent/Leave: ${absentCount}`, 168, 54);
+
+    // Table rows
+    const head = [["#", "Staff Name & Role", "Dept", "In-Time", "Late Duration", "Breakfast Status", "Allowance (Tk)", "Sign"]];
+    const body = breakfastBoardEmployees.map((emp, index) => {
+      const rec = getAttendanceForDay(emp.id!, selectedDate);
+      const bStatus = getBreakfastStatus(emp, rec);
+      const inTime = rec?.checkIn ? formatTime12(rec.checkIn) : "Absent";
+      const lateStr = bStatus.lateInfo.isLate ? `${bStatus.lateInfo.formattedDuration}` : "On-Time";
+      const statusLabel = bStatus.category === "eligible" 
+        ? "Granted (Tk. " + breakfastAllowanceAmount + ")" 
+        : bStatus.category === "late_deducted" 
+          ? "Late - DEDUCTED" 
+          : "Absent - No Snack";
+      const amountStr = bStatus.eligible ? `Tk. ${breakfastAllowanceAmount}` : "Tk. 0";
+
+      return [
+        String(index + 1),
+        `${emp.name}\n${emp.role || ""}`,
+        emp.department || "-",
+        inTime,
+        lateStr,
+        statusLabel,
+        amountStr,
+        ""
+      ];
+    });
+
+    autoTable(doc, {
+      startY: 65,
+      head: head,
+      body: body,
+      theme: "grid",
+      headStyles: {
+        fillColor: [30, 41, 59],
+        textColor: [255, 255, 255],
+        fontSize: 8,
+        fontStyle: "bold",
+        halign: "left"
+      },
+      bodyStyles: {
+        fontSize: 7.5,
+        textColor: [30, 41, 59],
+        cellPadding: 2.5
+      },
+      columnStyles: {
+        0: { cellWidth: 8, halign: "center" },
+        1: { cellWidth: 42 },
+        2: { cellWidth: 24 },
+        3: { cellWidth: 22, halign: "center" },
+        4: { cellWidth: 26, halign: "center" },
+        5: { cellWidth: 32 },
+        6: { cellWidth: 18, halign: "right" },
+        7: { cellWidth: 10 }
+      },
+      didParseCell: (data) => {
+        if (data.section === "body" && data.column.index === 5) {
+          const val = String(data.cell.raw);
+          if (val.includes("Granted")) {
+            data.cell.styles.textColor = [5, 150, 105];
+            data.cell.styles.fontStyle = "bold";
+          } else if (val.includes("DEDUCTED")) {
+            data.cell.styles.textColor = [225, 29, 72];
+            data.cell.styles.fontStyle = "bold";
+          }
+        }
+      }
+    });
+
+    const finalY = (doc as any).lastAutoTable.finalY + 16;
+    if (finalY < 270) {
+      doc.setFontSize(8);
+      doc.setFont("helvetica", "normal");
+      doc.setTextColor(100, 116, 139);
+      doc.text("Prepared by Office Supervisor", 20, finalY);
+      doc.line(20, finalY - 4, 70, finalY - 4);
+
+      doc.text("Approved by Management / Accounts", 140, finalY);
+      doc.line(140, finalY - 4, 195, finalY - 4);
+    }
+
+    doc.save(`Daily_Breakfast_and_Late_Report_${format(selectedDate, "yyyy-MM-dd")}.pdf`);
   };
 
   const getLunchDurationMinutes = (lunchOut?: string, lunchIn?: string): number => {
@@ -208,6 +516,10 @@ export default function AttendancePage({
     const currentCheckOut = isOffDuty ? "" : (existing?.checkOut || "");
     const finalStatus = isOffDuty ? status : computeStatus(currentIn, status, currentLunchOut, currentLunchIn);
 
+    const emp = employees.find(e => e.id === empId);
+    const lateDetails = getLateDetails(currentIn);
+    const bStatus = getBreakfastStatus(emp || ({} as Employee), { checkIn: currentIn, status: finalStatus } as Attendance);
+
     try {
       if (existing) {
         if (existing.id) {
@@ -216,7 +528,11 @@ export default function AttendancePage({
             checkIn: currentIn,
             lunchOut: currentLunchOut,
             lunchIn: currentLunchIn,
-            checkOut: currentCheckOut
+            checkOut: currentCheckOut,
+            isBreakfastEligible: bStatus.eligible,
+            breakfastAllowance: bStatus.amount,
+            lateMinutes: lateDetails.minutesLate,
+            breakfastDeducted: !bStatus.eligible
           });
         }
       } else {
@@ -229,6 +545,9 @@ export default function AttendancePage({
           }
         }
 
+        const initialLate = getLateDetails(defaultIn);
+        const initialBreakfast = getBreakfastStatus(emp || ({} as Employee), { checkIn: defaultIn, status: finalStatus } as Attendance);
+
         await addDoc(collection(db, "attendance"), {
           employeeId: empId,
           date: dateStr,
@@ -237,7 +556,11 @@ export default function AttendancePage({
           lunchOut: "",
           lunchIn: "",
           checkOut: "",
-          notes: ""
+          notes: "",
+          isBreakfastEligible: initialBreakfast.eligible,
+          breakfastAllowance: initialBreakfast.amount,
+          lateMinutes: initialLate.minutesLate,
+          breakfastDeducted: !initialBreakfast.eligible
         });
       }
     } catch (e) {
@@ -255,6 +578,9 @@ export default function AttendancePage({
         const currentLunchIn = existing?.lunchIn || "";
         const finalStatus = computeStatus(currentIn, status, currentLunchOut, currentLunchIn);
 
+        const lateDetails = getLateDetails(currentIn);
+        const bStatus = getBreakfastStatus(emp, { checkIn: currentIn, status: finalStatus } as Attendance);
+
         if (!existing) {
           let defaultIn = "09:00";
           if (finalStatus === "half-day") {
@@ -263,6 +589,9 @@ export default function AttendancePage({
             defaultIn = "10:15";
           }
 
+          const initLate = getLateDetails(defaultIn);
+          const initBreakfast = getBreakfastStatus(emp, { checkIn: defaultIn, status: finalStatus } as Attendance);
+
           await addDoc(collection(db, "attendance"), {
             employeeId: emp.id!,
             date: selectedDate.toISOString(),
@@ -270,10 +599,20 @@ export default function AttendancePage({
             checkIn: defaultIn,
             lunchOut: "",
             lunchIn: "",
-            notes: ""
+            notes: "",
+            isBreakfastEligible: initBreakfast.eligible,
+            breakfastAllowance: initBreakfast.amount,
+            lateMinutes: initLate.minutesLate,
+            breakfastDeducted: !initBreakfast.eligible
           });
         } else if (existing.id) {
-          await updateDoc(doc(db, "attendance", existing.id), { status: finalStatus });
+          await updateDoc(doc(db, "attendance", existing.id), { 
+            status: finalStatus,
+            isBreakfastEligible: bStatus.eligible,
+            breakfastAllowance: bStatus.amount,
+            lateMinutes: lateDetails.minutesLate,
+            breakfastDeducted: !bStatus.eligible
+          });
         }
       }
     } catch (e) {
@@ -331,6 +670,9 @@ export default function AttendancePage({
     // Compute computed state status based on check-in time and lunch status
     const finalStatus = computeStatus(modalCheckIn, modalStatus, modalLunchOut, modalLunchIn);
 
+    const lateDetails = getLateDetails(modalCheckIn);
+    const bStatus = getBreakfastStatus(selectedEmpForTime, { checkIn: modalCheckIn, status: finalStatus } as Attendance);
+
     try {
       if (record && record.id) {
         await updateDoc(doc(db, "attendance", record.id), {
@@ -339,7 +681,11 @@ export default function AttendancePage({
           lunchOut: modalLunchOut,
           lunchIn: modalLunchIn,
           checkOut: modalCheckOut,
-          notes: modalNotes
+          notes: modalNotes,
+          isBreakfastEligible: bStatus.eligible,
+          breakfastAllowance: bStatus.amount,
+          lateMinutes: lateDetails.minutesLate,
+          breakfastDeducted: !bStatus.eligible
         });
       } else {
         await addDoc(collection(db, "attendance"), {
@@ -350,7 +696,11 @@ export default function AttendancePage({
           lunchOut: modalLunchOut,
           lunchIn: modalLunchIn,
           checkOut: modalCheckOut,
-          notes: modalNotes
+          notes: modalNotes,
+          isBreakfastEligible: bStatus.eligible,
+          breakfastAllowance: bStatus.amount,
+          lateMinutes: lateDetails.minutesLate,
+          breakfastDeducted: !bStatus.eligible
         });
       }
       setSelectedEmpForTime(null);
@@ -364,6 +714,7 @@ export default function AttendancePage({
   const handleTimeFieldChange = async (empId: string, field: "checkIn" | "lunchOut" | "lunchIn" | "checkOut", value: string) => {
     const existing = getAttendanceForDay(empId, selectedDate);
     const dateStr = selectedDate.toISOString();
+    const emp = employees.find(e => e.id === empId);
 
     try {
       if (existing && existing.id) {
@@ -373,9 +724,19 @@ export default function AttendancePage({
         const lunchIn = field === "lunchIn" ? value : (existing.lunchIn ?? "");
         const checkOut = field === "checkOut" ? value : (existing.checkOut ?? "");
         
+        let finalStatus = existing.status;
         if (existing.status === "present" || existing.status === "late" || existing.status === "half-day") {
-          updates.status = computeStatus(checkIn, existing.status, lunchOut, lunchIn);
+          finalStatus = computeStatus(checkIn, existing.status, lunchOut, lunchIn);
+          updates.status = finalStatus;
         }
+
+        const lateDetails = getLateDetails(checkIn);
+        const bStatus = getBreakfastStatus(emp || ({} as Employee), { checkIn, status: finalStatus } as Attendance);
+        updates.isBreakfastEligible = bStatus.eligible;
+        updates.breakfastAllowance = bStatus.amount;
+        updates.lateMinutes = lateDetails.minutesLate;
+        updates.breakfastDeducted = !bStatus.eligible;
+
         await updateDoc(doc(db, "attendance", existing.id), updates);
       } else {
         const checkIn = field === "checkIn" ? value : "09:00";
@@ -383,6 +744,9 @@ export default function AttendancePage({
         const lunchIn = field === "lunchIn" ? value : "";
         const checkOut = field === "checkOut" ? value : "";
         const finalStatus = computeStatus(checkIn, "present", lunchOut, lunchIn);
+
+        const lateDetails = getLateDetails(checkIn);
+        const bStatus = getBreakfastStatus(emp || ({} as Employee), { checkIn, status: finalStatus } as Attendance);
 
         await addDoc(collection(db, "attendance"), {
           employeeId: empId,
@@ -392,7 +756,11 @@ export default function AttendancePage({
           lunchOut,
           lunchIn,
           checkOut,
-          notes: ""
+          notes: "",
+          isBreakfastEligible: bStatus.eligible,
+          breakfastAllowance: bStatus.amount,
+          lateMinutes: lateDetails.minutesLate,
+          breakfastDeducted: !bStatus.eligible
         });
       }
     } catch (e) {
@@ -406,6 +774,79 @@ export default function AttendancePage({
     e.role.toLowerCase().includes(searchQuery.toLowerCase()) ||
     (e.department && e.department.toLowerCase().includes(searchQuery.toLowerCase()))
   );
+
+  // List of unique departments for filter dropdown
+  const departmentsList = Array.from(new Set(employees.map(e => e.department).filter(Boolean))) as string[];
+
+  // Filtered employees specifically for the Breakfast & Late Monitoring Chart Board
+  const breakfastBoardEmployees = employees.filter(emp => {
+    // Department filter
+    if (selectedDeptFilter !== "all" && emp.department !== selectedDeptFilter) return false;
+
+    // Search query filter
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase();
+      const match = emp.name.toLowerCase().includes(q) ||
+        (emp.role && emp.role.toLowerCase().includes(q)) ||
+        (emp.department && emp.department.toLowerCase().includes(q)) ||
+        (emp.phone && emp.phone.includes(q)) ||
+        (emp.employeeIdCode && emp.employeeIdCode.toLowerCase().includes(q));
+      if (!match) return false;
+    }
+
+    const rec = getAttendanceForDay(emp.id!, selectedDate);
+    const bStatus = getBreakfastStatus(emp, rec);
+
+    // Status category filter
+    if (breakfastFilter === "eligible") {
+      return bStatus.category === "eligible";
+    }
+    if (breakfastFilter === "late_deducted") {
+      return bStatus.category === "late_deducted";
+    }
+    if (breakfastFilter === "late_only") {
+      return bStatus.lateInfo.isLate || rec?.status === "late" || rec?.status === "half-day";
+    }
+    if (breakfastFilter === "absent") {
+      return bStatus.category === "absent" || bStatus.category === "not_marked";
+    }
+    return true;
+  });
+
+  // Calculate live breakfast board statistics for selectedDate across all employees
+  const breakfastSummaryStats = employees.reduce((acc, emp) => {
+    const rec = getAttendanceForDay(emp.id!, selectedDate);
+    const bStatus = getBreakfastStatus(emp, rec);
+    acc.totalStaff++;
+
+    if (bStatus.category === "eligible") {
+      acc.eligibleCount++;
+      acc.totalBreakfastPayable += bStatus.amount;
+    } else if (bStatus.category === "late_deducted") {
+      acc.lateDeductedCount++;
+      acc.totalBreakfastSaved += breakfastAllowanceAmount;
+    } else if (bStatus.category === "absent" || bStatus.category === "not_marked") {
+      acc.absentCount++;
+      acc.totalBreakfastSaved += breakfastAllowanceAmount;
+    } else if (bStatus.category === "holiday") {
+      acc.holidayCount++;
+    }
+
+    if (bStatus.lateInfo.isLate || rec?.status === "late" || rec?.status === "half-day") {
+      acc.lateCount++;
+    }
+
+    return acc;
+  }, {
+    totalStaff: 0,
+    eligibleCount: 0,
+    lateDeductedCount: 0,
+    lateCount: 0,
+    absentCount: 0,
+    holidayCount: 0,
+    totalBreakfastPayable: 0,
+    totalBreakfastSaved: 0
+  });
 
   const getRangeDateContext = () => {
     try {
@@ -866,11 +1307,70 @@ export default function AttendancePage({
     );
   }
 
-  // RENDER ADD MODE
-  if (mode === "add") {
-    return (
-      <div className="space-y-8 animate-in fade-in duration-300">
-        <header className="flex flex-col md:flex-row md:items-center justify-between gap-6">
+  return (
+    <div className="space-y-8 animate-in fade-in duration-300">
+      {/* Universal Top Tab Navigation for Attendance Module */}
+      <div className="flex flex-wrap items-center justify-between gap-4 bg-white p-3 rounded-3xl border border-gray-100 shadow-xs">
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            onClick={() => setViewMode("add")}
+            className={cn(
+              "flex items-center gap-2 px-5 py-2.5 rounded-2xl font-black text-xs uppercase tracking-wider transition-all cursor-pointer",
+              viewMode === "add"
+                ? "bg-slate-900 text-white shadow-sm"
+                : "text-gray-600 hover:text-gray-900 hover:bg-gray-100/80 bg-gray-50/50"
+            )}
+          >
+            <UserCheck className="w-4 h-4" />
+            <span>ডেইলি হাজিরা এন্ট্রি</span>
+          </button>
+
+          <button
+            onClick={() => setViewMode("breakfastBoard")}
+            className={cn(
+              "flex items-center gap-2 px-5 py-2.5 rounded-2xl font-black text-xs uppercase tracking-wider transition-all cursor-pointer relative",
+              viewMode === "breakfastBoard"
+                ? "bg-amber-500 text-white shadow-sm"
+                : "text-amber-800 bg-amber-50 hover:bg-amber-100/70 border border-amber-200/60"
+            )}
+          >
+            <Coffee className="w-4 h-4 text-amber-500" />
+            <span>নাস্তা ও লেট মনিটরিং চার্ট বোর্ড</span>
+            <span className={cn(
+              "ml-1 px-2 py-0.5 text-[10px] font-black rounded-lg",
+              viewMode === "breakfastBoard" ? "bg-white/20 text-white" : "bg-amber-200 text-amber-900"
+            )}>
+              ৳{breakfastAllowanceAmount}
+            </span>
+          </button>
+
+          <button
+            onClick={() => setViewMode("list")}
+            className={cn(
+              "flex items-center gap-2 px-5 py-2.5 rounded-2xl font-black text-xs uppercase tracking-wider transition-all cursor-pointer",
+              viewMode === "list"
+                ? "bg-slate-900 text-white shadow-sm"
+                : "text-gray-600 hover:text-gray-900 hover:bg-gray-100/80 bg-gray-50/50"
+            )}
+          >
+            <FileSpreadsheet className="w-4 h-4" />
+            <span>হাজিরা খাতা ও রিপোর্ট</span>
+          </button>
+        </div>
+
+        {/* Quick Rules Indicator */}
+        <div className="flex items-center gap-3 text-xs font-bold text-gray-500 bg-gray-50 px-4 py-2 rounded-2xl border border-gray-100">
+          <Clock className="w-3.5 h-3.5 text-blue-600" />
+          <span>দেরির সময়: <strong className="text-gray-900">{lateThreshold} AM</strong></span>
+          <span className="text-gray-300">•</span>
+          <span>নাস্তা ভাতা: <strong className="text-amber-600">৳{breakfastAllowanceAmount}</strong></span>
+        </div>
+      </div>
+
+      {/* ================= VIEW 1: DAILY ADD / REGISTRY MODE ================= */}
+      {viewMode === "add" && (
+        <div className="space-y-8 animate-in fade-in duration-300">
+          <header className="flex flex-col md:flex-row md:items-center justify-between gap-6">
           <div>
             <h2 className="text-3xl font-black tracking-tight mb-2 text-gray-950">Add Attendance</h2>
             <p className="text-gray-500 font-medium italic">Record custom shifts, check-in schedules, and daily presence markers.</p>
@@ -1499,13 +1999,647 @@ export default function AttendancePage({
           </div>
         )}
       </div>
-    );
-  }
+      )}
 
-  // RENDER LIST MODE (with rich KPIs, heatmap grid summary, and live ledger table logs)
-  return (
-    <div className="space-y-8 animate-in fade-in duration-300">
-      <header className="flex flex-col md:flex-row md:items-center justify-between gap-6">
+      {/* ================= VIEW 2: BREAKFAST & LATECOMERS MONITORING CHART BOARD (নাস্তা ও লেট মনিটরিং চার্ট বোর্ড) ================= */}
+      {viewMode === "breakfastBoard" && (
+        <div className="space-y-8 animate-in fade-in duration-300">
+          {/* Header */}
+          <header className="flex flex-col md:flex-row md:items-center justify-between gap-6">
+            <div>
+              <div className="flex items-center gap-3 mb-2">
+                <span className="p-2.5 bg-amber-100 text-amber-800 rounded-2xl shadow-xs">
+                  <Coffee className="w-6 h-6" />
+                </span>
+                <div>
+                  <h2 className="text-3xl font-black tracking-tight text-gray-950">নাস্তা ও লেট মনিটরিং চার্ট বোর্ড</h2>
+                  <p className="text-gray-500 font-medium text-xs md:text-sm">
+                    সকাল {lateThreshold} টার পর আসলে লেট গণ্য হবে এবং কর্মীদের দৈনিক ৳{breakfastAllowanceAmount} নাস্তার ভাতা স্বয়ংক্রিয় হিসাব ও কর্তন তালিকা
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-3">
+              <button
+                onClick={handleDownloadBreakfastBoardPdf}
+                className="px-5 py-3 bg-white border border-gray-200 hover:bg-gray-50 text-gray-800 rounded-2xl font-bold flex items-center gap-2 text-xs shadow-xs transition-all active:scale-95 cursor-pointer"
+              >
+                <Printer className="w-4 h-4 text-gray-500" />
+                চার্ট বোর্ড PDF / প্রিন্ট
+              </button>
+            </div>
+          </header>
+
+          {/* Rules Banner Info Chip */}
+          <div className="bg-gradient-to-r from-amber-50/80 via-orange-50/50 to-white p-4 rounded-3xl border border-amber-200/70 flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div className="flex items-start md:items-center gap-3">
+              <div className="p-2 bg-amber-500 text-white rounded-xl shadow-xs shrink-0 mt-0.5 md:mt-0">
+                <ShieldAlert className="w-4 h-4" />
+              </div>
+              <div className="text-xs">
+                <p className="font-black text-amber-950 uppercase tracking-tight">অফিস অ্যাটেনডেন্স ও নাস্তা রুলস নীতিমালার হিসাব</p>
+                <p className="text-amber-800 mt-0.5">
+                  • <strong>লেট কাটার সময়:</strong> সকাল {lateThreshold} AM • <strong>দৈনিক নাস্তা বরাদ্দ:</strong> ৳{breakfastAllowanceAmount} • <strong>দেরি হলে নাস্তা কর্তন:</strong> {deductBreakfastOnLate ? "সক্রিয় (কাটা যাবে)" : "নিষ্ক্রিয়"} • <strong>গ্রেস পিরিয়ড:</strong> {gracePeriodMinutes} মিনিট
+                </p>
+              </div>
+            </div>
+            <span className="text-[11px] font-mono font-bold bg-white text-amber-800 border border-amber-200 px-3 py-1.5 rounded-xl shrink-0 self-start md:self-auto shadow-2xs">
+              স্বয়ংক্রিয় হিসাব চালু
+            </span>
+          </div>
+
+          {/* 5 KPI Stat Summary Cards */}
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
+            {/* Card 1: Total Staff */}
+            <div className="bg-white p-5 rounded-3xl border border-gray-100 shadow-xs space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] font-black text-gray-400 uppercase tracking-wider">মোট কর্মী</span>
+                <span className="p-2 bg-slate-50 text-slate-700 rounded-xl">
+                  <UserCheck className="w-4 h-4" />
+                </span>
+              </div>
+              <div className="text-2xl font-black text-gray-900 font-mono">
+                {breakfastSummaryStats.totalStaff} <span className="text-xs font-bold text-gray-500">জন</span>
+              </div>
+              <p className="text-[10px] text-gray-400 font-bold">আজকের সক্রিয় তালিকাভুক্ত</p>
+            </div>
+
+            {/* Card 2: Eligible / On-Time */}
+            <div className="bg-white p-5 rounded-3xl border border-emerald-200 shadow-xs space-y-2 bg-emerald-50/10">
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] font-black text-emerald-700 uppercase tracking-wider">নাস্তা পাবে (অন-টাইম)</span>
+                <span className="p-2 bg-emerald-100 text-emerald-700 rounded-xl">
+                  <CheckCircle2 className="w-4 h-4" />
+                </span>
+              </div>
+              <div className="text-2xl font-black text-emerald-700 font-mono">
+                {breakfastSummaryStats.eligibleCount} <span className="text-xs font-bold text-emerald-600">জন</span>
+              </div>
+              <div className="flex items-center justify-between text-[10px] font-bold text-emerald-700">
+                <span>বরাদ্দ ভাতা:</span>
+                <span className="font-mono font-black">৳{breakfastSummaryStats.totalBreakfastPayable}</span>
+              </div>
+            </div>
+
+            {/* Card 3: Late / Deducted */}
+            <div className="bg-white p-5 rounded-3xl border border-rose-200 shadow-xs space-y-2 bg-rose-50/10">
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] font-black text-rose-700 uppercase tracking-wider">নাস্তা কর্তন (লেট)</span>
+                <span className="p-2 bg-rose-100 text-rose-700 rounded-xl">
+                  <AlertCircle className="w-4 h-4" />
+                </span>
+              </div>
+              <div className="text-2xl font-black text-rose-600 font-mono">
+                {breakfastSummaryStats.lateDeductedCount} <span className="text-xs font-bold text-rose-500">জন</span>
+              </div>
+              <div className="flex items-center justify-between text-[10px] font-bold text-rose-700">
+                <span>কর্তন/সাশ্রয়:</span>
+                <span className="font-mono font-black">৳{breakfastSummaryStats.lateDeductedCount * breakfastAllowanceAmount}</span>
+              </div>
+            </div>
+
+            {/* Card 4: Absent */}
+            <div className="bg-white p-5 rounded-3xl border border-gray-100 shadow-xs space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] font-black text-gray-500 uppercase tracking-wider">অনুপস্থিত / ছুটি</span>
+                <span className="p-2 bg-gray-100 text-gray-500 rounded-xl">
+                  <XCircle className="w-4 h-4" />
+                </span>
+              </div>
+              <div className="text-2xl font-black text-gray-700 font-mono">
+                {breakfastSummaryStats.absentCount} <span className="text-xs font-bold text-gray-400">জন</span>
+              </div>
+              <p className="text-[10px] text-gray-400 font-bold">নাস্তা প্রযোজ্য নয়</p>
+            </div>
+
+            {/* Card 5: Net Budget */}
+            <div className="bg-white p-5 rounded-3xl border border-amber-200 shadow-xs space-y-2 bg-amber-50/20 col-span-2 md:col-span-1">
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] font-black text-amber-800 uppercase tracking-wider">মোট নাস্তার খরচ</span>
+                <span className="p-2 bg-amber-100 text-amber-800 rounded-xl">
+                  <Coffee className="w-4 h-4" />
+                </span>
+              </div>
+              <div className="text-2xl font-black text-amber-900 font-mono">
+                ৳{breakfastSummaryStats.totalBreakfastPayable}
+              </div>
+              <div className="flex items-center justify-between text-[10px] font-bold text-amber-800">
+                <span>মোট সাশ্রয়:</span>
+                <span className="font-mono font-black">৳{breakfastSummaryStats.totalBreakfastSaved}</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Action, Date & Search Controls */}
+          <div className="bg-white p-4 rounded-3xl border border-gray-100 shadow-xs flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-4">
+            {/* Date Navigator */}
+            <div className="flex items-center gap-2 bg-gray-50 p-1.5 rounded-2xl border border-gray-100 shrink-0">
+              <button 
+                onClick={() => setSelectedDate(prev => subDays(prev, 1))}
+                className="p-2 hover:bg-white rounded-xl transition-all text-gray-600 hover:text-gray-900 cursor-pointer shadow-none hover:shadow-xs"
+                title="পূর্ববর্তী দিন"
+              >
+                <ChevronLeft className="w-4 h-4" />
+              </button>
+              
+              <div className="flex items-center gap-2 px-2">
+                <Calendar className="w-4 h-4 text-blue-600 shrink-0" />
+                <input
+                  type="date"
+                  value={format(selectedDate, "yyyy-MM-dd")}
+                  onChange={e => {
+                    if (e.target.value) {
+                      const [y, m, d] = e.target.value.split("-").map(Number);
+                      setSelectedDate(new Date(y, m - 1, d));
+                    }
+                  }}
+                  className="bg-transparent border-none text-xs font-black text-gray-900 outline-none cursor-pointer p-0"
+                />
+              </div>
+
+              <button 
+                onClick={() => setSelectedDate(prev => addDays(prev, 1))}
+                className="p-2 hover:bg-white rounded-xl transition-all text-gray-600 hover:text-gray-900 cursor-pointer shadow-none hover:shadow-xs"
+                title="পরবর্তী দিন"
+              >
+                <ChevronRight className="w-4 h-4" />
+              </button>
+
+              <button
+                onClick={() => setSelectedDate(startOfToday())}
+                className="text-[10px] font-black uppercase tracking-wider px-2.5 py-1 bg-white hover:bg-gray-100 rounded-lg text-gray-700 transition-all cursor-pointer border border-gray-200"
+              >
+                আজকে
+              </button>
+            </div>
+
+            {/* Search Input */}
+            <div className="relative flex-1 max-w-md">
+              <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+              <input 
+                type="text"
+                placeholder="কর্মী নাম, রোল, ফোন বা আইডি দিয়ে খুঁজুন..."
+                value={searchQuery}
+                onChange={e => setSearchQuery(e.target.value)}
+                className="w-full pl-10 pr-4 py-2.5 bg-gray-50 hover:bg-gray-100/70 focus:bg-white rounded-2xl border border-gray-100 focus:border-slate-800 text-xs font-bold transition-all outline-none"
+              />
+            </div>
+
+            {/* Department Filter Dropdown */}
+            {departmentsList.length > 0 && (
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest shrink-0">বিভাগ:</span>
+                <select
+                  value={selectedDeptFilter}
+                  onChange={e => setSelectedDeptFilter(e.target.value)}
+                  className="px-3 py-2 bg-gray-50 border border-gray-100 rounded-xl text-xs font-bold text-gray-800 outline-none cursor-pointer"
+                >
+                  <option value="all">সব ডিপার্টমেন্ট</option>
+                  {departmentsList.map(dept => (
+                    <option key={dept} value={dept}>{dept}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            {/* Layout Toggle */}
+            <div className="flex items-center bg-gray-100 p-1 rounded-2xl shrink-0">
+              <button
+                onClick={() => setBoardLayout("cards")}
+                className={cn(
+                  "p-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer",
+                  boardLayout === "cards" ? "bg-white text-gray-900 shadow-xs font-black" : "text-gray-500 hover:text-gray-800"
+                )}
+                title="কার্ড বোর্ড ভিউ (ছবি সহ)"
+              >
+                <Grid className="w-4 h-4" />
+                <span className="hidden sm:inline">কার্ড বোর্ড</span>
+              </button>
+              <button
+                onClick={() => setBoardLayout("table")}
+                className={cn(
+                  "p-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer",
+                  boardLayout === "table" ? "bg-white text-gray-900 shadow-xs font-black" : "text-gray-500 hover:text-gray-800"
+                )}
+                title="তালিকা চার্ট ভিউ"
+              >
+                <List className="w-4 h-4" />
+                <span className="hidden sm:inline">তালিকা</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Status Quick Filter Pills */}
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              onClick={() => setBreakfastFilter("all")}
+              className={cn(
+                "px-4 py-2 rounded-2xl text-xs font-black transition-all cursor-pointer border",
+                breakfastFilter === "all"
+                  ? "bg-slate-900 text-white border-slate-900 shadow-sm"
+                  : "bg-white text-gray-600 border-gray-200 hover:bg-gray-50"
+              )}
+            >
+              সব কর্মী ({breakfastSummaryStats.totalStaff})
+            </button>
+
+            <button
+              onClick={() => setBreakfastFilter("eligible")}
+              className={cn(
+                "px-4 py-2 rounded-2xl text-xs font-black transition-all cursor-pointer border flex items-center gap-1.5",
+                breakfastFilter === "eligible"
+                  ? "bg-emerald-600 text-white border-emerald-600 shadow-sm"
+                  : "bg-white text-emerald-700 border-emerald-200 hover:bg-emerald-50/50"
+              )}
+            >
+              <CheckCircle2 className="w-3.5 h-3.5" />
+              নাস্তা পাবে ({breakfastSummaryStats.eligibleCount}) 🥪
+            </button>
+
+            <button
+              onClick={() => setBreakfastFilter("late_deducted")}
+              className={cn(
+                "px-4 py-2 rounded-2xl text-xs font-black transition-all cursor-pointer border flex items-center gap-1.5",
+                breakfastFilter === "late_deducted"
+                  ? "bg-rose-600 text-white border-rose-600 shadow-sm"
+                  : "bg-white text-rose-700 border-rose-200 hover:bg-rose-50/50"
+              )}
+            >
+              <AlertCircle className="w-3.5 h-3.5" />
+              নাস্তার টাকা কাটা / পাবে না ({breakfastSummaryStats.lateDeductedCount}) ❌
+            </button>
+
+            <button
+              onClick={() => setBreakfastFilter("late_only")}
+              className={cn(
+                "px-4 py-2 rounded-2xl text-xs font-black transition-all cursor-pointer border flex items-center gap-1.5",
+                breakfastFilter === "late_only"
+                  ? "bg-amber-500 text-white border-amber-500 shadow-sm"
+                  : "bg-white text-amber-700 border-amber-200 hover:bg-amber-50/50"
+              )}
+            >
+              <Clock className="w-3.5 h-3.5" />
+              দেরি করে আসা স্টাফ ({breakfastSummaryStats.lateCount}) ⏰
+            </button>
+
+            <button
+              onClick={() => setBreakfastFilter("absent")}
+              className={cn(
+                "px-4 py-2 rounded-2xl text-xs font-black transition-all cursor-pointer border flex items-center gap-1.5",
+                breakfastFilter === "absent"
+                  ? "bg-gray-700 text-white border-gray-700 shadow-sm"
+                  : "bg-white text-gray-600 border-gray-200 hover:bg-gray-50"
+              )}
+            >
+              <XCircle className="w-3.5 h-3.5" />
+              অনুপস্থিত ({breakfastSummaryStats.absentCount})
+            </button>
+          </div>
+
+          {/* Cards View Layout */}
+          {boardLayout === "cards" && (
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+              {breakfastBoardEmployees.length === 0 ? (
+                <div className="col-span-full py-16 text-center bg-white rounded-3xl border border-dashed border-gray-200">
+                  <Coffee className="w-10 h-10 text-gray-300 mx-auto mb-3" />
+                  <p className="text-gray-500 font-bold text-sm">কোনো কর্মীর রেকর্ড খুঁজে পাওয়া যায়নি।</p>
+                  <p className="text-gray-400 text-xs mt-1">অনুসন্ধান বা ফিল্টার পরিবর্তন করে পুনরায় চেষ্টা করুন।</p>
+                </div>
+              ) : (
+                breakfastBoardEmployees.map(emp => {
+                  const rec = getAttendanceForDay(emp.id!, selectedDate);
+                  const bStatus = getBreakfastStatus(emp, rec);
+                  const photoUrl = getEmployeePhoto(emp);
+                  const inTimeFormatted = rec?.checkIn ? formatTime12(rec.checkIn) : "অনুপস্থিত";
+
+                  return (
+                    <div
+                      key={emp.id}
+                      className={cn(
+                        "bg-white rounded-3xl p-6 border shadow-xs transition-all hover:shadow-md flex flex-col justify-between space-y-4 group",
+                        bStatus.category === "eligible" 
+                          ? "border-emerald-200 hover:border-emerald-300"
+                          : bStatus.category === "late_deducted"
+                            ? "border-rose-200 hover:border-rose-300"
+                            : "border-gray-200 hover:border-gray-300"
+                      )}
+                    >
+                      {/* Top Header of Card with Photo, Name & Eligibility Badge */}
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="flex items-center gap-3.5">
+                          {/* Photo with Overlay Badge */}
+                          <div className="relative shrink-0">
+                            <div className={cn(
+                              "w-16 h-16 rounded-2xl overflow-hidden border-2 flex items-center justify-center font-black text-lg shadow-xs",
+                              bStatus.category === "eligible" ? "border-emerald-300 bg-emerald-50 text-emerald-700" :
+                              bStatus.category === "late_deducted" ? "border-rose-300 bg-rose-50 text-rose-700" :
+                              "border-gray-200 bg-gray-100 text-gray-600"
+                            )}>
+                              {photoUrl ? (
+                                <img src={photoUrl} alt={emp.name} className="w-full h-full object-cover" />
+                              ) : (
+                                <span>{emp.name.charAt(0)}</span>
+                              )}
+                            </div>
+
+                            {/* Corner Status Badge */}
+                            <span className={cn(
+                              "absolute -top-1.5 -right-1.5 w-6 h-6 rounded-full border-2 border-white flex items-center justify-center shadow-xs",
+                              bStatus.category === "eligible" ? "bg-emerald-500 text-white" :
+                              bStatus.category === "late_deducted" ? "bg-rose-500 text-white" :
+                              "bg-gray-400 text-white"
+                            )}>
+                              {bStatus.category === "eligible" ? (
+                                <CheckCircle2 className="w-3.5 h-3.5" />
+                              ) : bStatus.category === "late_deducted" ? (
+                                <Clock className="w-3.5 h-3.5" />
+                              ) : (
+                                <X className="w-3 h-3" />
+                              )}
+                            </span>
+                          </div>
+
+                          {/* Name & Role */}
+                          <div>
+                            <h3 className="font-black text-gray-900 text-base leading-tight group-hover:text-blue-600 transition-colors">
+                              {emp.name}
+                            </h3>
+                            <p className="text-xs font-extrabold text-gray-500 mt-0.5">
+                              {emp.role || "Staff"}
+                            </p>
+                            <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mt-0.5">
+                              {emp.department ? `${emp.department} • ` : ""}{emp.employeeIdCode || "ID: -"}
+                            </p>
+                          </div>
+                        </div>
+
+                        {/* Top Right Status Tag */}
+                        <div className="shrink-0 text-right">
+                          {bStatus.category === "eligible" ? (
+                            <span className="px-3 py-1 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-full text-xs font-black inline-flex items-center gap-1.5 shadow-2xs">
+                              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                              নাস্তা পাবে
+                            </span>
+                          ) : bStatus.category === "late_deducted" ? (
+                            <span className="px-3 py-1 bg-rose-50 text-rose-700 border border-rose-200 rounded-full text-xs font-black inline-flex items-center gap-1.5 shadow-2xs">
+                              <span className="w-2 h-2 rounded-full bg-rose-500 animate-pulse" />
+                              নাস্তা কর্তন
+                            </span>
+                          ) : (
+                            <span className="px-3 py-1 bg-gray-100 text-gray-600 border border-gray-200 rounded-full text-xs font-black inline-flex items-center gap-1.5">
+                              <span className="w-2 h-2 rounded-full bg-gray-400" />
+                              পাবে না
+                            </span>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Arrival Time and Late Duration 2-Col Grid */}
+                      <div className="grid grid-cols-2 gap-3 bg-gray-50/70 p-3.5 rounded-2xl border border-gray-100">
+                        {/* Arrival In-Time */}
+                        <div>
+                          <span className="text-[9px] font-black text-gray-400 uppercase tracking-widest block mb-0.5">
+                            অফিসে প্রবেশ
+                          </span>
+                          <div className="flex items-center gap-1.5">
+                            <Clock className="w-3.5 h-3.5 text-blue-600 shrink-0" />
+                            <span className="font-mono font-black text-sm text-gray-900">
+                              {inTimeFormatted}
+                            </span>
+                          </div>
+                          <span className="text-[9px] font-bold text-gray-400 block mt-0.5">
+                            নির্ধারিত: {lateThreshold} AM
+                          </span>
+                        </div>
+
+                        {/* Late Duration */}
+                        <div>
+                          <span className="text-[9px] font-black text-gray-400 uppercase tracking-widest block mb-0.5">
+                            কতক্ষণ দেরি (Late)
+                          </span>
+                          {bStatus.lateInfo.isLate ? (
+                            <div>
+                              <div className="font-mono font-black text-sm text-rose-600">
+                                ⏰ {bStatus.lateInfo.formattedDuration}
+                              </div>
+                              <span className="text-[9px] font-extrabold text-rose-500 block mt-0.5">
+                                সকাল {lateThreshold} এর পরে আগমন
+                              </span>
+                            </div>
+                          ) : (
+                            <div>
+                              <div className="font-mono font-black text-sm text-emerald-600">
+                                ০ মিনিট দেরি
+                              </div>
+                              <span className="text-[9px] font-extrabold text-emerald-600 block mt-0.5">
+                                ✓ সময়মতো উপস্থিত
+                              </span>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Breakfast Status Banner */}
+                      <div className={cn(
+                        "p-3 rounded-2xl border text-xs font-bold flex items-center justify-between gap-3",
+                        bStatus.category === "eligible"
+                          ? "bg-emerald-50/80 border-emerald-200 text-emerald-900"
+                          : bStatus.category === "late_deducted"
+                            ? "bg-rose-50/80 border-rose-200 text-rose-900"
+                            : "bg-gray-50 border-gray-200 text-gray-700"
+                      )}>
+                        <div>
+                          <p className="font-black text-xs leading-snug">
+                            {bStatus.badgeText}
+                          </p>
+                          <p className="text-[10px] font-medium opacity-85 mt-0.5">
+                            {bStatus.reason}
+                          </p>
+                        </div>
+                        <div className="text-right shrink-0">
+                          <span className="text-base font-black font-mono">
+                            {bStatus.eligible ? `+৳${bStatus.amount}` : "৳০"}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Actions Footer */}
+                      <div className="pt-2 border-t border-gray-100 flex items-center justify-between gap-2">
+                        {/* Quick Status Badges */}
+                        <div className="flex items-center gap-1">
+                          <button
+                            onClick={() => handleStatusChange(emp.id!, "present")}
+                            className={cn(
+                              "px-2.5 py-1 text-[10px] font-black rounded-lg transition-all cursor-pointer",
+                              rec?.status === "present"
+                                ? "bg-emerald-600 text-white shadow-2xs"
+                                : "bg-gray-100 hover:bg-gray-200 text-gray-700"
+                            )}
+                            title="অন-টাইম উপস্থিত"
+                          >
+                            উপস্থিত
+                          </button>
+                          <button
+                            onClick={() => handleStatusChange(emp.id!, "late")}
+                            className={cn(
+                              "px-2.5 py-1 text-[10px] font-black rounded-lg transition-all cursor-pointer",
+                              rec?.status === "late"
+                                ? "bg-amber-600 text-white shadow-2xs"
+                                : "bg-gray-100 hover:bg-gray-200 text-gray-700"
+                            )}
+                            title="লেট নির্ধারণ"
+                          >
+                            লেট
+                          </button>
+                          <button
+                            onClick={() => handleStatusChange(emp.id!, "absent")}
+                            className={cn(
+                              "px-2.5 py-1 text-[10px] font-black rounded-lg transition-all cursor-pointer",
+                              rec?.status === "absent"
+                                ? "bg-rose-600 text-white shadow-2xs"
+                                : "bg-gray-100 hover:bg-gray-200 text-gray-700"
+                            )}
+                            title="অনুপস্থিত নির্ধারণ"
+                          >
+                            অনুপস্থিত
+                          </button>
+                        </div>
+
+                        {/* Interactive Edit Time Button */}
+                        <button
+                          onClick={() => handleOpenTimeModal(emp)}
+                          className="px-3 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 rounded-xl text-xs font-black transition-all cursor-pointer flex items-center gap-1 shrink-0 active:scale-95"
+                        >
+                          <Clock className="w-3.5 h-3.5" />
+                          <span>সময় এডিট</span>
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          )}
+
+          {/* Table View Layout */}
+          {boardLayout === "table" && (
+            <div className="bg-white rounded-3xl border border-gray-100 shadow-xs overflow-hidden">
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse min-w-[800px]">
+                  <thead>
+                    <tr className="bg-gray-50/60 border-b border-gray-100">
+                      <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest">কর্মী ও ছবি</th>
+                      <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest">পদবী ও বিভাগ</th>
+                      <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest">প্রবেশের সময়</th>
+                      <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest">দেরির পরিমাণ (Late)</th>
+                      <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest">হাজিরা স্ট্যাটাস</th>
+                      <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest">নাস্তার অবস্থা</th>
+                      <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest text-right">নাস্তা ভাতা</th>
+                      <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest text-center">অ্যাকশন</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-50">
+                    {breakfastBoardEmployees.map(emp => {
+                      const rec = getAttendanceForDay(emp.id!, selectedDate);
+                      const bStatus = getBreakfastStatus(emp, rec);
+                      const photoUrl = getEmployeePhoto(emp);
+
+                      return (
+                        <tr key={emp.id} className="hover:bg-amber-50/20 transition-colors">
+                          <td className="px-6 py-4">
+                            <div className="flex items-center gap-3">
+                              <div className="w-10 h-10 rounded-xl overflow-hidden border border-gray-200 shrink-0 bg-gray-100 flex items-center justify-center font-bold text-gray-600">
+                                {photoUrl ? (
+                                  <img src={photoUrl} alt="" className="w-full h-full object-cover" />
+                                ) : (
+                                  emp.name.charAt(0)
+                                )}
+                              </div>
+                              <div>
+                                <p className="font-black text-gray-900 text-sm">{emp.name}</p>
+                                <p className="text-[10px] font-bold text-gray-400 font-mono">{emp.employeeIdCode || "-"}</p>
+                              </div>
+                            </div>
+                          </td>
+
+                          <td className="px-6 py-4 text-xs font-bold text-gray-700">
+                            <div>{emp.role}</div>
+                            <div className="text-[10px] text-gray-400 font-semibold">{emp.department || "-"}</div>
+                          </td>
+
+                          <td className="px-6 py-4 text-xs font-mono font-bold text-gray-900">
+                            {rec?.checkIn ? formatTime12(rec.checkIn) : "-"}
+                          </td>
+
+                          <td className="px-6 py-4 text-xs">
+                            {bStatus.lateInfo.isLate ? (
+                              <span className="font-mono font-black text-rose-600 bg-rose-50 border border-rose-200 px-2 py-0.5 rounded-lg inline-block">
+                                ⏰ {bStatus.lateInfo.formattedDuration}
+                              </span>
+                            ) : (
+                              <span className="font-mono font-bold text-emerald-600">
+                                ০ মিনিট
+                              </span>
+                            )}
+                          </td>
+
+                          <td className="px-6 py-4 text-xs">
+                            <span className={cn(
+                              "px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider border",
+                              rec?.status ? STATUS_CONFIG[rec.status]?.bg : "bg-gray-100 text-gray-500 border-gray-200"
+                            )}>
+                              {rec?.status ? STATUS_CONFIG[rec.status]?.label : "Not Marked"}
+                            </span>
+                          </td>
+
+                          <td className="px-6 py-4 text-xs">
+                            {bStatus.category === "eligible" ? (
+                              <span className="px-3 py-1 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-full font-black text-xs inline-flex items-center gap-1.5">
+                                <CheckCircle2 className="w-3 h-3" />
+                                নাস্তা পাবে
+                              </span>
+                            ) : bStatus.category === "late_deducted" ? (
+                              <span className="px-3 py-1 bg-rose-50 text-rose-700 border border-rose-200 rounded-full font-black text-xs inline-flex items-center gap-1.5">
+                                <AlertCircle className="w-3 h-3" />
+                                নাস্তার টাকা কর্তন
+                              </span>
+                            ) : (
+                              <span className="px-3 py-1 bg-gray-100 text-gray-600 border border-gray-200 rounded-full font-black text-xs inline-flex items-center gap-1.5">
+                                <XCircle className="w-3 h-3" />
+                                পাবে না
+                              </span>
+                            )}
+                          </td>
+
+                          <td className="px-6 py-4 text-right font-mono font-black text-sm text-gray-900">
+                            {bStatus.eligible ? `৳${bStatus.amount}` : "৳০"}
+                          </td>
+
+                          <td className="px-6 py-4 text-center">
+                            <button
+                              onClick={() => handleOpenTimeModal(emp)}
+                              className="p-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 rounded-xl text-xs font-black transition-all cursor-pointer"
+                              title="সময় এডিট"
+                            >
+                              <Clock className="w-4 h-4" />
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ================= VIEW 3: ATTENDANCE LIST & AUDIT LOGS ================= */}
+      {viewMode === "list" && (
+        <div className="space-y-8 animate-in fade-in duration-300">
+          <header className="flex flex-col md:flex-row md:items-center justify-between gap-6">
         <div>
           <h2 className="text-3xl font-black tracking-tight mb-2 text-gray-950">Attendance List</h2>
           <p className="text-gray-500 font-medium italic">Monitor occupancy graphs, monthly check-in heatmaps, and audit logs.</p>
@@ -2415,6 +3549,8 @@ export default function AttendancePage({
           </div>
         )}
       </div>
+    </div>
+  )}
 
       {/* Custom Non-blocking Delete Confirmation Modal */}
       {attendanceToDelete && (

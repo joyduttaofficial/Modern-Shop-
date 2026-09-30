@@ -199,6 +199,10 @@ export default function Settings({ user, role }: { user: User; role: UserRole })
   const [lateThreshold, setLateThreshold] = useState("10:00");
   const [lunchDurationLimit, setLunchDurationLimit] = useState(60);
   const [halfDayThreshold, setHalfDayThreshold] = useState("11:30");
+  const [breakfastAllowanceAmount, setBreakfastAllowanceAmount] = useState<number>(20);
+  const [deductBreakfastOnLate, setDeductBreakfastOnLate] = useState<boolean>(true);
+  const [deductBreakfastOnAbsent, setDeductBreakfastOnAbsent] = useState<boolean>(true);
+  const [gracePeriodMinutes, setGracePeriodMinutes] = useState<number>(0);
   const [isUpdatingSettings, setIsUpdatingSettings] = useState(false);
   const [settingsSuccess, setSettingsSuccess] = useState(false);
 
@@ -615,6 +619,10 @@ export default function Settings({ user, role }: { user: User; role: UserRole })
         setLateThreshold(data.lateThreshold || "10:00");
         setLunchDurationLimit(data.lunchDurationLimit ?? 60);
         setHalfDayThreshold(data.halfDayThreshold || "11:30");
+        setBreakfastAllowanceAmount(data.breakfastAllowanceAmount ?? 20);
+        setDeductBreakfastOnLate(data.deductBreakfastOnLate ?? true);
+        setDeductBreakfastOnAbsent(data.deductBreakfastOnAbsent ?? true);
+        setGracePeriodMinutes(data.gracePeriodMinutes ?? 0);
       }
     });
 
@@ -775,6 +783,10 @@ export default function Settings({ user, role }: { user: User; role: UserRole })
         lateThreshold,
         lunchDurationLimit: Number(lunchDurationLimit),
         halfDayThreshold,
+        breakfastAllowanceAmount: Number(breakfastAllowanceAmount),
+        deductBreakfastOnLate: Boolean(deductBreakfastOnLate),
+        deductBreakfastOnAbsent: Boolean(deductBreakfastOnAbsent),
+        gracePeriodMinutes: Number(gracePeriodMinutes),
         lastUpdated: new Date().toISOString(),
         updatedBy: user.uid
       });
@@ -1378,21 +1390,120 @@ export default function Settings({ user, role }: { user: User; role: UserRole })
           )}
 
           <div className="divide-y divide-gray-100">
-            {/* Setting 1: Late Threshold */}
+            {/* Setting 1: Late Threshold (অফিস শুরু ও লেট কাটার সময়) */}
             <div className="py-4 first:pt-0 flex flex-col md:flex-row md:items-center justify-between gap-4">
               <div className="space-y-1">
-                <p className="font-extrabold text-sm text-gray-900 uppercase tracking-tight">Late Arrival Threshold</p>
-                <p className="text-xs text-gray-450">Staff will be automatically marked as <span className="font-bold text-amber-600">"Late"</span> if they check in after this hour.</p>
+                <p className="font-extrabold text-sm text-gray-900 uppercase tracking-tight">
+                  অফিস শুরু ও লেট কাটার সময় (Late Arrival Threshold)
+                </p>
+                <p className="text-xs text-gray-500">
+                  নির্ধারিত এই সময়ের পরে চেক-ইন করলে কর্মীকে স্বয়ংক্রিয়ভাবে <span className="font-bold text-amber-600">"লেট (Late)"</span> হিসেবে গণ্য করা হবে এবং নাস্তার টাকা কাটার নিয়ম প্রযোজ্য হবে।
+                </p>
               </div>
               <input 
                 type="time"
                 value={lateThreshold}
                 onChange={e => setLateThreshold(e.target.value)}
-                className="px-4 py-2 text-sm bg-gray-50 border border-gray-100 hover:border-gray-200 focus:border-slate-300 rounded-xl font-bold font-mono outline-none focus:ring-0 max-w-[200px]"
+                className="px-4 py-2.5 text-sm bg-gray-50 border border-gray-200 hover:border-gray-300 focus:border-slate-800 rounded-xl font-bold font-mono outline-none focus:ring-0 max-w-[200px]"
               />
             </div>
 
-            {/* Setting 2: Half-Day Threshold */}
+            {/* Setting 2: Breakfast Allowance Amount (দৈনিক নাস্তার টাকার পরিমাণ) */}
+            <div className="py-4 flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <div className="space-y-1">
+                <p className="font-extrabold text-sm text-gray-900 uppercase tracking-tight">
+                  দৈনিক নাস্তার টাকার পরিমাণ (Daily Breakfast / Snacks Allowance)
+                </p>
+                <p className="text-xs text-gray-500">
+                  যথাসময়ে উপস্থিত থাকলে প্রত্যেক কর্মীকে দৈনিক কত টাকা নাস্তা বাবদ দেওয়া হবে (ডিফল্ট: ৳২০)।
+                </p>
+              </div>
+              <div className="flex items-center gap-2 max-w-[200px] w-full">
+                <span className="text-sm font-black text-gray-500">৳</span>
+                <input 
+                  type="number"
+                  min="0"
+                  step="1"
+                  value={breakfastAllowanceAmount}
+                  onChange={e => setBreakfastAllowanceAmount(Number(e.target.value) || 0)}
+                  className="w-full px-4 py-2.5 text-sm bg-gray-50 border border-gray-200 hover:border-gray-300 focus:border-slate-800 rounded-xl font-black font-mono outline-none focus:ring-0"
+                />
+                <span className="text-xs font-extrabold text-gray-400 uppercase shrink-0">টাকা</span>
+              </div>
+            </div>
+
+            {/* Setting 3: Deduct Breakfast on Late (১০টার পরে আসলে নাস্তার টাকা কাটা যাবে) */}
+            <div className="py-4 flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <div className="space-y-1">
+                <p className="font-extrabold text-sm text-gray-900 uppercase tracking-tight">
+                  লেট আসলে নাস্তার টাকা কাটা যাবে (Deduct Breakfast on Late)
+                </p>
+                <p className="text-xs text-gray-500">
+                  চালু থাকলে, কর্মী নির্ধারিত সময়ের (সকাল ১০:০০) পর আসলে তার ঐ দিনের নাস্তার টাকা (<span className="font-bold text-rose-600">৳{breakfastAllowanceAmount}</span>) কাটা যাবে।
+                </p>
+              </div>
+              <label className="relative inline-flex items-center cursor-pointer">
+                <input 
+                  type="checkbox"
+                  checked={deductBreakfastOnLate}
+                  onChange={e => setDeductBreakfastOnLate(e.target.checked)}
+                  className="sr-only peer"
+                />
+                <div className="w-12 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-slate-900"></div>
+                <span className="ml-3 text-xs font-bold text-gray-800 font-mono">
+                  {deductBreakfastOnLate ? "সক্রিয় (কাটা যাবে)" : "নিষ্ক্রিয় (কাটা যাবে না)"}
+                </span>
+              </label>
+            </div>
+
+            {/* Setting 4: Deduct Breakfast on Absent (অনুপস্থিত থাকলে নাস্তা কাটা যাবে) */}
+            <div className="py-4 flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <div className="space-y-1">
+                <p className="font-extrabold text-sm text-gray-900 uppercase tracking-tight">
+                  অনুপস্থিত থাকলে নাস্তা প্রযোজ্য নয় (Deduct on Absent / Leave)
+                </p>
+                <p className="text-xs text-gray-500">
+                  কর্মী অনুপস্থিত থাকলে কোনো নাস্তার ভাতা যুক্ত হবে না।
+                </p>
+              </div>
+              <label className="relative inline-flex items-center cursor-pointer">
+                <input 
+                  type="checkbox"
+                  checked={deductBreakfastOnAbsent}
+                  onChange={e => setDeductBreakfastOnAbsent(e.target.checked)}
+                  className="sr-only peer"
+                />
+                <div className="w-12 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-slate-900"></div>
+                <span className="ml-3 text-xs font-bold text-gray-800 font-mono">
+                  {deductBreakfastOnAbsent ? "সক্রিয়" : "নিষ্ক্রিয়"}
+                </span>
+              </label>
+            </div>
+
+            {/* Setting 5: Grace Period Minutes (গ্রেস পিরিয়ড বা মিনিট ছাড়) */}
+            <div className="py-4 flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <div className="space-y-1">
+                <p className="font-extrabold text-sm text-gray-900 uppercase tracking-tight">
+                  গ্রেস পিরিয়ড / মিনিট ছাড় (Grace Period in Minutes)
+                </p>
+                <p className="text-xs text-gray-500">
+                  নির্ধারিত সময়ের পরেও কয় মিনিট পর্যন্ত লেট না ধরে ছাড় দেওয়া হবে (যেমন: ০ বা ৫ মিনিট)।
+                </p>
+              </div>
+              <div className="flex items-center gap-2 max-w-[200px] w-full">
+                <input 
+                  type="number"
+                  min="0"
+                  max="60"
+                  value={gracePeriodMinutes}
+                  onChange={e => setGracePeriodMinutes(Number(e.target.value) || 0)}
+                  className="w-full px-4 py-2.5 text-sm bg-gray-50 border border-gray-200 hover:border-gray-300 focus:border-slate-800 rounded-xl font-black font-mono outline-none focus:ring-0"
+                />
+                <span className="text-xs font-extrabold text-gray-400 uppercase shrink-0">মিনিট</span>
+              </div>
+            </div>
+
+            {/* Setting 6: Half-Day Threshold */}
             <div className="py-4 flex flex-col md:flex-row md:items-center justify-between gap-4">
               <div className="space-y-1">
                 <p className="font-extrabold text-sm text-gray-900 uppercase tracking-tight">Half-Day Arrival Threshold</p>
@@ -1406,7 +1517,7 @@ export default function Settings({ user, role }: { user: User; role: UserRole })
               />
             </div>
 
-            {/* Setting 3: Allowed Lunch Break (minutes) */}
+            {/* Setting 7: Allowed Lunch Break (minutes) */}
             <div className="py-4 last:pb-0 flex flex-col md:flex-row md:items-center justify-between gap-4">
               <div className="space-y-1">
                 <p className="font-extrabold text-sm text-gray-900 uppercase tracking-tight">Allowed Lunch Duration (Minutes)</p>

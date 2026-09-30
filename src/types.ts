@@ -37,6 +37,7 @@ export interface Employee {
   department?: string;
   phone?: string;
   email?: string;
+  photo?: string | null;
   nidFrontPhoto?: string | null;
   nidBackPhoto?: string | null;
   birthCertificatePhoto?: string | null;
@@ -60,6 +61,22 @@ export interface Attendance {
   lunchIn?: string; // HH:mm
   checkOut?: string; // HH:mm
   notes?: string;
+  breakfastAllowance?: number; // 20 or 0 (নাস্তার টাকা)
+  isBreakfastEligible?: boolean; // true if checked in <= lateThreshold (১০:০০ এর আগে আসলে প্রাপ্য)
+  lateMinutes?: number; // কত মিনিট লেট হয়েছে
+  breakfastDeducted?: boolean; // লেট বা অনুপস্থিত হওয়ার কারণে নাস্তার টাকা কাটা গেছে কিনা
+}
+
+export interface AttendanceSettings {
+  lateThreshold: string; // e.g. "10:00"
+  lunchDurationLimit: number; // e.g. 60 mins
+  halfDayThreshold: string; // e.g. "11:30"
+  breakfastAllowanceAmount: number; // e.g. 20 (ডিফল্ট ২০ টাকা)
+  deductBreakfastOnLate: boolean; // e.g. true (১০টার পরে আসলে নাস্তার টাকা কাটা যাবে)
+  deductBreakfastOnAbsent: boolean; // e.g. true (অনুপস্থিত থাকলে নাস্তা কাটা যাবে)
+  gracePeriodMinutes?: number; // e.g. 0
+  lastUpdated?: string;
+  updatedBy?: string;
 }
 
 export interface Transaction {
@@ -196,6 +213,8 @@ export interface CounterSale {
   time: string; // HH:mm:ss
   slips: SlipItem[];
   totalSlipsAmount: number;
+  discountType?: "amount" | "percent"; // Discount mode (ফিক্সড টাকা বা শতকরা %)
+  discountPercent?: number; // e.g. 5 for 5%
   discountAmount?: number; // Discount subtracted from total (টোটাল থেকে মাইনাস)
   netPayable?: number; // totalSlipsAmount - discountAmount
   receivedAmount: number;

@@ -151,7 +151,7 @@ function QuotaExceededOverlay({ onDismiss, databaseId, projectId }: { onDismiss:
   );
 }
 
-type View = "dashboard" | "transactions" | "counterSale" | "newSale" | "salesList" | "newEmployee" | "employeesList" | "employees" | "salaryEntry" | "salarySheet" | "addAttendance" | "attendanceList" | "attendance" | "reports" | "settings" | "newSupplier" | "suppliersList" | "suppliers" | "newPurchase" | "purchaseList" | "paySupplierDue" | "newUser" | "usersList" | "rolesList" | "profileView" | "inventory";
+type View = "dashboard" | "transactions" | "counterSale" | "newSale" | "salesList" | "newEmployee" | "employeesList" | "employees" | "salaryEntry" | "salarySheet" | "addAttendance" | "breakfastBoard" | "attendanceList" | "attendance" | "reports" | "settings" | "newSupplier" | "suppliersList" | "suppliers" | "newPurchase" | "purchaseList" | "paySupplierDue" | "newUser" | "usersList" | "rolesList" | "profileView" | "inventory";
 
 const VALID_VIEWS: View[] = [
   "dashboard",
@@ -165,6 +165,7 @@ const VALID_VIEWS: View[] = [
   "salaryEntry",
   "salarySheet",
   "addAttendance",
+  "breakfastBoard",
   "attendanceList",
   "attendance",
   "reports",
@@ -705,6 +706,7 @@ export default function App() {
       icon: ShieldCheck, 
       children: [
         { id: "addAttendance", label: "Daily Input" },
+        { id: "breakfastBoard", label: "নাস্তা ও লেট চার্ট বোর্ড" },
         { id: "attendanceList", label: "Attendance Book" }
       ]
     },
@@ -1381,6 +1383,16 @@ export default function App() {
                     role={profile.role} 
                     mode="add"
                     onSuccess={() => setActiveView("attendanceList")} 
+                  />
+                </div>
+              )}
+              {activeView === "breakfastBoard" && (
+                <div key="attendance-breakfast-board">
+                  <Attendance 
+                    user={user} 
+                    role={profile.role} 
+                    mode="breakfastBoard" 
+                    onSuccess={() => setActiveView("attendanceList")}
                   />
                 </div>
               )}

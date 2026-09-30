@@ -193,6 +193,10 @@
           }
         },
         "totalSlipsAmount": { "type": "number" },
+        "discountType": { "type": "string", "enum": ["amount", "percent"] },
+        "discountPercent": { "type": "number" },
+        "discountAmount": { "type": "number" },
+        "netPayable": { "type": "number" },
         "receivedAmount": { "type": "number" },
         "changeAmount": { "type": "number" },
         "dueAmount": { "type": "number" },
@@ -210,9 +214,53 @@
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["saleId", "dateTime", "date", "slips", "totalSlipsAmount", "receivedAmount", "isBalanced", "paymentMethod", "createdBy", "createdAt"]
+    },
+    "CustomerProfile": {
+      "title": "Customer Profile",
+      "description": "Counter customer profile, due accounts and ledger history",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "phone": { "type": "string" },
+        "address": { "type": "string" },
+        "totalPurchases": { "type": "number" },
+        "totalPaid": { "type": "number" },
+        "totalDue": { "type": "number" },
+        "totalDiscount": { "type": "number" },
+        "lastTransactionDate": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "totalPurchases", "totalPaid", "totalDue", "totalDiscount", "createdAt", "updatedAt"]
+    },
+    "CustomerPayment": {
+      "title": "Customer Payment",
+      "description": "Due payment collections logged from counter customers",
+      "type": "object",
+      "properties": {
+        "customerId": { "type": "string" },
+        "customerName": { "type": "string" },
+        "customerPhone": { "type": "string" },
+        "date": { "type": "string" },
+        "amount": { "type": "number" },
+        "paymentMethod": { "type": "string" },
+        "notes": { "type": "string" },
+        "receivedBy": { "type": "string" },
+        "transactionId": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["customerId", "customerName", "date", "amount", "paymentMethod", "receivedBy", "createdAt"]
     }
   },
   "firestore": {
+    "/customers/{customerId}": {
+      "schema": "CustomerProfile",
+      "description": "Counter customer profiles and due balances"
+    },
+    "/customerPayments/{paymentId}": {
+      "schema": "CustomerPayment",
+      "description": "Due payment collections from customers"
+    },
     "/counterSales/{saleId}": {
       "schema": "CounterSale",
       "description": "Slip-by-slip counter sales entries"

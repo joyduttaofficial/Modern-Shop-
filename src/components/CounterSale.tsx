@@ -10,7 +10,8 @@ import {
   deleteDoc, 
   serverTimestamp,
   getDocs,
-  where
+  where,
+  getDoc
 } from "firebase/firestore";
 import { db, OperationType, handleFirestoreError, cleanFirestoreData, updateDoc } from "@/src/lib/firebase";
 import { CounterSale, SlipItem, Bank, UserRole, Transaction, CustomerProfile, CustomerPayment } from "@/src/types";
@@ -102,6 +103,10 @@ export default function CounterSaleView({
   const [isExportingPdf, setIsExportingPdf] = useState(false);
   const [customerSearchTerm, setCustomerSearchTerm] = useState<string>("");
   const [customerFilterStatus, setCustomerFilterStatus] = useState<"all" | "due" | "paid">("all");
+
+  // State for in-app deletion confirmation modal (works reliably inside iframes without window.confirm)
+  const [saleToDelete, setSaleToDelete] = useState<CounterSale | null>(null);
+  const [isDeletingSale, setIsDeletingSale] = useState(false);
 
   // Helper to generate Day-wise Sequential Slip/Customer ID (দিন অনুযায়ী সিরিয়াল যেমন CS-260928-01, CS-260928-02)
   const getDayBasedId = (targetDateStr: string, salesList: CounterSale[]) => {
@@ -984,22 +989,78 @@ export default function CounterSaleView({
     }
   };
 
-  // Delete counter sale
-  const handleDeleteSale = async (id: string, sId: string, txId?: string) => {
-    const confirmDel = confirm(`আপনি কি নিশ্চিত যে সেল আইডি ${sId} মুছে ফেলতে চান?`);
-    if (!confirmDel) return;
+  // Delete counter sale handler (prompt with in-app modal to avoid iframe confirm blocking)
+  const promptDeleteSale = (sale: CounterSale) => {
+    setSaleToDelete(sale);
+  };
+
+  const executeDeleteSale = async (sale: CounterSale) => {
+    if (!sale || !sale.id) return;
+    setIsDeletingSale(true);
 
     try {
-      await deleteDoc(doc(db, "counterSales", id));
-      if (txId) {
+      // 1. Delete counterSales document from Firestore
+      await deleteDoc(doc(db, "counterSales", sale.id));
+
+      // 2. Delete linked income transaction from general transactions collection
+      if (sale.transactionId) {
         try {
-          await deleteDoc(doc(db, "transactions", txId));
+          await deleteDoc(doc(db, "transactions", sale.transactionId));
         } catch (e) {
-          console.warn("Could not delete matching transaction:", e);
+          console.warn("Could not delete matching transaction by ID:", e);
         }
       }
+
+      // Also clean up any transactions that reference this saleId to ensure 100% clean sync
+      try {
+        const txQuery = query(
+          collection(db, "transactions"), 
+          where("category", "==", "Counter Sale"), 
+          where("subCategory", "==", sale.saleId)
+        );
+        const txSnap = await getDocs(txQuery);
+        for (const tDoc of txSnap.docs) {
+          await deleteDoc(doc(db, "transactions", tDoc.id));
+        }
+      } catch (qErr) {
+        console.warn("Could not query matching transactions for saleId:", qErr);
+      }
+
+      // 3. Revert Customer Profile totals if this sale was linked to a customer
+      if (sale.customerId) {
+        try {
+          const custDocRef = doc(db, "customers", sale.customerId);
+          const custDocSnap = await getDoc(custDocRef);
+          if (custDocSnap.exists()) {
+            const cData = custDocSnap.data();
+            const payable = sale.netPayable ?? (sale.totalSlipsAmount - (sale.discountAmount || 0));
+            const newPurchases = Math.max(0, (cData.totalPurchases || 0) - payable);
+            const newPaid = Math.max(0, (cData.totalPaid || 0) - (sale.receivedAmount || 0));
+            const newDue = Math.max(0, (cData.totalDue || 0) - (sale.dueAmount || 0));
+            const newDiscount = Math.max(0, (cData.totalDiscount || 0) - (sale.discountAmount || 0));
+
+            await updateDoc(custDocRef, cleanFirestoreData({
+              totalPurchases: newPurchases,
+              totalPaid: newPaid,
+              totalDue: newDue,
+              totalDiscount: newDiscount,
+              updatedAt: new Date().toISOString()
+            }));
+          }
+        } catch (cErr) {
+          console.warn("Could not revert customer stats upon sale deletion:", cErr);
+        }
+      }
+
+      // 4. Close modals and clear selected state
+      setSaleToDelete(null);
+      if (selectedSaleForView?.id === sale.id) {
+        setSelectedSaleForView(null);
+      }
     } catch (err) {
-      handleFirestoreError(err, OperationType.DELETE, `counterSales/${id}`);
+      handleFirestoreError(err, OperationType.DELETE, `counterSales/${sale.id}`);
+    } finally {
+      setIsDeletingSale(false);
     }
   };
 
@@ -1950,16 +2011,14 @@ export default function CounterSaleView({
                             >
                               <Eye className="w-4 h-4" />
                             </button>
-                            {role === "admin" && (
-                              <button
-                                type="button"
-                                onClick={() => handleDeleteSale(sale.id!, sale.saleId, sale.transactionId)}
-                                className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-gray-100 rounded-lg transition-colors cursor-pointer"
-                                title="Delete counter sale"
-                              >
-                                <Trash2 className="w-4 h-4" />
-                              </button>
-                            )}
+                            <button
+                              type="button"
+                              onClick={() => promptDeleteSale(sale)}
+                              className="p-1.5 text-rose-500 hover:text-rose-700 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer border border-transparent hover:border-rose-200"
+                              title="সেল ডিলিট করুন (Delete Sale)"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
                           </div>
                         </td>
                       </tr>
@@ -2627,13 +2686,13 @@ export default function CounterSaleView({
               </div>
             </div>
 
-            <div className="pt-3 flex gap-2">
+            <div className="pt-3 flex flex-wrap gap-2">
               <button
                 type="button"
                 onClick={() => {
                   handlePrintSlip(selectedSaleForView);
                 }}
-                className="flex-1 py-2.5 bg-gray-900 hover:bg-black text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer shadow-xs"
+                className="flex-1 min-w-[120px] py-2.5 bg-gray-900 hover:bg-black text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer shadow-xs"
               >
                 <Printer className="w-3.5 h-3.5" />
                 <span>প্রিন্ট ভাউচার</span>
@@ -2644,10 +2703,21 @@ export default function CounterSaleView({
                   handleDownloadSlipPdf(selectedSaleForView);
                 }}
                 disabled={isExportingPdf}
-                className="flex-1 py-2.5 bg-white hover:bg-gray-100 border border-gray-300 text-gray-800 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer shadow-2xs"
+                className="flex-1 min-w-[120px] py-2.5 bg-white hover:bg-gray-100 border border-gray-300 text-gray-800 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer shadow-2xs"
               >
                 <Download className="w-3.5 h-3.5" />
                 <span>ভাউচার PDF</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  promptDeleteSale(selectedSaleForView);
+                }}
+                className="px-3.5 py-2.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer shadow-2xs"
+                title="এই সেলটি ডিলিট করুন"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>ডিলিট</span>
               </button>
               <button
                 type="button"
@@ -2657,6 +2727,64 @@ export default function CounterSaleView({
                 বন্ধ করুন
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ================= IN-APP CUSTOM DELETE CONFIRMATION MODAL ================= */}
+      {/* Works flawlessly in sandboxed browser iframes without native confirm() blocks */}
+      {saleToDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-200">
+          <div className="bg-white rounded-3xl max-w-md w-full p-6 border border-gray-100 shadow-2xl space-y-4 animate-in zoom-in-95 duration-200">
+            <div className="w-12 h-12 rounded-2xl bg-rose-50 border border-rose-100 flex items-center justify-center text-rose-600">
+              <Trash2 className="w-6 h-6" />
+            </div>
+
+            <div className="space-y-1">
+              <h3 className="text-lg font-black text-gray-900">
+                কাউন্টার সেল মুছে ফেলবেন?
+              </h3>
+              <p className="text-xs text-gray-500 leading-relaxed">
+                আপনি কি নিশ্চিত যে সেল আইডি <strong className="text-gray-900 font-mono">{saleToDelete.saleId}</strong> ({saleToDelete.date}, মোট: ৳{saleToDelete.totalSlipsAmount.toLocaleString()}) মুছে ফেলতে চান?
+              </p>
+            </div>
+
+            <div className="p-3 bg-rose-50/60 rounded-2xl border border-rose-100 text-[11px] text-rose-800 space-y-1">
+              <p className="font-bold">• এই সেল এবং এর সকল স্লিপ রেকর্ড স্থায়ীভাবে মুছে যাবে।</p>
+              <p>• সংশ্লিষ্ট ক্যাশ লেনদেন এবং কাস্টমার বাকি খাতা থেকে এই বিলের হিসাব স্বয়ংক্রিয়ভাবে সমন্বয় (রিভার্স) হবে।</p>
+            </div>
+
+            <div className="flex gap-2 pt-2">
+              <button
+                type="button"
+                disabled={isDeletingSale}
+                onClick={() => executeDeleteSale(saleToDelete)}
+                className="flex-1 py-3 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-black transition-all shadow-md active:scale-95 cursor-pointer flex items-center justify-center gap-2 disabled:opacity-50"
+              >
+                {isDeletingSale ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                    <span>মুছে ফেলা হচ্ছে...</span>
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="w-4 h-4" />
+                    <span>হ্যাঁ, ডিলিট করুন</span>
+                  </>
+                )}
+              </button>
+              <button
+                type="button"
+                disabled={isDeletingSale}
+                onClick={() => setSaleToDelete(null)}
+                className="px-5 py-3 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-xl text-xs font-bold transition-all cursor-pointer"
+              >
+                বাতিল
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
           </div>
         </div>
       )}

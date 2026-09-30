@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { User } from "firebase/auth";
-import { collection, query, where, orderBy, limit, onSnapshot, getDocs } from "firebase/firestore";
+import { collection, query, where, orderBy, limit, onSnapshot, getDocs, doc } from "firebase/firestore";
 import { db, OperationType, handleFirestoreError } from "@/src/lib/firebase";
 import { Transaction, Bank, UserRole, Product } from "@/src/types";
 import { PurchaseModel } from "./Purchase";
@@ -27,7 +27,12 @@ import {
   AlertTriangle,
   Bell,
   Filter,
-  CheckCircle2
+  CheckCircle2,
+  Coffee,
+  AlertCircle,
+  XCircle,
+  Search,
+  ChevronRight
 } from "lucide-react";
 import { 
   XAxis, 
@@ -42,7 +47,7 @@ import {
   Legend, 
   Cell 
 } from "recharts";
-import { format, subDays, startOfDay, endOfDay } from "date-fns";
+import { format, subDays, startOfDay, endOfDay, isSameDay } from "date-fns";
 import { useLanguage } from "../contexts/LanguageContext";
 
 export default function Dashboard({ 
@@ -172,6 +177,15 @@ export default function Dashboard({
   const [loading, setLoading] = useState(true);
   const [isMounted, setIsMounted] = useState(false);
 
+  // Attendance and Breakfast allowance settings & filter state
+  const [lateThreshold, setLateThreshold] = useState("10:00");
+  const [breakfastAllowanceAmount, setBreakfastAllowanceAmount] = useState(20);
+  const [deductBreakfastOnLate, setDeductBreakfastOnLate] = useState(true);
+  const [deductBreakfastOnAbsent, setDeductBreakfastOnAbsent] = useState(true);
+  const [gracePeriodMinutes, setGracePeriodMinutes] = useState(0);
+  const [breakfastFilter, setBreakfastFilter] = useState<"all" | "eligible" | "late_deducted" | "late_only" | "absent">("all");
+  const [breakfastSearch, setBreakfastSearch] = useState("");
+
   useEffect(() => {
     setIsMounted(true);
   }, []);
@@ -232,6 +246,17 @@ export default function Dashboard({
       checkInitialDone();
     }, (err) => { console.error(err); checkInitialDone(); });
 
+    const unsubAttSettings = onSnapshot(doc(db, "settings", "attendance"), (snap) => {
+      if (snap.exists()) {
+        const data = snap.data();
+        setLateThreshold(data.lateThreshold || "10:00");
+        setBreakfastAllowanceAmount(data.breakfastAllowanceAmount ?? 20);
+        setDeductBreakfastOnLate(data.deductBreakfastOnLate ?? true);
+        setDeductBreakfastOnAbsent(data.deductBreakfastOnAbsent ?? true);
+        setGracePeriodMinutes(data.gracePeriodMinutes ?? 0);
+      }
+    }, (err) => console.warn("Could not load attendance settings:", err));
+
     return () => {
       unsubTxs();
       unsubPur();
@@ -239,6 +264,7 @@ export default function Dashboard({
       unsubSuppliers();
       unsubAtt();
       unsubEmp();
+      unsubAttSettings();
     };
   }, []);
 
@@ -608,6 +634,168 @@ export default function Dashboard({
   const lowStockItems = products.filter(p => {
     const threshold = p.minStock !== undefined ? p.minStock : 10;
     return (p.stock || 0) <= threshold;
+  });
+
+  // Helper calculations for Late Duration and Breakfast Allowance
+  const getLateDetails = (checkIn?: string) => {
+    if (!checkIn) {
+      return { isLate: false, minutesLate: 0, formattedDuration: "০ মিনিট" };
+    }
+    try {
+      const [h, m] = checkIn.split(":").map(Number);
+      const [thH, thM] = lateThreshold.split(":").map(Number);
+      if (isNaN(h) || isNaN(m) || isNaN(thH) || isNaN(thM)) {
+        return { isLate: false, minutesLate: 0, formattedDuration: "০ মিনিট" };
+      }
+      const checkInMins = h * 60 + m;
+      const cutoffMins = thH * 60 + thM + (gracePeriodMinutes || 0);
+
+      if (checkInMins > cutoffMins) {
+        const diff = checkInMins - (thH * 60 + thM);
+        const hours = Math.floor(diff / 60);
+        const mins = diff % 60;
+        let formatted = "";
+        if (hours > 0 && mins > 0) {
+          formatted = `${hours} ঘণ্টা ${mins} মিনিট দেরি`;
+        } else if (hours > 0) {
+          formatted = `${hours} ঘণ্টা দেরি`;
+        } else {
+          formatted = `${mins} মিনিট দেরি`;
+        }
+        return { isLate: true, minutesLate: diff, formattedDuration: formatted };
+      }
+      return { isLate: false, minutesLate: 0, formattedDuration: "০ মিনিট" };
+    } catch {
+      return { isLate: false, minutesLate: 0, formattedDuration: "০ মিনিট" };
+    }
+  };
+
+  const getBreakfastStatus = (emp: any, record?: any) => {
+    if (!record || !record.status) {
+      return {
+        eligible: false,
+        amount: 0,
+        badgeText: "হাজিরা বাকি",
+        reason: "আজকের উপস্থিতি এখনও রেকর্ড করা হয়নি",
+        category: "not_marked" as const,
+        lateInfo: getLateDetails(undefined)
+      };
+    }
+
+    if (record.status === "absent" || record.status === "leave") {
+      return {
+        eligible: false,
+        amount: 0,
+        badgeText: "নাস্তার টাকা পাবে না",
+        reason: record.status === "absent" ? "অনুপস্থিত থাকায় নাস্তার টাকা কর্তন" : "ছুটিতে থাকায় নাস্তার টাকা প্রযোজ্য নয়",
+        category: "absent" as const,
+        lateInfo: getLateDetails(undefined)
+      };
+    }
+
+    if (record.status === "holiday") {
+      return {
+        eligible: false,
+        amount: 0,
+        badgeText: "ছুটির দিন",
+        reason: "অফিস সরকারি বা সাপ্তাহিক বন্ধ",
+        category: "holiday" as const,
+        lateInfo: getLateDetails(undefined)
+      };
+    }
+
+    const lateInfo = getLateDetails(record.checkIn);
+    const isLateArrival = lateInfo.isLate || record.status === "late" || record.status === "half-day";
+
+    if (isLateArrival && deductBreakfastOnLate) {
+      return {
+        eligible: false,
+        amount: 0,
+        badgeText: "নাস্তার টাকা কর্তন",
+        reason: `সকাল ${lateThreshold} এর পরে (${record.checkIn || "দেরিতে"}) আসায় নাস্তার টাকা কর্তন (${lateInfo.formattedDuration})`,
+        category: "late_deducted" as const,
+        lateInfo
+      };
+    }
+
+    return {
+      eligible: true,
+      amount: breakfastAllowanceAmount,
+      badgeText: `নাস্তা পাবে (৳${breakfastAllowanceAmount})`,
+      reason: `সকাল ${lateThreshold} এর আগে সময়মতো উপস্থিত (${record.checkIn || "১০:০০ এর পূর্বে"})`,
+      category: "eligible" as const,
+      lateInfo
+    };
+  };
+
+  const getEmployeePhoto = (emp: any) => {
+    if (emp.photo) return emp.photo;
+    if (emp.nidFrontPhoto) return emp.nidFrontPhoto;
+    const docImg = emp.documents?.find((d: any) => d.type?.startsWith("image/"));
+    if (docImg) return docImg.data;
+    return null;
+  };
+
+  const formatTime12 = (time24?: string) => {
+    if (!time24) return "--:--";
+    try {
+      const [h, m] = time24.split(":").map(Number);
+      if (isNaN(h) || isNaN(m)) return time24;
+      const period = h >= 12 ? "PM" : "AM";
+      const h12 = h % 12 || 12;
+      return `${h12.toString().padStart(2, "0")}:${m.toString().padStart(2, "0")} ${period}`;
+    } catch {
+      return time24;
+    }
+  };
+
+  const todayStr = format(new Date(), "yyyy-MM-dd");
+  const activeEmployees = rawEmployees.filter((e: any) => e.status !== "inactive" && e.status !== "resigned");
+
+  const staffBreakfastList = activeEmployees.map((emp: any) => {
+    const rec = rawAttendance.find((a: any) => {
+      if (a.employeeId !== emp.id) return false;
+      try {
+        const aDateStr = a.date ? format(new Date(a.date), "yyyy-MM-dd") : "";
+        return aDateStr === todayStr || a.date === todayStr;
+      } catch {
+        return a.date === todayStr;
+      }
+    });
+    const bStatus = getBreakfastStatus(emp, rec);
+    return {
+      emp,
+      rec,
+      bStatus
+    };
+  });
+
+  const breakfastSummaryStats = {
+    totalStaff: staffBreakfastList.length,
+    eligibleCount: staffBreakfastList.filter(s => s.bStatus.category === "eligible").length,
+    lateDeductedCount: staffBreakfastList.filter(s => s.bStatus.category === "late_deducted").length,
+    lateCount: staffBreakfastList.filter(s => s.bStatus.lateInfo.isLate || s.rec?.status === "late" || s.rec?.status === "half-day").length,
+    absentCount: staffBreakfastList.filter(s => s.rec?.status === "absent" || s.rec?.status === "leave").length,
+    notMarkedCount: staffBreakfastList.filter(s => !s.rec || !s.rec.status).length,
+    totalBreakfastPayable: staffBreakfastList.filter(s => s.bStatus.category === "eligible").length * breakfastAllowanceAmount,
+    totalBreakfastSaved: staffBreakfastList.filter(s => s.bStatus.category === "late_deducted").length * breakfastAllowanceAmount,
+  };
+
+  const filteredBreakfastList = staffBreakfastList.filter(item => {
+    if (breakfastFilter === "eligible" && item.bStatus.category !== "eligible") return false;
+    if (breakfastFilter === "late_deducted" && item.bStatus.category !== "late_deducted") return false;
+    if (breakfastFilter === "late_only" && !item.bStatus.lateInfo.isLate && item.rec?.status !== "late" && item.rec?.status !== "half-day") return false;
+    if (breakfastFilter === "absent" && item.rec?.status !== "absent" && item.rec?.status !== "leave") return false;
+
+    if (breakfastSearch.trim()) {
+      const q = breakfastSearch.toLowerCase().trim();
+      const nameMatch = item.emp.name?.toLowerCase().includes(q);
+      const roleMatch = item.emp.role?.toLowerCase().includes(q);
+      const deptMatch = item.emp.department?.toLowerCase().includes(q);
+      const idMatch = item.emp.employeeId?.toLowerCase().includes(q);
+      return nameMatch || roleMatch || deptMatch || idMatch;
+    }
+    return true;
   });
 
   return (
@@ -1270,6 +1458,360 @@ export default function Dashboard({
               ))}
             </div>
           </div>
+        </div>
+      </div>
+
+      {/* ================= NASTA & LATE MONITORING CHART BOARD (নাস্তা ও লেট মনিটরিং চার্ট বোর্ড) ================= */}
+      <div className="bg-white rounded-3xl border border-slate-100/80 shadow-md shadow-slate-100/30 overflow-hidden space-y-6 p-6">
+        {/* Header & Controls */}
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-100 pb-5">
+          <div className="flex items-center gap-3.5">
+            <div className="w-12 h-12 rounded-2xl bg-amber-500/10 border border-amber-200/60 flex items-center justify-center text-amber-600 shadow-xs shrink-0">
+              <Coffee className="w-6 h-6" />
+            </div>
+            <div>
+              <div className="flex flex-wrap items-center gap-2">
+                <h3 className="text-lg font-black text-slate-900 tracking-tight">
+                  নাস্তা ও লেট মনিটরিং চার্ট বোর্ড
+                </h3>
+                <span className="text-[10px] font-black uppercase tracking-wider bg-amber-100 text-amber-800 px-2.5 py-0.5 rounded-full border border-amber-200">
+                  প্রতিদিনের নাস্তার তালিকা
+                </span>
+              </div>
+              <p className="text-xs text-slate-500 font-medium mt-0.5">
+                সকাল {lateThreshold} টার পর আসলে লেট গণ্য হবে এবং কর্মীদের দৈনিক ৳{breakfastAllowanceAmount} নাস্তার ভাতা স্বয়ংক্রিয় হিসাব ও কর্তন তালিকা
+              </p>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              onClick={() => onNavigate?.("addAttendance")}
+              className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 shadow-2xs hover:scale-102 active:scale-98"
+            >
+              <UserCheck className="w-3.5 h-3.5 text-slate-600" />
+              <span>হাজিরা এন্ট্রি</span>
+            </button>
+            <button
+              onClick={() => onNavigate?.("breakfastBoard")}
+              className="px-4 py-2 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-white rounded-xl text-xs font-black uppercase tracking-wider transition-all cursor-pointer flex items-center gap-1.5 shadow-sm hover:scale-102 active:scale-98"
+            >
+              <span>চার্ট বোর্ড ওপেন করুন</span>
+              <ArrowUpRight className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        </div>
+
+        {/* Rule reminder notification strip */}
+        <div className="bg-gradient-to-r from-amber-50/70 via-orange-50/40 to-slate-50 p-3.5 rounded-2xl border border-amber-200/60 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex items-center gap-2.5 text-xs text-amber-950 font-bold">
+            <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
+            <span>
+              <strong>অফিস নিয়ম:</strong> সকাল {lateThreshold} AM এর পরে আসলে লেট • দৈনিক নাস্তা: ৳{breakfastAllowanceAmount} • দেরি হলে কর্তন: {deductBreakfastOnLate ? "সক্রিয় (কাটা যাবে)" : "নিষ্ক্রিয়"}
+            </span>
+          </div>
+          <div className="text-[11px] font-mono font-bold text-slate-500 shrink-0">
+            তারিখ: {format(new Date(), "dd MMMM yyyy")}
+          </div>
+        </div>
+
+        {/* 5 KPI Stat summary cards */}
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+          {/* Card 1: Total Staff */}
+          <div className="bg-slate-50/80 p-3.5 rounded-2xl border border-slate-200/60 space-y-1">
+            <span className="text-[9px] font-black text-slate-400 uppercase tracking-wider block">মোট কর্মী</span>
+            <div className="text-xl font-black text-slate-900 font-mono">
+              {breakfastSummaryStats.totalStaff} <span className="text-xs font-semibold text-slate-500">জন</span>
+            </div>
+            <p className="text-[9px] text-slate-400 font-bold">সক্রিয় তালিকাভুক্ত</p>
+          </div>
+
+          {/* Card 2: Eligible */}
+          <div className="bg-emerald-50/50 p-3.5 rounded-2xl border border-emerald-200/60 space-y-1">
+            <div className="flex items-center justify-between">
+              <span className="text-[9px] font-black text-emerald-800 uppercase tracking-wider block">নাস্তা পাবে (অন-টাইম)</span>
+              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+            </div>
+            <div className="text-xl font-black text-emerald-700 font-mono">
+              {breakfastSummaryStats.eligibleCount} <span className="text-xs font-semibold text-emerald-600">জন</span>
+            </div>
+            <p className="text-[9px] text-emerald-700 font-bold font-mono">বরাদ্দ: ৳{breakfastSummaryStats.totalBreakfastPayable}</p>
+          </div>
+
+          {/* Card 3: Deducted Late */}
+          <div className="bg-rose-50/50 p-3.5 rounded-2xl border border-rose-200/60 space-y-1">
+            <div className="flex items-center justify-between">
+              <span className="text-[9px] font-black text-rose-800 uppercase tracking-wider block">নাস্তার টাকা কর্তন</span>
+              <AlertCircle className="w-3.5 h-3.5 text-rose-600" />
+            </div>
+            <div className="text-xl font-black text-rose-600 font-mono">
+              {breakfastSummaryStats.lateDeductedCount} <span className="text-xs font-semibold text-rose-500">জন</span>
+            </div>
+            <p className="text-[9px] text-rose-600 font-bold font-mono">কর্তন: ৳{breakfastSummaryStats.totalBreakfastSaved}</p>
+          </div>
+
+          {/* Card 4: Late Count */}
+          <div className="bg-amber-50/50 p-3.5 rounded-2xl border border-amber-200/60 space-y-1">
+            <div className="flex items-center justify-between">
+              <span className="text-[9px] font-black text-amber-800 uppercase tracking-wider block">দেরিতে আসা স্টাফ</span>
+              <Clock className="w-3.5 h-3.5 text-amber-600" />
+            </div>
+            <div className="text-xl font-black text-amber-700 font-mono">
+              {breakfastSummaryStats.lateCount} <span className="text-xs font-semibold text-amber-600">জন</span>
+            </div>
+            <p className="text-[9px] text-amber-600 font-bold">{lateThreshold} AM এর পরে</p>
+          </div>
+
+          {/* Card 5: Net Payable */}
+          <div className="bg-slate-900 text-white p-3.5 rounded-2xl border border-slate-800 space-y-1 col-span-2 sm:col-span-1">
+            <div className="flex items-center justify-between">
+              <span className="text-[9px] font-black text-slate-300 uppercase tracking-wider block">আজকের নাস্তার খরচ</span>
+              <Coffee className="w-3.5 h-3.5 text-amber-400" />
+            </div>
+            <div className="text-xl font-black text-amber-400 font-mono">
+              ৳{breakfastSummaryStats.totalBreakfastPayable}
+            </div>
+            <p className="text-[9px] text-slate-400 font-bold">মোট সাশ্রয়: ৳{breakfastSummaryStats.totalBreakfastSaved}</p>
+          </div>
+        </div>
+
+        {/* Filter Pills & Search Input */}
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 pt-2">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <button
+              onClick={() => setBreakfastFilter("all")}
+              className={cn(
+                "px-3 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer border",
+                breakfastFilter === "all"
+                  ? "bg-slate-900 text-white border-slate-900 shadow-xs"
+                  : "bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100"
+              )}
+            >
+              সব কর্মী ({breakfastSummaryStats.totalStaff})
+            </button>
+
+            <button
+              onClick={() => setBreakfastFilter("eligible")}
+              className={cn(
+                "px-3 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer border flex items-center gap-1",
+                breakfastFilter === "eligible"
+                  ? "bg-emerald-600 text-white border-emerald-600 shadow-xs"
+                  : "bg-emerald-50 text-emerald-800 border-emerald-200 hover:bg-emerald-100/50"
+              )}
+            >
+              <CheckCircle2 className="w-3 h-3" />
+              <span>নাস্তা পাবে ({breakfastSummaryStats.eligibleCount}) 🥪</span>
+            </button>
+
+            <button
+              onClick={() => setBreakfastFilter("late_deducted")}
+              className={cn(
+                "px-3 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer border flex items-center gap-1",
+                breakfastFilter === "late_deducted"
+                  ? "bg-rose-600 text-white border-rose-600 shadow-xs"
+                  : "bg-rose-50 text-rose-800 border-rose-200 hover:bg-rose-100/50"
+              )}
+            >
+              <AlertCircle className="w-3 h-3" />
+              <span>নাস্তার টাকা কর্তন ({breakfastSummaryStats.lateDeductedCount}) ❌</span>
+            </button>
+
+            <button
+              onClick={() => setBreakfastFilter("late_only")}
+              className={cn(
+                "px-3 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer border flex items-center gap-1",
+                breakfastFilter === "late_only"
+                  ? "bg-amber-500 text-white border-amber-500 shadow-xs"
+                  : "bg-amber-50 text-amber-800 border-amber-200 hover:bg-amber-100/50"
+              )}
+            >
+              <Clock className="w-3 h-3" />
+              <span>দেরিতে আসা ({breakfastSummaryStats.lateCount}) ⏰</span>
+            </button>
+
+            <button
+              onClick={() => setBreakfastFilter("absent")}
+              className={cn(
+                "px-3 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer border flex items-center gap-1",
+                breakfastFilter === "absent"
+                  ? "bg-slate-700 text-white border-slate-700 shadow-xs"
+                  : "bg-slate-100 text-slate-600 border-slate-200 hover:bg-slate-200"
+              )}
+            >
+              <XCircle className="w-3 h-3" />
+              <span>অনুপস্থিত ({breakfastSummaryStats.absentCount})</span>
+            </button>
+          </div>
+
+          <div className="relative w-full md:w-64">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
+            <input
+              type="text"
+              placeholder="নাম বা পদবী দিয়ে খুঁজুন..."
+              value={breakfastSearch}
+              onChange={e => setBreakfastSearch(e.target.value)}
+              className="w-full pl-9 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold focus:outline-none focus:ring-1 focus:ring-amber-500 placeholder:text-slate-400"
+            />
+          </div>
+        </div>
+
+        {/* The Attendance & Breakfast List Table */}
+        <div className="overflow-x-auto rounded-2xl border border-slate-100">
+          <table className="w-full text-left border-collapse">
+            <thead className="bg-slate-50/80 border-b border-slate-100 text-[10px] font-black text-slate-400 uppercase tracking-wider">
+              <tr>
+                <th className="px-5 py-3.5">কর্মী ও পদবী</th>
+                <th className="px-4 py-3.5 text-center">আজকের আগমন সময়</th>
+                <th className="px-4 py-3.5 text-center">দেরির সময়</th>
+                <th className="px-5 py-3.5 text-center">নাস্তার স্ট্যাটাস</th>
+                <th className="px-5 py-3.5 text-right">নাস্তা ভাতা</th>
+                <th className="px-4 py-3.5 text-center">অ্যাকশন</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100 text-xs">
+              {filteredBreakfastList.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="py-10 text-center text-slate-400 font-medium">
+                    কোনো কর্মীর তথ্য পাওয়া যায়নি।
+                  </td>
+                </tr>
+              ) : (
+                filteredBreakfastList.map(({ emp, rec, bStatus }) => {
+                  const photo = getEmployeePhoto(emp);
+                  return (
+                    <tr key={emp.id} className="hover:bg-slate-50/60 transition-colors">
+                      {/* Employee Info */}
+                      <td className="px-5 py-3.5">
+                        <div className="flex items-center gap-3">
+                          <div className="relative shrink-0">
+                            {photo ? (
+                              <img
+                                src={photo}
+                                alt={emp.name}
+                                className="w-9 h-9 rounded-full object-cover border-2 border-white shadow-xs"
+                              />
+                            ) : (
+                              <div className="w-9 h-9 rounded-full bg-gradient-to-br from-amber-500 to-orange-500 text-white font-bold flex items-center justify-center text-xs shadow-xs">
+                                {emp.name?.charAt(0) || "E"}
+                              </div>
+                            )}
+                            <span 
+                              className={cn(
+                                "absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full border-2 border-white",
+                                rec?.status === "present" ? "bg-emerald-500" :
+                                rec?.status === "late" ? "bg-amber-500" :
+                                rec?.status === "absent" ? "bg-rose-500" : "bg-slate-300"
+                              )}
+                            />
+                          </div>
+                          <div>
+                            <div className="font-bold text-slate-900 text-sm flex items-center gap-1.5">
+                              <span>{emp.name}</span>
+                              {emp.employeeId && (
+                                <span className="text-[10px] font-mono font-bold text-slate-400 bg-slate-100 px-1.5 py-0.2 rounded">
+                                  {emp.employeeId}
+                                </span>
+                              )}
+                            </div>
+                            <div className="text-[11px] text-slate-400 font-semibold">
+                              {emp.role || "Staff"} {emp.department ? `• ${emp.department}` : ""}
+                            </div>
+                          </div>
+                        </div>
+                      </td>
+
+                      {/* Check-In Time */}
+                      <td className="px-4 py-3.5 text-center">
+                        {rec?.checkIn ? (
+                          <span className="font-mono font-bold text-slate-800 text-xs inline-flex items-center gap-1 bg-slate-100 px-2 py-0.5 rounded-lg">
+                            <Clock className="w-3 h-3 text-slate-500" />
+                            {formatTime12(rec.checkIn)}
+                          </span>
+                        ) : rec?.status === "absent" ? (
+                          <span className="text-[11px] font-bold text-rose-600 bg-rose-50 px-2 py-0.5 rounded-lg">
+                            অনুপস্থিত
+                          </span>
+                        ) : rec?.status === "leave" ? (
+                          <span className="text-[11px] font-bold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-lg">
+                            ছুটি
+                          </span>
+                        ) : (
+                          <span className="text-[11px] text-slate-400 italic">
+                            হাজিরা বাকি
+                          </span>
+                        )}
+                      </td>
+
+                      {/* Late Duration */}
+                      <td className="px-4 py-3.5 text-center">
+                        {bStatus.lateInfo.isLate ? (
+                          <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-rose-50 text-rose-700 border border-rose-200 rounded-full font-bold text-[11px] animate-pulse">
+                            <Clock className="w-3 h-3 text-rose-500" />
+                            {bStatus.lateInfo.formattedDuration}
+                          </span>
+                        ) : rec?.checkIn ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-emerald-50 text-emerald-700 rounded-lg font-bold text-[11px]">
+                            অন-টাইম (০ মি.)
+                          </span>
+                        ) : (
+                          <span className="text-slate-300 text-xs">-</span>
+                        )}
+                      </td>
+
+                      {/* Breakfast Status */}
+                      <td className="px-5 py-3.5 text-center">
+                        {bStatus.category === "eligible" ? (
+                          <span className="inline-flex items-center gap-1 px-3 py-1 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-full font-black text-xs shadow-2xs">
+                            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                            নাস্তা পাবে 🥪
+                          </span>
+                        ) : bStatus.category === "late_deducted" ? (
+                          <span 
+                            className="inline-flex items-center gap-1 px-3 py-1 bg-rose-50 text-rose-700 border border-rose-200 rounded-full font-black text-xs shadow-2xs"
+                            title={bStatus.reason}
+                          >
+                            <AlertCircle className="w-3.5 h-3.5 text-rose-600" />
+                            নাস্তার টাকা কর্তন ❌
+                          </span>
+                        ) : bStatus.category === "absent" ? (
+                          <span className="inline-flex items-center gap-1 px-3 py-1 bg-slate-100 text-slate-600 border border-slate-200 rounded-full font-black text-xs">
+                            <XCircle className="w-3.5 h-3.5 text-slate-400" />
+                            পাবে না (অনুপস্থিত)
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-amber-50 text-amber-700 border border-amber-200 rounded-full font-bold text-xs">
+                            <Clock className="w-3.5 h-3.5 text-amber-500" />
+                            হাজিরা বাকি
+                          </span>
+                        )}
+                      </td>
+
+                      {/* Allowance Amount */}
+                      <td className="px-5 py-3.5 text-right font-mono font-black text-sm">
+                        {bStatus.eligible ? (
+                          <span className="text-emerald-700">+৳{bStatus.amount}</span>
+                        ) : (
+                          <span className="text-slate-400">৳০</span>
+                        )}
+                      </td>
+
+                      {/* Action */}
+                      <td className="px-4 py-3.5 text-center">
+                        <button
+                          onClick={() => onNavigate?.("breakfastBoard")}
+                          className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-bold transition-all cursor-pointer inline-flex items-center gap-1"
+                          title="চার্ট বোর্ডে বিস্তারিত দেখুন"
+                        >
+                          <span>বিস্তারিত</span>
+                          <ChevronRight className="w-3 h-3 text-slate-400" />
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
         </div>
       </div>
 

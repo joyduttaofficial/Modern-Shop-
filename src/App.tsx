@@ -151,12 +151,13 @@ function QuotaExceededOverlay({ onDismiss, databaseId, projectId }: { onDismiss:
   );
 }
 
-type View = "dashboard" | "transactions" | "counterSale" | "newSale" | "salesList" | "newEmployee" | "employeesList" | "employees" | "salaryEntry" | "salarySheet" | "addAttendance" | "breakfastBoard" | "attendanceList" | "attendance" | "reports" | "settings" | "newSupplier" | "suppliersList" | "suppliers" | "newPurchase" | "purchaseList" | "paySupplierDue" | "newUser" | "usersList" | "rolesList" | "profileView" | "inventory";
+type View = "dashboard" | "transactions" | "counterSale" | "counterSalesLedger" | "newSale" | "salesList" | "newEmployee" | "employeesList" | "employees" | "salaryEntry" | "salarySheet" | "addAttendance" | "breakfastBoard" | "attendanceList" | "attendance" | "reports" | "settings" | "newSupplier" | "suppliersList" | "suppliers" | "newPurchase" | "purchaseList" | "paySupplierDue" | "newUser" | "usersList" | "rolesList" | "profileView" | "inventory";
 
 const VALID_VIEWS: View[] = [
   "dashboard",
   "transactions",
   "counterSale",
+  "counterSalesLedger",
   "newSale",
   "salesList",
   "newEmployee",
@@ -666,8 +667,9 @@ export default function App() {
       icon: ShoppingCart, 
       children: [
         { id: "counterSale", label: "Counter Sale (স্লিপ সেল)" },
-        { id: "newSale", label: "Staff Daily Sales" },
-        { id: "salesList", label: "Sales List / Ledger" }
+        { id: "counterSalesLedger", label: "Counter Sales Ledger (কাউন্টার লেজার)" },
+        { id: "newSale", label: "Staff Daily Sales (কর্মী বিক্রয়)" },
+        { id: "salesList", label: "Staff Sales Ledger (কর্মী লেজার)" }
       ]
     },
     { 
@@ -750,7 +752,7 @@ export default function App() {
     }
 
     if (profile.role === "sales") {
-      const allowedForSales = ["dashboard", "sales", "counterSale", "newSale", "salesList", "transactions", "profileView"];
+      const allowedForSales = ["dashboard", "sales", "counterSale", "counterSalesLedger", "newSale", "salesList", "transactions", "profileView"];
       return allowedForSales.includes(viewId);
     }
 
@@ -1309,8 +1311,18 @@ export default function App() {
                 <CounterSaleView 
                   user={user} 
                   role={profile.role} 
+                  initialTab="entry"
                   onNavigateToStaffSales={() => setActiveView("newSale")}
-                  onNavigateToSalesLedger={() => setActiveView("salesList")}
+                  onNavigateToSalesLedger={() => setActiveView("counterSalesLedger")}
+                />
+              )}
+              {activeView === "counterSalesLedger" && (
+                <CounterSaleView 
+                  user={user} 
+                  role={profile.role} 
+                  initialTab="register"
+                  onNavigateToStaffSales={() => setActiveView("newSale")}
+                  onNavigateToSalesLedger={() => setActiveView("counterSalesLedger")}
                 />
               )}
               {activeView === "newSale" && (

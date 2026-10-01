@@ -57,13 +57,15 @@ interface CounterSaleProps {
   role: UserRole;
   onNavigateToStaffSales?: () => void;
   onNavigateToSalesLedger?: () => void;
+  initialTab?: "entry" | "register" | "customers";
 }
 
 export default function CounterSaleView({ 
   user, 
   role, 
   onNavigateToStaffSales, 
-  onNavigateToSalesLedger 
+  onNavigateToSalesLedger,
+  initialTab = "entry"
 }: CounterSaleProps) {
   const { language, t, formatDate, formatNumber } = useLanguage();
 
@@ -85,7 +87,13 @@ export default function CounterSaleView({
   }, []);
 
   // Mode: "entry" | "register" | "customers"
-  const [activeTab, setActiveTab] = useState<"entry" | "register" | "customers">("entry");
+  const [activeTab, setActiveTab] = useState<"entry" | "register" | "customers">(initialTab);
+
+  useEffect(() => {
+    if (initialTab) {
+      setActiveTab(initialTab);
+    }
+  }, [initialTab]);
 
   // Discount states (টাকায় অথবা শতকরা % এ ছাড়)
   const [discountType, setDiscountType] = useState<"amount" | "percent">("amount");

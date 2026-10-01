@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { User } from "firebase/auth";
 import { collection, query, where, orderBy, limit, onSnapshot, getDocs, doc } from "firebase/firestore";
 import { db, OperationType, handleFirestoreError } from "@/src/lib/firebase";
-import { Transaction, Bank, UserRole, Product } from "@/src/types";
+import { Transaction, Bank, UserRole, Product, CounterSale } from "@/src/types";
 import { PurchaseModel } from "./Purchase";
 import { cn } from "@/src/lib/utils";
 import { getTransactionsFromIndexedDB } from "@/src/lib/indexedDbFallback";
@@ -32,7 +32,13 @@ import {
   AlertCircle,
   XCircle,
   Search,
-  ChevronRight
+  ChevronRight,
+  Receipt,
+  Layers,
+  Scale,
+  DollarSign,
+  Tag,
+  ArrowRight
 } from "lucide-react";
 import { 
   XAxis, 
@@ -109,6 +115,37 @@ export default function Dashboard({
   const [rawSuppliers, setRawSuppliers] = useState<any[]>([]);
   const [rawAttendance, setRawAttendance] = useState<any[]>([]);
   const [rawEmployees, setRawEmployees] = useState<any[]>([]);
+  const [rawCounterSales, setRawCounterSales] = useState<CounterSale[]>([]);
+
+  // Two Different Sales Ledgers states & active tab
+  const [salesLedgerTab, setSalesLedgerTab] = useState<"dual" | "staff" | "counter">("dual");
+  const [staffSalesStats, setStaffSalesStats] = useState({
+    todayStaffSales: 0,
+    todayWholesale: 0,
+    todayDeposit: 0,
+    todayStaffNet: 0,
+    totalStaffSales: 0,
+    totalWholesale: 0,
+    totalDeposit: 0,
+    totalStaffNet: 0
+  });
+
+  const [counterSalesStats, setCounterSalesStats] = useState({
+    todayCash: 0,
+    todayGrossSlips: 0,
+    todayDiscount: 0,
+    todayNetPayable: 0,
+    todayDue: 0,
+    todayCount: 0,
+    todayEqualCount: 0,
+    todayDueCount: 0,
+    totalCash: 0,
+    totalGrossSlips: 0,
+    totalDiscount: 0,
+    totalNetPayable: 0,
+    totalDue: 0,
+    totalCount: 0
+  });
 
   const matchesUser = (item: any) => {
     if (!selectedUserFilter || selectedUserFilter === "all") return true;
@@ -213,7 +250,7 @@ export default function Dashboard({
     let initialLoads = 0;
     const checkInitialDone = () => {
       initialLoads++;
-      if (initialLoads >= 6) setLoading(false);
+      if (initialLoads >= 7) setLoading(false);
     };
 
     const unsubTxs = onSnapshot(collection(db, "transactions"), (snap) => {
@@ -246,6 +283,11 @@ export default function Dashboard({
       checkInitialDone();
     }, (err) => { console.error(err); checkInitialDone(); });
 
+    const unsubCounterSales = onSnapshot(collection(db, "counterSales"), (snap) => {
+      setRawCounterSales(snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as CounterSale)));
+      checkInitialDone();
+    }, (err) => { console.error(err); checkInitialDone(); });
+
     const unsubAttSettings = onSnapshot(doc(db, "settings", "attendance"), (snap) => {
       if (snap.exists()) {
         const data = snap.data();
@@ -264,6 +306,7 @@ export default function Dashboard({
       unsubSuppliers();
       unsubAtt();
       unsubEmp();
+      unsubCounterSales();
       unsubAttSettings();
     };
   }, []);
@@ -310,6 +353,14 @@ export default function Dashboard({
     let totalSupplierPayment = 0;
     let totalEmployeeAbsentMonth = 0;
 
+    // Separate tracking for Staff Sales calculation
+    let todayStaffSalesVal = 0;
+    let todayWholesaleVal = 0;
+    let todayDepositVal = 0;
+    let totalStaffSalesVal = 0;
+    let totalWholesaleVal = 0;
+    let totalDepositVal = 0;
+
     // 1. Transactions calculations
       all.forEach(tx => {
         let isToday = false;
@@ -324,6 +375,7 @@ export default function Dashboard({
           tx.category === "Wholesale Sales" || 
           tx.category === "Retail Sales" || 
           tx.category === "Product Sales" || 
+          tx.category === "Counter Sale" ||
           tx.category.toLowerCase().includes("sale")
         ) &&
         tx.category !== "Opening Balance" &&
@@ -331,6 +383,8 @@ export default function Dashboard({
         tx.category !== "Bank Deposit" &&
         tx.category !== "Total Deposit" &&
         tx.category !== "Total Bank Deposit";
+
+        const isStaffSale = tx.type === "income" && tx.category === "Employee Sales";
 
         const isWholesale = tx.type === "income" && (
           tx.category === "Wholesale Sales" || 
@@ -342,6 +396,8 @@ export default function Dashboard({
           tx.category.toLowerCase().includes("bank deposit")
         );
 
+        const isDepositDeduction = (tx.category === "Total Deposit" || tx.subCategory === "Deposit");
+
         const isWithdrawal = tx.type === "expense" && (
           tx.category === "Bank Credit" || 
           tx.category === "Bank Withdrawal" || 
@@ -352,6 +408,11 @@ export default function Dashboard({
 
         const isPreviousCash = tx.category === "Previous Cash" || tx.category === "Opening Balance";
 
+        // Staff Sales calculation tracking
+        if (isStaffSale) totalStaffSalesVal += tx.amount;
+        if (isWholesale) totalWholesaleVal += tx.amount;
+        if (isDepositDeduction) totalDepositVal += tx.amount;
+
         // All-Time Totals
         if (isSale) totalSales += tx.amount;
         if (isWholesale) totalWholesale += tx.amount;
@@ -361,6 +422,10 @@ export default function Dashboard({
 
         // Today Snaps
         if (isToday) {
+          if (isStaffSale) todayStaffSalesVal += tx.amount;
+          if (isWholesale) todayWholesaleVal += tx.amount;
+          if (isDepositDeduction) todayDepositVal += tx.amount;
+
           if (isSale) todaySales += tx.amount;
           if (isWholesale) todayWholesale += tx.amount;
           if (isDeposit) todayBankDeposit += tx.amount;
@@ -368,6 +433,95 @@ export default function Dashboard({
           if (tx.type === "expense") todayExpense += tx.amount;
           if (isPreviousCash) todayPreviousCash += tx.amount;
         }
+      });
+
+      // 1b. Staff Sales Net Calculation: Staff Gross Sales + Wholesale - Total Deposit/Due
+      const todayStaffNet = todayStaffSalesVal + todayWholesaleVal - todayDepositVal;
+      const totalStaffNet = totalStaffSalesVal + totalWholesaleVal - totalDepositVal;
+
+      setStaffSalesStats({
+        todayStaffSales: todayStaffSalesVal,
+        todayWholesale: todayWholesaleVal,
+        todayDeposit: todayDepositVal,
+        todayStaffNet,
+        totalStaffSales: totalStaffSalesVal,
+        totalWholesale: totalWholesaleVal,
+        totalDeposit: totalDepositVal,
+        totalStaffNet
+      });
+
+      // 1c. Counter Sales Distinct Calculations from counterSales collection
+      // Counter Sales Calculation: Gross Slips - Discounts = Net Payable -> Received Cash + Customer Due
+      const counterSalesFiltered = rawCounterSales.filter(matchesUser);
+      let todayCounterCash = 0;
+      let todayCounterGrossSlips = 0;
+      let todayCounterDiscount = 0;
+      let todayCounterNetPayable = 0;
+      let todayCounterDue = 0;
+      let todayCounterCount = 0;
+      let todayCounterEqualCount = 0;
+      let todayCounterDueCount = 0;
+
+      let totalCounterCash = 0;
+      let totalCounterGrossSlips = 0;
+      let totalCounterDiscount = 0;
+      let totalCounterNetPayable = 0;
+      let totalCounterDue = 0;
+      let totalCounterCount = 0;
+
+      counterSalesFiltered.forEach(cs => {
+        let isToday = false;
+        try {
+          const csDateStr = cs.date || format(new Date(cs.dateTime), "yyyy-MM-dd");
+          isToday = csDateStr === todayFormatted;
+        } catch (e) {
+          isToday = cs.date === todayFormatted;
+        }
+
+        const received = cs.receivedAmount || 0;
+        const gross = cs.totalSlipsAmount || 0;
+        const discount = cs.discountAmount || 0;
+        const net = cs.netPayable !== undefined ? cs.netPayable : Math.max(0, gross - discount);
+        const due = cs.dueAmount || 0;
+
+        totalCounterCash += received;
+        totalCounterGrossSlips += gross;
+        totalCounterDiscount += discount;
+        totalCounterNetPayable += net;
+        totalCounterDue += due;
+        totalCounterCount += 1;
+
+        if (isToday) {
+          todayCounterCash += received;
+          todayCounterGrossSlips += gross;
+          todayCounterDiscount += discount;
+          todayCounterNetPayable += net;
+          todayCounterDue += due;
+          todayCounterCount += 1;
+          if (cs.balanceStatus === "equal" || cs.isBalanced) {
+            todayCounterEqualCount += 1;
+          }
+          if (due > 0) {
+            todayCounterDueCount += 1;
+          }
+        }
+      });
+
+      setCounterSalesStats({
+        todayCash: todayCounterCash,
+        todayGrossSlips: todayCounterGrossSlips,
+        todayDiscount: todayCounterDiscount,
+        todayNetPayable: todayCounterNetPayable,
+        todayDue: todayCounterDue,
+        todayCount: todayCounterCount,
+        todayEqualCount: todayCounterEqualCount,
+        todayDueCount: todayCounterDueCount,
+        totalCash: totalCounterCash,
+        totalGrossSlips: totalCounterGrossSlips,
+        totalDiscount: totalCounterDiscount,
+        totalNetPayable: totalCounterNetPayable,
+        totalDue: totalCounterDue,
+        totalCount: totalCounterCount
       });
 
       // 2. Purchases calculation
@@ -1083,12 +1237,20 @@ export default function Dashboard({
         </div>
         <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-2.5 sm:gap-4">
           <StatCard 
-            title="Today Sales Amount" 
-            value={stats.todaySales} 
-            icon={TrendingUp} 
+            title="Today Staff Sales (Net)" 
+            value={staffSalesStats.todayStaffNet} 
+            icon={Users} 
             color="emerald" 
-            description="Combined counter, staff & retail sales"
-            scope="Today"
+            description={`কর্মী: ৳${staffSalesStats.todayStaffSales.toLocaleString()} + হোলসেল: ৳${staffSalesStats.todayWholesale.toLocaleString()} - ডিপোজিট: ৳${staffSalesStats.todayDeposit.toLocaleString()}`}
+            scope="Staff Net"
+          />
+          <StatCard 
+            title="Today Counter Cash" 
+            value={counterSalesStats.todayCash} 
+            icon={Receipt} 
+            color="indigo" 
+            description={`স্লিপ: ৳${counterSalesStats.todayGrossSlips.toLocaleString()} | বাকি: ৳${counterSalesStats.todayDue.toLocaleString()} (${counterSalesStats.todayCount} বিল)`}
+            scope="Counter Cash"
           />
           <StatCard 
             title="Today Wholesale" 
@@ -1175,12 +1337,20 @@ export default function Dashboard({
         </div>
         <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-2.5 sm:gap-4">
           <StatCard 
-            title="Total Sales Amount" 
-            value={stats.totalSales} 
-            icon={TrendingUp} 
+            title="Total Staff Sales (Net)" 
+            value={staffSalesStats.totalStaffNet} 
+            icon={Users} 
             color="emerald" 
-            description="All-time combined gross shop sales"
-            scope="Total"
+            description={`কর্মী মোট: ৳${staffSalesStats.totalStaffSales.toLocaleString()} + হোলসেল - ডিপোজিট`}
+            scope="Staff Net"
+          />
+          <StatCard 
+            title="Total Counter Cash" 
+            value={counterSalesStats.totalCash} 
+            icon={Receipt} 
+            color="indigo" 
+            description={`মোট স্লিপ: ৳${counterSalesStats.totalGrossSlips.toLocaleString()} | মোট বাকি: ৳${counterSalesStats.totalDue.toLocaleString()}`}
+            scope="Counter Cash"
           />
           <StatCard 
             title="Total Wholesale Amount" 
@@ -1256,6 +1426,478 @@ export default function Dashboard({
             isCount={true}
           />
         </div>
+      </div>
+
+      {/* ================= DUAL SALES LEDGERS & DISTINCT CALCULATIONS HUB ================= */}
+      <div className="bg-white rounded-3xl border border-slate-200/90 shadow-md shadow-slate-100/50 p-6 space-y-6">
+        {/* Hub Header & Mode Toggle */}
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 border-b border-slate-100 pb-5">
+          <div className="flex items-center gap-3.5">
+            <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-indigo-600 via-teal-600 to-emerald-600 text-white flex items-center justify-center shadow-md shadow-emerald-500/15 shrink-0">
+              <Scale className="w-6 h-6" />
+            </div>
+            <div>
+              <div className="flex flex-wrap items-center gap-2">
+                <h3 className="text-xl font-black text-slate-900 tracking-tight">
+                  দুইটি আলাদা বিক্রয় লেজার ও হিসাব বিশ্লেষণ (Two Sales Ledgers & Calculations)
+                </h3>
+                <span className="text-[10px] font-black uppercase tracking-wider bg-emerald-100 text-emerald-800 px-2.5 py-0.5 rounded-full border border-emerald-200">
+                  আলাদা ফর্মুলা ও ফলাফল
+                </span>
+              </div>
+              <p className="text-xs text-slate-500 font-medium mt-0.5">
+                কর্মী বিক্রয় (Staff Sales) এবং কাউন্টার বিক্রয় (Counter Sales) এর দুইটি ভিন্ন হিসাব পদ্ধতি ও পৃথক লেজার খাতা।
+              </p>
+            </div>
+          </div>
+
+          {/* Switcher Pills */}
+          <div className="flex bg-slate-100 p-1.5 rounded-2xl shrink-0 self-start lg:self-auto gap-1">
+            <button
+              onClick={() => setSalesLedgerTab("dual")}
+              className={cn(
+                "px-3.5 py-2 text-xs font-black rounded-xl transition-all cursor-pointer flex items-center gap-1.5",
+                salesLedgerTab === "dual"
+                  ? "bg-white text-slate-900 shadow-sm"
+                  : "text-slate-500 hover:text-slate-800"
+              )}
+            >
+              <Layers className="w-3.5 h-3.5 text-indigo-600" />
+              <span>উভয় লেজার পাশাপাশি (Dual View)</span>
+            </button>
+
+            <button
+              onClick={() => setSalesLedgerTab("staff")}
+              className={cn(
+                "px-3.5 py-2 text-xs font-black rounded-xl transition-all cursor-pointer flex items-center gap-1.5",
+                salesLedgerTab === "staff"
+                  ? "bg-white text-emerald-700 shadow-sm"
+                  : "text-slate-500 hover:text-slate-800"
+              )}
+            >
+              <Users className="w-3.5 h-3.5 text-emerald-600" />
+              <span>কর্মী বিক্রয় লেজার (Staff Ledger)</span>
+            </button>
+
+            <button
+              onClick={() => setSalesLedgerTab("counter")}
+              className={cn(
+                "px-3.5 py-2 text-xs font-black rounded-xl transition-all cursor-pointer flex items-center gap-1.5",
+                salesLedgerTab === "counter"
+                  ? "bg-white text-indigo-700 shadow-sm"
+                  : "text-slate-500 hover:text-slate-800"
+              )}
+            >
+              <Receipt className="w-3.5 h-3.5 text-indigo-600" />
+              <span>কাউন্টার স্লিপ লেজার (Counter Ledger)</span>
+            </button>
+          </div>
+        </div>
+
+        {/* 1. DUAL LEDGERS SIDE-BY-SIDE VIEW */}
+        {salesLedgerTab === "dual" && (
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 animate-in fade-in duration-200">
+            {/* LEDGER 1: Staff Sales Ledger (কর্মী বিক্রয় লেজার) */}
+            <div className="bg-gradient-to-br from-emerald-50/40 via-white to-slate-50/60 rounded-3xl border border-emerald-200/80 p-6 space-y-5 shadow-xs flex flex-col justify-between">
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-9 h-9 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center font-black">
+                      <Users className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <span className="text-[10px] font-black text-emerald-800 uppercase tracking-widest block">
+                        লেজার নং ১ • শিফট ও কর্মী ভিত্তিক
+                      </span>
+                      <h4 className="text-base font-black text-slate-900">
+                        কর্মী বিক্রয় লেজার (Staff Sales Ledger)
+                      </h4>
+                    </div>
+                  </div>
+                  <span className="text-[10px] font-bold bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full border border-emerald-200">
+                    Staff Shift Inflow
+                  </span>
+                </div>
+
+                {/* Calculation Formula Card */}
+                <div className="bg-white p-3.5 rounded-2xl border border-emerald-100 shadow-2xs space-y-1.5">
+                  <div className="flex items-center gap-1.5 text-emerald-900 text-xs font-black">
+                    <Scale className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                    <span>হিসাব পদ্ধতি (Calculation Formula):</span>
+                  </div>
+                  <div className="p-2.5 bg-emerald-50/70 rounded-xl border border-emerald-200/60 text-xs font-mono font-bold text-emerald-950 flex flex-wrap items-center gap-2">
+                    <span>কর্মী বিক্রয় (Staff)</span>
+                    <span className="text-emerald-600">+</span>
+                    <span>হোলসেল (Wholesale)</span>
+                    <span className="text-rose-500">-</span>
+                    <span>ডিপোজিট / বকেয়া (Deposit)</span>
+                    <span className="text-emerald-700 font-black">=</span>
+                    <span className="text-emerald-700 font-black underline">নিট কর্মী বিক্রয়</span>
+                  </div>
+                  <div className="text-[11px] text-slate-500 font-medium pt-0.5">
+                    আজকের মান: ৳{staffSalesStats.todayStaffSales.toLocaleString()} + ৳{staffSalesStats.todayWholesale.toLocaleString()} - ৳{staffSalesStats.todayDeposit.toLocaleString()} = <strong className="text-emerald-700 font-mono">৳{staffSalesStats.todayStaffNet.toLocaleString()}</strong>
+                  </div>
+                </div>
+
+                {/* Key Numbers Grid (Today & All-Time) */}
+                <div className="grid grid-cols-2 gap-3">
+                  {/* Today Snapshot */}
+                  <div className="bg-white p-3.5 rounded-2xl border border-slate-200/70 space-y-2">
+                    <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 block border-b border-slate-100 pb-1">
+                      আজকের হিসাব (Today)
+                    </span>
+                    <div className="space-y-1 text-xs">
+                      <div className="flex justify-between">
+                        <span className="text-slate-500">কর্মী বিক্রয়:</span>
+                        <span className="font-mono font-bold text-slate-800">৳{staffSalesStats.todayStaffSales.toLocaleString()}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-500">হোলসেল (+):</span>
+                        <span className="font-mono font-bold text-teal-700">+৳{staffSalesStats.todayWholesale.toLocaleString()}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-500">ডিপোজিট (-):</span>
+                        <span className="font-mono font-bold text-rose-600">-৳{staffSalesStats.todayDeposit.toLocaleString()}</span>
+                      </div>
+                      <div className="flex justify-between pt-1 border-t border-slate-100 font-black text-sm">
+                        <span className="text-emerald-800">নিট ফলাফল:</span>
+                        <span className="font-mono text-emerald-700">৳{staffSalesStats.todayStaffNet.toLocaleString()}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* All-Time Snapshot */}
+                  <div className="bg-white p-3.5 rounded-2xl border border-slate-200/70 space-y-2">
+                    <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 block border-b border-slate-100 pb-1">
+                      সর্বমোট হিসাব (All-Time)
+                    </span>
+                    <div className="space-y-1 text-xs">
+                      <div className="flex justify-between">
+                        <span className="text-slate-500">কর্মী বিক্রয়:</span>
+                        <span className="font-mono font-bold text-slate-800">৳{staffSalesStats.totalStaffSales.toLocaleString()}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-500">হোলসেল (+):</span>
+                        <span className="font-mono font-bold text-teal-700">+৳{staffSalesStats.totalWholesale.toLocaleString()}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-500">ডিপোজিট (-):</span>
+                        <span className="font-mono font-bold text-rose-600">-৳{staffSalesStats.totalDeposit.toLocaleString()}</span>
+                      </div>
+                      <div className="flex justify-between pt-1 border-t border-slate-100 font-black text-sm">
+                        <span className="text-emerald-800">সর্বমোট নিট:</span>
+                        <span className="font-mono text-emerald-700">৳{staffSalesStats.totalStaffNet.toLocaleString()}</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Action Buttons */}
+              <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-emerald-100">
+                <button
+                  onClick={() => onNavigate?.("salesList")}
+                  className="flex-1 py-2.5 px-4 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-black transition-all cursor-pointer shadow-sm active:scale-98 flex items-center justify-center gap-1.5"
+                >
+                  <Users className="w-3.5 h-3.5" />
+                  <span>কর্মী বিক্রয় লেজার খাতা দেখুন</span>
+                </button>
+                <button
+                  onClick={() => onNavigate?.("newSale")}
+                  className="py-2.5 px-4 bg-white hover:bg-emerald-50 text-emerald-800 border border-emerald-300 rounded-xl text-xs font-bold transition-all cursor-pointer active:scale-98 flex items-center gap-1"
+                >
+                  <span>নতুন এন্ট্রি</span>
+                  <ArrowRight className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            </div>
+
+            {/* LEDGER 2: Counter Sales Ledger (কাউন্টার স্লিপ বিক্রয় লেজার) */}
+            <div className="bg-gradient-to-br from-indigo-50/40 via-white to-slate-50/60 rounded-3xl border border-indigo-200/80 p-6 space-y-5 shadow-xs flex flex-col justify-between">
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-9 h-9 rounded-xl bg-indigo-100 text-indigo-700 flex items-center justify-center font-black">
+                      <Receipt className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <span className="text-[10px] font-black text-indigo-800 uppercase tracking-widest block">
+                        লেজার নং ২ • কাস্টমার স্লিপ ও ক্যাশ ড্রয়ার
+                      </span>
+                      <h4 className="text-base font-black text-slate-900">
+                        কাউন্টার বিক্রয় লেজার (Counter Sales Ledger)
+                      </h4>
+                    </div>
+                  </div>
+                  <span className="text-[10px] font-bold bg-indigo-100 text-indigo-800 px-2 py-0.5 rounded-full border border-indigo-200">
+                    POS Slip Register
+                  </span>
+                </div>
+
+                {/* Calculation Formula Card */}
+                <div className="bg-white p-3.5 rounded-2xl border border-indigo-100 shadow-2xs space-y-1.5">
+                  <div className="flex items-center gap-1.5 text-indigo-900 text-xs font-black">
+                    <Scale className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+                    <span>হিসাব পদ্ধতি (Calculation Formula):</span>
+                  </div>
+                  <div className="p-2.5 bg-indigo-50/70 rounded-xl border border-indigo-200/60 text-xs font-mono font-bold text-indigo-950 flex flex-wrap items-center gap-2">
+                    <span>মোট স্লিপ (Gross)</span>
+                    <span className="text-rose-500">-</span>
+                    <span>ছাড় (Discount)</span>
+                    <span className="text-indigo-600">=</span>
+                    <span className="text-slate-800 font-black">প্রদেয় (Net)</span>
+                    <span className="text-slate-400">→</span>
+                    <span className="text-indigo-700 underline font-black">প্রাপ্ত ক্যাশ</span>
+                    <span className="text-slate-500">+</span>
+                    <span className="text-amber-700 font-black">বাকি (Due)</span>
+                  </div>
+                  <div className="text-[11px] text-slate-500 font-medium pt-0.5">
+                    আজকের মান: ৳{counterSalesStats.todayGrossSlips.toLocaleString()} - ৳{counterSalesStats.todayDiscount.toLocaleString()} = ৳{counterSalesStats.todayNetPayable.toLocaleString()} → <strong className="text-indigo-700 font-mono">৳{counterSalesStats.todayCash.toLocaleString()} ক্যাশ</strong> + <strong className="text-amber-700 font-mono">৳{counterSalesStats.todayDue.toLocaleString()} বাকি</strong>
+                  </div>
+                </div>
+
+                {/* Key Numbers Grid (Today & All-Time) */}
+                <div className="grid grid-cols-2 gap-3">
+                  {/* Today Snapshot */}
+                  <div className="bg-white p-3.5 rounded-2xl border border-slate-200/70 space-y-2">
+                    <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 block border-b border-slate-100 pb-1">
+                      আজকের ক্যাশ ও বাকি (Today)
+                    </span>
+                    <div className="space-y-1 text-xs">
+                      <div className="flex justify-between">
+                        <span className="text-slate-500">মোট স্লিপ:</span>
+                        <span className="font-mono font-bold text-slate-800">৳{counterSalesStats.todayGrossSlips.toLocaleString()}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-500">ছাড়/ডিসকাউন্ট:</span>
+                        <span className="font-mono font-bold text-rose-500">-৳{counterSalesStats.todayDiscount.toLocaleString()}</span>
+                      </div>
+                      <div className="flex justify-between pt-1 border-t border-slate-100 font-black">
+                        <span className="text-indigo-800">ক্যাশ প্রাপ্তি:</span>
+                        <span className="font-mono text-indigo-700">৳{counterSalesStats.todayCash.toLocaleString()}</span>
+                      </div>
+                      <div className="flex justify-between font-bold text-amber-700">
+                        <span>কাস্টমার বাকি:</span>
+                        <span className="font-mono">৳{counterSalesStats.todayDue.toLocaleString()}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* All-Time Snapshot */}
+                  <div className="bg-white p-3.5 rounded-2xl border border-slate-200/70 space-y-2">
+                    <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 block border-b border-slate-100 pb-1">
+                      সর্বমোট ক্যাশ ও বাকি (All-Time)
+                    </span>
+                    <div className="space-y-1 text-xs">
+                      <div className="flex justify-between">
+                        <span className="text-slate-500">মোট স্লিপ বিল:</span>
+                        <span className="font-mono font-bold text-slate-800">৳{counterSalesStats.totalGrossSlips.toLocaleString()}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-500">মোট ছাড়:</span>
+                        <span className="font-mono font-bold text-rose-500">-৳{counterSalesStats.totalDiscount.toLocaleString()}</span>
+                      </div>
+                      <div className="flex justify-between pt-1 border-t border-slate-100 font-black">
+                        <span className="text-indigo-800">মোট ক্যাশ জমা:</span>
+                        <span className="font-mono text-indigo-700">৳{counterSalesStats.totalCash.toLocaleString()}</span>
+                      </div>
+                      <div className="flex justify-between font-bold text-amber-700">
+                        <span>মোট বাকি (Due):</span>
+                        <span className="font-mono">৳{counterSalesStats.totalDue.toLocaleString()}</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Action Buttons */}
+              <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-indigo-100">
+                <button
+                  onClick={() => onNavigate?.("counterSalesLedger")}
+                  className="flex-1 py-2.5 px-4 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-black transition-all cursor-pointer shadow-sm active:scale-98 flex items-center justify-center gap-1.5"
+                >
+                  <Receipt className="w-3.5 h-3.5" />
+                  <span>কাউন্টার রেজিস্টার ও বাকি খাতা</span>
+                </button>
+                <button
+                  onClick={() => onNavigate?.("counterSale")}
+                  className="py-2.5 px-4 bg-white hover:bg-indigo-50 text-indigo-800 border border-indigo-300 rounded-xl text-xs font-bold transition-all cursor-pointer active:scale-98 flex items-center gap-1"
+                >
+                  <span>নতুন স্লিপ সেল</span>
+                  <ArrowRight className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* 2. STAFF SALES LEDGER DETAILED VIEW */}
+        {salesLedgerTab === "staff" && (
+          <div className="space-y-4 animate-in fade-in duration-200">
+            <div className="p-4 bg-emerald-50/60 rounded-2xl border border-emerald-200/80 flex flex-col md:flex-row md:items-center justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-emerald-600 text-white flex items-center justify-center font-bold">
+                  <Users className="w-5 h-5" />
+                </div>
+                <div>
+                  <h4 className="text-sm font-black text-emerald-950">কর্মী বিক্রয় লেজার খাতা (Staff Sales Ledger Detail)</h4>
+                  <p className="text-xs text-emerald-800/80 font-medium">
+                    প্রতিটি সেলস অফিসারের আলাদা ইনপুট, পাইকারি (হোলসেল) ও ডিপোজিট সমন্বয় হিসাব
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => onNavigate?.("salesList")}
+                className="px-4 py-2 bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl text-xs font-black transition-all cursor-pointer flex items-center gap-1.5 self-start md:self-auto shadow-xs"
+              >
+                <span>সম্পূর্ণ কর্মী লেজার শিট খুলুন</span>
+                <ChevronRight className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Table of staff performance today */}
+            <div className="overflow-x-auto rounded-2xl border border-slate-200">
+              <table className="w-full text-left text-xs">
+                <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 font-bold uppercase tracking-wider">
+                  <tr>
+                    <th className="px-4 py-3">কর্মী ও পদবী</th>
+                    <th className="px-4 py-3">সেকশন / বিভাগ</th>
+                    <th className="px-4 py-3 text-right">আজকের বিক্রয় (Today)</th>
+                    <th className="px-4 py-3 text-right">সর্বমোট বিক্রয় (All-Time)</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {rawEmployees.length === 0 ? (
+                    <tr>
+                      <td colSpan={4} className="px-4 py-8 text-center text-slate-400 italic">কোন কর্মী পাওয়া যায়নি</td>
+                    </tr>
+                  ) : (
+                    rawEmployees
+                      .filter(e => e.status === "active")
+                      .map(emp => {
+                        const todayEmp = employeeSalesToday.find(e => e.name === emp.name)?.amount || 0;
+                        const totalEmp = employeeSalesTotal.find(e => e.name === emp.name)?.amount || 0;
+                        return (
+                          <tr key={emp.id} className="hover:bg-slate-50/60 transition-colors">
+                            <td className="px-4 py-3 font-bold text-slate-900">
+                              <div>{emp.name}</div>
+                              <div className="text-[10px] text-slate-400 font-normal">{emp.role}</div>
+                            </td>
+                            <td className="px-4 py-3 text-slate-600 font-medium">
+                              {emp.department || "Sales"}
+                            </td>
+                            <td className="px-4 py-3 text-right font-mono font-bold text-emerald-700">
+                              {todayEmp > 0 ? `৳${todayEmp.toLocaleString()}` : "—"}
+                            </td>
+                            <td className="px-4 py-3 text-right font-mono font-bold text-slate-800">
+                              {totalEmp > 0 ? `৳${totalEmp.toLocaleString()}` : "—"}
+                            </td>
+                          </tr>
+                        );
+                      })
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {/* 3. COUNTER SALES LEDGER DETAILED VIEW */}
+        {salesLedgerTab === "counter" && (
+          <div className="space-y-4 animate-in fade-in duration-200">
+            <div className="p-4 bg-indigo-50/60 rounded-2xl border border-indigo-200/80 flex flex-col md:flex-row md:items-center justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-indigo-600 text-white flex items-center justify-center font-bold">
+                  <Receipt className="w-5 h-5" />
+                </div>
+                <div>
+                  <h4 className="text-sm font-black text-indigo-950">কাউন্টার স্লিপ রেজিস্টার ও বিল তালিকা (Counter Bills Ledger)</h4>
+                  <p className="text-xs text-indigo-800/80 font-medium">
+                    প্রতিটি স্লিপ, ছাড়, নগদ ক্যাশ গ্রহণ এবং গ্রাহক বাকি খাতা
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => onNavigate?.("counterSalesLedger")}
+                className="px-4 py-2 bg-indigo-700 hover:bg-indigo-800 text-white rounded-xl text-xs font-black transition-all cursor-pointer flex items-center gap-1.5 self-start md:self-auto shadow-xs"
+              >
+                <span>সম্পূর্ণ কাউন্টার লেজার রেজিস্টার খুলুন</span>
+                <ChevronRight className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Table of recent counter sales bills */}
+            <div className="overflow-x-auto rounded-2xl border border-slate-200">
+              <table className="w-full text-left text-xs">
+                <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 font-bold uppercase tracking-wider">
+                  <tr>
+                    <th className="px-4 py-3">বিল আইডি ও সময়</th>
+                    <th className="px-4 py-3">গ্রাহক</th>
+                    <th className="px-4 py-3 text-center">স্লিপ সংখ্যা</th>
+                    <th className="px-4 py-3 text-right">মোট স্লিপ</th>
+                    <th className="px-4 py-3 text-right">ছাড়</th>
+                    <th className="px-4 py-3 text-right">প্রদেয়</th>
+                    <th className="px-4 py-3 text-right">প্রাপ্ত ক্যাশ</th>
+                    <th className="px-4 py-3 text-right">বাকি (Due)</th>
+                    <th className="px-4 py-3 text-center">স্ট্যাটাস</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {rawCounterSales.length === 0 ? (
+                    <tr>
+                      <td colSpan={9} className="px-4 py-8 text-center text-slate-400 italic">কাউন্টার সেলের কোনো রেকর্ড পাওয়া যায়নি</td>
+                    </tr>
+                  ) : (
+                    rawCounterSales.slice(0, 8).map(cs => (
+                      <tr key={cs.id} className="hover:bg-slate-50/60 transition-colors">
+                        <td className="px-4 py-3 font-mono font-bold text-slate-900">
+                          <div>{cs.saleId}</div>
+                          <div className="text-[10px] text-slate-400 font-normal">{cs.time || cs.date}</div>
+                        </td>
+                        <td className="px-4 py-3 text-slate-700 font-medium">
+                          {cs.customerName || `কাস্টমার #${cs.dailySerial || 1}`}
+                        </td>
+                        <td className="px-4 py-3 text-center font-bold text-slate-600">
+                          {cs.slips?.length || 1} টি
+                        </td>
+                        <td className="px-4 py-3 text-right font-mono text-slate-700">
+                          ৳{(cs.totalSlipsAmount || 0).toLocaleString()}
+                        </td>
+                        <td className="px-4 py-3 text-right font-mono text-rose-500">
+                          {(cs.discountAmount || 0) > 0 ? `-৳${cs.discountAmount}` : "—"}
+                        </td>
+                        <td className="px-4 py-3 text-right font-mono font-bold text-slate-900">
+                          ৳{(cs.netPayable || 0).toLocaleString()}
+                        </td>
+                        <td className="px-4 py-3 text-right font-mono font-black text-indigo-700">
+                          ৳{(cs.receivedAmount || 0).toLocaleString()}
+                        </td>
+                        <td className="px-4 py-3 text-right font-mono font-bold text-amber-700">
+                          {(cs.dueAmount || 0) > 0 ? `৳${cs.dueAmount.toLocaleString()}` : "০"}
+                        </td>
+                        <td className="px-4 py-3 text-center">
+                          {cs.isBalanced || cs.balanceStatus === "equal" ? (
+                            <span className="text-[10px] font-bold bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full">
+                              সমান সমান ✓
+                            </span>
+                          ) : (cs.dueAmount || 0) > 0 ? (
+                            <span className="text-[10px] font-bold bg-amber-100 text-amber-800 px-2 py-0.5 rounded-full">
+                              বাকি
+                            </span>
+                          ) : (
+                            <span className="text-[10px] font-bold bg-blue-100 text-blue-800 px-2 py-0.5 rounded-full">
+                              ফেরত ৳{cs.changeAmount || 0}
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Charts Layout Grid */}

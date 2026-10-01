@@ -402,6 +402,7 @@ export default function UsersManager({
 
   // Helper to resolve custom role details
   const getRoleDisplayName = (roleId: string) => {
+    if (roleId === "super_admin") return "Super Administrator";
     if (roleId === "admin") return "Administrator";
     if (roleId === "accountant") return "Senior Accountant";
     if (roleId === "sales") return "Sales Agent";
@@ -560,6 +561,7 @@ export default function UsersManager({
                       className="w-full px-4 py-3 bg-slate-50 border border-slate-200 focus:border-slate-800 focus:bg-white rounded-xl font-medium outline-none transition-all text-sm"
                     >
                       <optgroup label="Core Standard Roles">
+                        <option value="super_admin">Super Administrator (Master Owner / Full Control)</option>
                         <option value="admin">Administrator (Full Access)</option>
                         <option value="accountant">Accountant Ledger Agent</option>
                         <option value="sales">Sales Hub Staff</option>

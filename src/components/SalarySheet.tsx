@@ -27,6 +27,16 @@ import { format, startOfMonth, endOfMonth, isWithinInterval, parseISO } from "da
 import { exportHtmlToPdf } from "@/src/lib/pdfExport";
 
 export default function SalarySheet({ user, role }: { user: User; role: UserRole }) {
+  const normalizedRole = (role || "").toLowerCase().trim();
+  const isSuperAdmin = 
+    normalizedRole === "super_admin" ||
+    normalizedRole === "superadmin" ||
+    normalizedRole === "super admin" ||
+    normalizedRole.includes("super") ||
+    normalizedRole === "admin" ||
+    normalizedRole.includes("administrator") ||
+    user?.email?.toLowerCase() === "modern@admin.com";
+
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [banks, setBanks] = useState<Bank[]>([]);
@@ -151,12 +161,14 @@ export default function SalarySheet({ user, role }: { user: User; role: UserRole
     const advanceGiven = empTxs
       .filter(tx => tx.category === "Employee Advance")
       .reduce((sum, tx) => sum + tx.amount, 0);
+    const totalPaid = salaryPaid + advanceGiven;
+    const remainingDue = Math.max(0, (emp.salary || 0) - totalPaid);
     
     // Status
     let status: "unpaid" | "partial" | "paid" = "unpaid";
-    if (salaryPaid >= emp.salary) {
+    if (totalPaid >= emp.salary && emp.salary > 0) {
       status = "paid";
-    } else if (salaryPaid > 0) {
+    } else if (totalPaid > 0) {
       status = "partial";
     }
 
@@ -164,6 +176,8 @@ export default function SalarySheet({ user, role }: { user: User; role: UserRole
       ...emp,
       salaryPaid,
       advanceGiven,
+      totalPaid,
+      remainingDue,
       status
     };
   });
@@ -185,6 +199,7 @@ export default function SalarySheet({ user, role }: { user: User; role: UserRole
     .filter(tx => tx.category === "Employee Advance")
     .reduce((sum, tx) => sum + tx.amount, 0);
   const netDisbursement = totalPaidSalary + totalDisbursedAdvance;
+  const totalRemainingPayrollDue = Math.max(0, totalBasePayroll - netDisbursement);
 
   // Render Month labels
   const monthLabelStr = format(start, "MMMM yyyy");
@@ -206,9 +221,9 @@ export default function SalarySheet({ user, role }: { user: User; role: UserRole
 
   const exportToPDF = async () => {
     const kpis = [
-      { label: "Base Payroll", value: role === "admin" ? `BDT ${totalBasePayroll.toLocaleString()}` : "***" },
-      { label: "Paid Salaries", value: role === "admin" ? `BDT ${totalPaidSalary.toLocaleString()}` : "***" },
-      { label: "Net Cash Outflow", value: role === "admin" ? `BDT ${netDisbursement.toLocaleString()}` : "***" }
+      { label: "Base Payroll", value: isSuperAdmin ? `BDT ${totalBasePayroll.toLocaleString()}` : "***" },
+      { label: "Total Paid / Advance", value: isSuperAdmin ? `BDT ${netDisbursement.toLocaleString()}` : "***" },
+      { label: "Remaining Balance", value: isSuperAdmin ? `BDT ${totalRemainingPayrollDue.toLocaleString()}` : "***" }
     ];
 
     const kpiCardsHtml = kpis.map(k => `
@@ -222,9 +237,9 @@ export default function SalarySheet({ user, role }: { user: User; role: UserRole
       <tr>
         <td style="font-weight: 700; color: #0f172a;">${emp.name}</td>
         <td>${emp.role}${emp.department ? ` (${emp.department})` : ""}</td>
-        <td style="text-align: right; font-weight: 700; font-family: monospace;">${role === "admin" ? `BDT ${emp.salary.toLocaleString()}` : "***"}</td>
-        <td style="text-align: right; font-weight: 700; color: #10b981; font-family: monospace;">${role === "admin" ? `BDT ${emp.salaryPaid.toLocaleString()}` : "***"}</td>
-        <td style="text-align: right; font-weight: 700; color: #f59e0b; font-family: monospace;">${role === "admin" ? `BDT ${emp.advanceGiven.toLocaleString()}` : "***"}</td>
+        <td style="text-align: right; font-weight: 700; font-family: monospace;">${isSuperAdmin ? `BDT ${emp.salary.toLocaleString()}` : "***"}</td>
+        <td style="text-align: right; font-weight: 700; color: #10b981; font-family: monospace;">${isSuperAdmin ? `BDT ${emp.totalPaid.toLocaleString()}` : "***"}</td>
+        <td style="text-align: right; font-weight: 700; color: #f59e0b; font-family: monospace;">${isSuperAdmin ? `BDT ${emp.remainingDue.toLocaleString()}` : "***"}</td>
         <td style="text-align: center; font-weight: 800; font-size: 10px; text-transform: uppercase;">${emp.status}</td>
       </tr>
     `).join("");
@@ -236,7 +251,7 @@ export default function SalarySheet({ user, role }: { user: User; role: UserRole
         <td style="font-weight: 700; color: #0f172a;">${tx.subCategory}</td>
         <td>${tx.category === "Staff Salary" ? "Salary Payment" : "Advance Disbursement"}</td>
         <td>${tx.paymentMethod}</td>
-        <td style="text-align: right; font-weight: 800; color: #0f172a; font-family: monospace;">${role === "admin" ? `BDT ${tx.amount.toLocaleString()}` : "***"}</td>
+        <td style="text-align: right; font-weight: 800; color: #0f172a; font-family: monospace;">${isSuperAdmin ? `BDT ${tx.amount.toLocaleString()}` : "***"}</td>
         <td>${tx.notes || "-"}</td>
       </tr>
     `).join("");
@@ -311,18 +326,18 @@ export default function SalarySheet({ user, role }: { user: User; role: UserRole
 
   const exportToCSV = () => {
     // CSV headers
-    const headers = ["Employee Name", "Role", "Department", "Basic Salary (BDT)", "Paid Amount (BDT)", "Advance Paid (BDT)", "Reconciliation Status"];
+    const headers = ["Employee Name", "Role", "Department", "Basic Salary (BDT)", "Total Paid / Advance (BDT)", "Remaining Due (BDT)", "Reconciliation Status"];
     
-      // CSV rows
-      const rows = filteredEmployeeBalances.map((emp) => [
-        `"${emp.name.replace(/"/g, '""')}"`,
-        `"${(emp.role || "").replace(/"/g, '""')}"`,
-        `"${(emp.department || "").replace(/"/g, '""')}"`,
-        role === "admin" ? emp.salary : "***",
-        role === "admin" ? emp.salaryPaid : "***",
-        role === "admin" ? emp.advanceGiven : "***",
-        emp.status.toUpperCase()
-      ]);
+    // CSV rows
+    const rows = filteredEmployeeBalances.map((emp) => [
+      `"${emp.name.replace(/"/g, '""')}"`,
+      `"${(emp.role || "").replace(/"/g, '""')}"`,
+      `"${(emp.department || "").replace(/"/g, '""')}"`,
+      isSuperAdmin ? emp.salary : "***",
+      isSuperAdmin ? emp.totalPaid : "***",
+      isSuperAdmin ? emp.remainingDue : "***",
+      emp.status.toUpperCase()
+    ]);
     
     const csvContent = "data:text/csv;charset=utf-8," 
       + [headers.join(","), ...rows.map(e => e.join(","))].join("\n");
@@ -453,7 +468,7 @@ export default function SalarySheet({ user, role }: { user: User; role: UserRole
           <div>
             <p className="text-[10px] uppercase font-bold tracking-widest text-gray-400 leading-none mb-1">Base Payroll</p>
             <h3 className="text-xl font-bold text-gray-900 font-mono tracking-tight">
-              {role === "admin" ? formatCurrency(totalBasePayroll) : "***"}
+              {isSuperAdmin ? formatCurrency(totalBasePayroll) : "***"}
             </h3>
             <span className="text-[9px] text-gray-400 font-semibold">{activeStaff.length} active employees</span>
           </div>
@@ -465,25 +480,25 @@ export default function SalarySheet({ user, role }: { user: User; role: UserRole
             <CheckCircle className="w-6 h-6" />
           </div>
           <div>
-            <p className="text-[10px] uppercase font-bold tracking-widest text-gray-400 leading-none mb-1">Paid Salaries</p>
+            <p className="text-[10px] uppercase font-bold tracking-widest text-gray-400 leading-none mb-1">Total Paid / Advance</p>
             <h3 className="text-xl font-bold text-emerald-600 font-mono tracking-tight">
-              {role === "admin" ? formatCurrency(totalPaidSalary) : "***"}
+              {isSuperAdmin ? formatCurrency(netDisbursement) : "***"}
             </h3>
-            <span className="text-[9px] text-[#2D7BBF] font-semibold">{monthTransactions.filter(t=>t.category==="Staff Salary").length} payments made</span>
+            <span className="text-[9px] text-emerald-700 font-semibold">{monthTransactions.length} payments recorded</span>
           </div>
         </div>
 
-        {/* Advances Given This Month */}
+        {/* Remaining Due This Month */}
         <div className="bg-white p-5 rounded-[24px] border border-gray-100 shadow-sm hover:shadow-md/40 transition-all flex items-center gap-4">
-          <div className="w-12 h-12 bg-orange-50 text-orange-600 rounded-2xl flex items-center justify-center shrink-0">
+          <div className="w-12 h-12 bg-amber-50 text-amber-600 rounded-2xl flex items-center justify-center shrink-0">
             <TrendingDown className="w-5 h-5" />
           </div>
           <div>
-            <p className="text-[10px] uppercase font-bold tracking-widest text-gray-400 leading-none mb-1">Disbursed Advances</p>
-            <h3 className="text-xl font-bold text-orange-600 font-mono tracking-tight">
-              {role === "admin" ? formatCurrency(totalDisbursedAdvance) : "***"}
+            <p className="text-[10px] uppercase font-bold tracking-widest text-gray-400 leading-none mb-1">Remaining Due</p>
+            <h3 className="text-xl font-bold text-amber-600 font-mono tracking-tight">
+              {isSuperAdmin ? formatCurrency(totalRemainingPayrollDue) : "***"}
             </h3>
-            <span className="text-[9px] text-gray-400 font-semibold">To address quick fund shortages</span>
+            <span className="text-[9px] text-gray-400 font-semibold">Balance to settle</span>
           </div>
         </div>
 
@@ -495,9 +510,9 @@ export default function SalarySheet({ user, role }: { user: User; role: UserRole
           <div>
             <p className="text-[10px] uppercase font-bold tracking-widest text-gray-400 leading-none mb-1">Net Cash Expense</p>
             <h3 className="text-xl font-bold text-white font-mono tracking-tight">
-              {role === "admin" ? formatCurrency(netDisbursement) : "***"}
+              {isSuperAdmin ? formatCurrency(netDisbursement) : "***"}
             </h3>
-            <span className="text-[9px] text-gray-400 font-medium">Both Salary & Advances in {monthLabelStr}</span>
+            <span className="text-[9px] text-gray-400 font-medium">Payroll out in {monthLabelStr}</span>
           </div>
         </div>
       </div>
@@ -527,8 +542,8 @@ export default function SalarySheet({ user, role }: { user: User; role: UserRole
               <tr className="bg-gray-50/50">
                 <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest border-b border-gray-100">Employee Details</th>
                 <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest border-b border-gray-100">Monthly Basic</th>
-                <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest border-b border-gray-100">Paid Amount ({monthLabelStr})</th>
-                <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest border-b border-gray-100">Advance ({monthLabelStr})</th>
+                <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest border-b border-gray-100">Total Paid / Advance ({monthLabelStr})</th>
+                <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest border-b border-gray-100">Remaining Due</th>
                 <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest border-b border-gray-100">Status</th>
               </tr>
             </thead>
@@ -558,17 +573,20 @@ export default function SalarySheet({ user, role }: { user: User; role: UserRole
                       </td>
                       <td className="px-6 py-4">
                         <span className="font-mono font-bold text-gray-900 text-sm">
-                          {role === "admin" ? formatCurrency(emp.salary) : "***"}
+                          {isSuperAdmin ? formatCurrency(emp.salary) : "***"}
                         </span>
                       </td>
                       <td className="px-6 py-4">
                         <span className="font-mono font-bold text-emerald-600 text-sm">
-                          {role === "admin" ? formatCurrency(emp.salaryPaid) : "***"}
+                          {isSuperAdmin ? formatCurrency(emp.totalPaid) : "***"}
                         </span>
                       </td>
                       <td className="px-6 py-4">
-                        <span className="font-mono font-bold text-orange-600 text-sm">
-                          {role === "admin" ? formatCurrency(emp.advanceGiven) : "***"}
+                        <span className={cn(
+                          "font-mono font-bold text-sm",
+                          emp.remainingDue > 0 ? "text-amber-600" : "text-gray-400"
+                        )}>
+                          {isSuperAdmin ? (emp.remainingDue > 0 ? formatCurrency(emp.remainingDue) : "৳0") : "***"}
                         </span>
                       </td>
                       <td className="px-6 py-4">

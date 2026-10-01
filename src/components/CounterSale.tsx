@@ -2785,9 +2785,6 @@ export default function CounterSaleView({
           </div>
         </div>
       )}
-          </div>
-        </div>
-      )}
     </div>
   );
 }

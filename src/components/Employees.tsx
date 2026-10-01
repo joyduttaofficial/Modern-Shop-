@@ -4,7 +4,7 @@ import { collection, onSnapshot, addDoc, deleteDoc, doc, query, orderBy, where, 
 import { db, OperationType, handleFirestoreError, updateDoc } from "@/src/lib/firebase";
 import { Employee, Transaction, UserRole, Bank } from "@/src/types";
 import { cn, formatCurrency, compressImage } from "@/src/lib/utils";
-import { Users, Plus, Trash2, UserPlus, CreditCard, History, Wallet, UserCircle, Landmark, X, FileText, FilePlus, Image, Eye, Pencil, ExternalLink, Download, ShieldCheck, Printer, FileDown, Loader2, CheckCircle2, AlertCircle } from "lucide-react";
+import { Users, Plus, Trash2, UserPlus, CreditCard, History, Wallet, UserCircle, Landmark, X, FileText, FilePlus, Image, Eye, Pencil, ExternalLink, Download, ShieldCheck, Printer, FileDown, Loader2, CheckCircle2, AlertCircle, Coins, Lock, Crown } from "lucide-react";
 import { format, startOfYear, endOfYear } from "date-fns";
 import { increment, setDoc } from "firebase/firestore";
 import { motion, AnimatePresence } from "motion/react";
@@ -20,6 +20,16 @@ export default function Employees({
   mode?: "new" | "list";
   onSuccess?: () => void;
 }) {
+  const normalizedRole = (role || "").toLowerCase().trim();
+  const isSuperAdmin = 
+    normalizedRole === "super_admin" ||
+    normalizedRole === "superadmin" ||
+    normalizedRole === "super admin" ||
+    normalizedRole.includes("super") ||
+    normalizedRole === "admin" ||
+    normalizedRole.includes("administrator") ||
+    user?.email?.toLowerCase() === "modern@admin.com";
+
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [banks, setBanks] = useState<Bank[]>([]);
@@ -211,14 +221,14 @@ export default function Employees({
           await addDoc(collection(db, "employees"), {
             name,
             role,
-            salary: parseFloat(salary) || 0,
+            salary: isSuperAdmin ? (parseFloat(salary) || 0) : 0,
             joinedDate: new Date().toISOString(),
             status: "active"
           });
           imported++;
         }
       }
-      alert(`Imported ${imported} employees successfully.`);
+      alert(`Imported ${imported} employees successfully.${!isSuperAdmin ? " (Note: Employee salary can only be set or modified by SUPER Admin.)" : ""}`);
       setImportText("");
       setShowImport(false);
     } catch (e) {
@@ -356,7 +366,13 @@ export default function Employees({
         joinedDate: editingEmployee?.joinedDate || new Date().toISOString()
       };
 
-      employeeData.salary = salary ? parseFloat(salary) : 0;
+      // Enforce: Edit employees' salary input ONLY SUPER Admin
+      if (!isSuperAdmin) {
+        // Non-super-admins cannot set or change salary
+        employeeData.salary = editingEmployee ? (editingEmployee.salary || 0) : 0;
+      } else {
+        employeeData.salary = salary ? parseFloat(salary) : 0;
+      }
 
       if (editingEmployee?.id) {
         await updateDoc(doc(db, "employees", editingEmployee.id), employeeData);
@@ -903,14 +919,51 @@ export default function Employees({
             </div>
 
             <div className="space-y-1.5">
-              <label className="text-xs font-bold text-gray-400 uppercase tracking-widest pl-1">Monthly Salary (BDT)</label>
-              <input 
-                type="number"
-                placeholder="0.00"
-                value={salary}
-                onChange={e => setSalary(e.target.value)}
-                className="w-full px-4 py-4 bg-gray-50 rounded-2xl border-none focus:ring-2 focus:ring-gray-200 font-medium font-mono"
-              />
+              <div className="flex items-center justify-between pl-1">
+                <label className="text-xs font-bold text-gray-600 uppercase tracking-widest flex items-center gap-1.5">
+                  <span>Monthly Salary (BDT)</span>
+                  {isSuperAdmin ? (
+                    <span className="text-[10px] font-black text-emerald-700 bg-emerald-100 border border-emerald-300 px-2 py-0.5 rounded-full flex items-center gap-1">
+                      <Crown className="w-3 h-3 text-amber-500" /> Super Admin
+                    </span>
+                  ) : (
+                    <span className="text-[10px] font-bold text-slate-500 bg-slate-100 border border-slate-200 px-2 py-0.5 rounded-full flex items-center gap-1">
+                      <Lock className="w-3 h-3 text-slate-400" /> Super Admin Only
+                    </span>
+                  )}
+                </label>
+              </div>
+
+              {isSuperAdmin ? (
+                <div className="relative">
+                  <span className="absolute left-4 top-1/2 -translate-y-1/2 font-black font-mono text-emerald-600 text-lg">৳</span>
+                  <input 
+                    type="number"
+                    min="0"
+                    step="any"
+                    placeholder="0.00"
+                    value={salary}
+                    onChange={e => setSalary(e.target.value)}
+                    className="w-full pl-9 pr-4 py-4 bg-emerald-50/20 border-2 border-emerald-300/80 focus:border-emerald-600 focus:ring-4 focus:ring-emerald-100 rounded-2xl font-black font-mono text-lg text-slate-900 transition-all outline-none"
+                  />
+                </div>
+              ) : (
+                <div className="relative">
+                  <span className="absolute left-4 top-1/2 -translate-y-1/2 font-bold font-mono text-slate-400 text-lg">৳</span>
+                  <input 
+                    type="text"
+                    disabled
+                    readOnly
+                    value="Protected (সুপার এডমিন অনুমতি আবশ্যক)"
+                    className="w-full pl-9 pr-4 py-4 bg-slate-100/90 border border-slate-200 rounded-2xl font-bold font-mono text-sm text-slate-500 cursor-not-allowed select-none outline-none"
+                  />
+                </div>
+              )}
+              <p className="text-[11px] text-slate-500 pl-1">
+                {isSuperAdmin 
+                  ? "কর্মীর মাসিক মূল বেতন (সুপার এডমিন নিয়ন্ত্রণ)" 
+                  : "🔒 শুধুমাত্র সুপার এডমিন (SUPER Admin) নতুন কর্মীর বেতন নির্ধারণ করতে পারবেন।"}
+              </p>
             </div>
 
             <div className="space-y-1.5">
@@ -1273,14 +1326,51 @@ export default function Employees({
                   </div>
 
                   <div className="space-y-1.5">
-                    <label className="text-xs font-bold text-gray-400 uppercase tracking-widest pl-1">Monthly Salary (BDT)</label>
-                    <input 
-                      type="number"
-                      placeholder="0.00"
-                      value={salary}
-                      onChange={e => setSalary(e.target.value)}
-                      className="w-full px-4 py-4 bg-gray-50 rounded-2xl border-none focus:ring-2 focus:ring-gray-200 font-medium font-mono"
-                    />
+                    <div className="flex items-center justify-between pl-1">
+                      <label className="text-xs font-bold text-gray-600 uppercase tracking-widest flex items-center gap-1.5">
+                        <span>Monthly Salary (BDT)</span>
+                        {isSuperAdmin ? (
+                          <span className="text-[10px] font-black text-emerald-700 bg-emerald-100 border border-emerald-300 px-2 py-0.5 rounded-full flex items-center gap-1">
+                            <Crown className="w-3 h-3 text-amber-500" /> Super Admin
+                          </span>
+                        ) : (
+                          <span className="text-[10px] font-bold text-slate-500 bg-slate-100 border border-slate-200 px-2 py-0.5 rounded-full flex items-center gap-1">
+                            <Lock className="w-3 h-3 text-slate-400" /> Super Admin Only
+                          </span>
+                        )}
+                      </label>
+                    </div>
+
+                    {isSuperAdmin ? (
+                      <div className="relative">
+                        <span className="absolute left-4 top-1/2 -translate-y-1/2 font-black font-mono text-emerald-600 text-lg">৳</span>
+                        <input 
+                          type="number"
+                          min="0"
+                          step="any"
+                          placeholder="0.00"
+                          value={salary}
+                          onChange={e => setSalary(e.target.value)}
+                          className="w-full pl-9 pr-4 py-4 bg-emerald-50/20 border-2 border-emerald-300/80 focus:border-emerald-600 focus:ring-4 focus:ring-emerald-100 rounded-2xl font-black font-mono text-lg text-slate-900 transition-all outline-none"
+                        />
+                      </div>
+                    ) : (
+                      <div className="relative">
+                        <span className="absolute left-4 top-1/2 -translate-y-1/2 font-bold font-mono text-slate-400 text-lg">৳</span>
+                        <input 
+                          type="text"
+                          disabled
+                          readOnly
+                          value={editingEmployee ? (editingEmployee.salary ? `৳${editingEmployee.salary.toLocaleString()}` : "৳০.০০") : "Protected"}
+                          className="w-full pl-9 pr-4 py-4 bg-slate-100/90 border border-slate-200 rounded-2xl font-bold font-mono text-base text-slate-600 cursor-not-allowed select-none outline-none"
+                        />
+                      </div>
+                    )}
+                    <p className="text-[11px] text-slate-500 pl-1">
+                      {isSuperAdmin 
+                        ? "কর্মীর মাসিক মূল বেতন (সুপার এডমিন নিয়ন্ত্রণ)" 
+                        : "🔒 শুধুমাত্র সুপার এডমিন (SUPER Admin) কর্মীর বেতন পরিবর্তন করতে পারবেন।"}
+                    </p>
                   </div>
 
                   <div className="space-y-1.5">
@@ -1545,39 +1635,50 @@ export default function Employees({
                     <div className="flex items-center gap-2">
                       <Wallet className="w-4 h-4 text-gray-400" />
                       <span className="text-xs font-bold text-gray-500 uppercase tracking-tight">Main Salary</span>
+                      {isSuperAdmin && (
+                        <span className="text-[9px] font-black text-emerald-700 bg-emerald-100 px-1.5 py-0.5 rounded flex items-center gap-0.5">
+                          <Crown className="w-2.5 h-2.5 text-amber-500" /> Super Admin
+                        </span>
+                      )}
                     </div>
-                    <span className="font-black text-gray-900">{role === "admin" ? formatCurrency(emp.salary) : "***"}</span>
+                    <span className="font-black text-gray-900">{isSuperAdmin ? formatCurrency(emp.salary) : "***"}</span>
                   </div>
                   
-                  <div className="grid grid-cols-2 gap-2">
-                    <div className="p-4 rounded-2xl border border-gray-50 flex flex-col justify-between">
+                  {/* Single Unified Section: Paid salary is an advance amount (No separate section needed) */}
+                  <div className="p-4 rounded-2xl bg-gradient-to-br from-emerald-50/70 to-teal-50/40 border border-emerald-100/90 flex flex-col justify-between gap-3 shadow-2xs">
+                    <div className="flex items-center justify-between">
                       <div>
-                        <p className="text-[10px] items-center font-bold text-gray-400 uppercase tracking-widest mb-1 flex gap-1">
-                          <CreditCard className="w-3 h-3" /> Paid
+                        <p className="text-[11px] font-black text-emerald-800 uppercase tracking-wider flex items-center gap-1.5">
+                          <CreditCard className="w-3.5 h-3.5 text-emerald-600" /> 
+                          <span>প্রদত্ত বেতন ও অগ্রিম (Disbursed Salary / Advance)</span>
                         </p>
-                        <p className="font-black text-green-600">{role === "admin" ? formatCurrency(stats.totalPaid) : "***"}</p>
-                      </div>
-                      <button 
-                        onClick={() => { setQuickPay({ empId: emp.id!, type: "Staff Salary" }); setPayAmount(role === "admin" ? (emp.salary ?? 0).toString() : ""); }}
-                        className="mt-2 text-[10px] font-bold text-blue-600 uppercase hover:underline text-left flex items-center gap-1"
-                      >
-                        <CreditCard className="w-3 h-3" /> Record Salary Payment
-                      </button>
-                    </div>
-                    <div className="p-4 rounded-2xl border border-gray-50 flex flex-col justify-between">
-                      <div>
-                        <p className="text-[10px] items-center font-bold text-gray-400 uppercase tracking-widest mb-1 flex gap-1">
-                          <History className="w-3 h-3" /> Advance
+                        <p className="text-[10px] text-slate-500 font-bold mt-0.5">
+                          Paid salary is an advance amount
                         </p>
-                        <p className="font-black text-orange-600">{role === "admin" ? formatCurrency(stats.totalAdvance) : "***"}</p>
                       </div>
-                      <button 
-                         onClick={() => { setQuickPay({ empId: emp.id!, type: "Employee Advance" }); setPayAmount(""); }}
-                        className="mt-2 text-[10px] font-bold text-orange-600 uppercase hover:underline text-left"
-                      >
-                        Give Adv
-                      </button>
+                      <div className="text-right">
+                        <span className="font-mono font-black text-base sm:text-lg text-emerald-700 block">
+                          {isSuperAdmin ? formatCurrency(stats.totalPaid + stats.totalAdvance) : "***"}
+                        </span>
+                        {emp.salary > 0 && isSuperAdmin && (
+                          <span className="text-[10px] font-bold text-slate-500 block">
+                            বকেয়া: {formatCurrency(Math.max(0, emp.salary - (stats.totalPaid + stats.totalAdvance)))}
+                          </span>
+                        )}
+                      </div>
                     </div>
+                    
+                    <button 
+                      type="button"
+                      onClick={() => { 
+                        setQuickPay({ empId: emp.id!, type: "Staff Salary" }); 
+                        const rem = Math.max(0, (emp.salary || 0) - (stats.totalPaid + stats.totalAdvance));
+                        setPayAmount(rem > 0 ? rem.toString() : ""); 
+                      }}
+                      className="w-full py-2.5 px-4 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold uppercase tracking-wider flex items-center justify-center gap-2 shadow-sm shadow-emerald-600/20 active:scale-98 transition-all cursor-pointer"
+                    >
+                      <Coins className="w-4 h-4" /> বেতন ও অগ্রিম প্রদান করুন (Disburse Salary / Advance)
+                    </button>
                   </div>
                   <button 
                     onClick={() => setViewingAttendance(emp)}
@@ -1722,25 +1823,30 @@ export default function Employees({
                       exit={{ opacity: 0, y: -10 }}
                       className="space-y-8"
                     >
-                {/* Stats Grid */}
+                {/* Stats Grid - Unified Paid Salary & Advance */}
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                   <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm">
                     <p className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-2 flex items-center gap-2">
                       <Wallet className="w-4 h-4 text-blue-500" /> Basic Salary
                     </p>
-                    <p className="text-2xl font-black text-gray-900">{role === "admin" ? formatCurrency(viewingProfile.salary) : "***"}</p>
+                    <p className="text-2xl font-black text-gray-900">{isSuperAdmin ? formatCurrency(viewingProfile.salary) : "***"}</p>
+                    <p className="text-[10px] text-gray-400 font-bold mt-1">Monthly Contract</p>
                   </div>
                   <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm">
-                    <p className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-2 flex items-center gap-2">
-                      <CreditCard className="w-4 h-4 text-green-500" /> Total Paid
+                    <p className="text-xs font-bold text-emerald-800 uppercase tracking-widest mb-2 flex items-center gap-2">
+                      <CreditCard className="w-4 h-4 text-emerald-600" /> Total Paid / Advance
                     </p>
-                    <p className="text-2xl font-black text-green-600">{role === "admin" ? formatCurrency(getEmployeeStats(viewingProfile.id!).totalPaid) : "***"}</p>
+                    <p className="text-2xl font-black text-emerald-600">{isSuperAdmin ? formatCurrency(getEmployeeStats(viewingProfile.id!).totalPaid + getEmployeeStats(viewingProfile.id!).totalAdvance) : "***"}</p>
+                    <p className="text-[10px] text-slate-400 font-bold mt-1">Paid salary is an advance amount</p>
                   </div>
                   <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm">
-                    <p className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-2 flex items-center gap-2">
-                      <History className="w-4 h-4 text-orange-500" /> Advance Balance
+                    <p className="text-xs font-bold text-amber-700 uppercase tracking-widest mb-2 flex items-center gap-2">
+                      <History className="w-4 h-4 text-amber-500" /> Remaining Balance
                     </p>
-                    <p className="text-2xl font-black text-orange-600">{role === "admin" ? formatCurrency(getEmployeeStats(viewingProfile.id!).totalAdvance) : "***"}</p>
+                    <p className="text-2xl font-black text-amber-600">
+                      {isSuperAdmin ? formatCurrency(Math.max(0, viewingProfile.salary - (getEmployeeStats(viewingProfile.id!).totalPaid + getEmployeeStats(viewingProfile.id!).totalAdvance))) : "***"}
+                    </p>
+                    <p className="text-[10px] text-slate-400 font-bold mt-1">Current Due Balance</p>
                   </div>
                 </div>
 
@@ -2084,25 +2190,30 @@ export default function Employees({
                   exit={{ opacity: 0, y: -10 }}
                   className="space-y-8"
                 >
-                  {/* Original Stats Grid */}
+                  {/* Stats Grid - Unified Paid Salary & Advance */}
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                     <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm">
                       <p className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-2 flex items-center gap-2">
                         <Wallet className="w-4 h-4 text-blue-500" /> Basic Salary Contract
                       </p>
-                      <p className="text-2xl font-black text-gray-900">{role === "admin" ? formatCurrency(viewingProfile.salary) : "***"}</p>
+                      <p className="text-2xl font-black text-gray-900">{isSuperAdmin ? formatCurrency(viewingProfile.salary) : "***"}</p>
+                      <p className="text-[10px] text-gray-400 font-bold mt-1">Official Base Rate</p>
                     </div>
                     <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm">
-                      <p className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-2 flex items-center gap-2">
-                        <CreditCard className="w-4 h-4 text-green-500" /> Total Paid to Date
+                      <p className="text-xs font-bold text-emerald-800 uppercase tracking-widest mb-2 flex items-center gap-2">
+                        <CreditCard className="w-4 h-4 text-emerald-600" /> Total Paid / Advance to Date
                       </p>
-                      <p className="text-2xl font-black text-green-600">{role === "admin" ? formatCurrency(getEmployeeStats(viewingProfile.id!).totalPaid) : "***"}</p>
+                      <p className="text-2xl font-black text-emerald-600">{isSuperAdmin ? formatCurrency(getEmployeeStats(viewingProfile.id!).totalPaid + getEmployeeStats(viewingProfile.id!).totalAdvance) : "***"}</p>
+                      <p className="text-[10px] text-slate-400 font-bold mt-1">Paid salary is an advance amount</p>
                     </div>
                     <div className="bg-white p-6 rounded-3xl border border-gray-150 shadow-sm">
-                      <p className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-2 flex items-center gap-2">
-                        <History className="w-4 h-4 text-orange-500" /> Outstanding Advance Balance
+                      <p className="text-xs font-bold text-amber-700 uppercase tracking-widest mb-2 flex items-center gap-2">
+                        <History className="w-4 h-4 text-amber-500" /> Current Outstanding Due
                       </p>
-                      <p className="text-2xl font-black text-orange-600">{role === "admin" ? formatCurrency(getEmployeeStats(viewingProfile.id!).totalAdvance) : "***"}</p>
+                      <p className="text-2xl font-black text-amber-600">
+                        {isSuperAdmin ? formatCurrency(Math.max(0, viewingProfile.salary - (getEmployeeStats(viewingProfile.id!).totalPaid + getEmployeeStats(viewingProfile.id!).totalAdvance))) : "***"}
+                      </p>
+                      <p className="text-[10px] text-slate-400 font-bold mt-1">Remaining Monthly Due</p>
                     </div>
                   </div>
 
@@ -2180,98 +2291,213 @@ export default function Employees({
         )}
       </AnimatePresence>
 
-      {quickPay && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white w-full max-w-md rounded-[32px] overflow-hidden shadow-2xl animate-in zoom-in-95 duration-300">
-            <div className={cn(
-              "p-6 text-white flex justify-between items-center",
-              quickPay.type === "Staff Salary" ? "bg-green-600" : "bg-orange-600"
-            )}>
-              <div>
-                <h3 className="text-xl font-bold">Record {quickPay.type}</h3>
-                <p className="text-xs opacity-75 font-medium">To: {employees.find(e => e.id === quickPay.empId)?.name}</p>
+      {quickPay && (() => {
+        const targetEmp = employees.find(e => e.id === quickPay.empId);
+        const targetStats = targetEmp ? getEmployeeStats(targetEmp.id!) : { totalPaid: 0, totalAdvance: 0 };
+        const totalDisbursed = targetStats.totalPaid + targetStats.totalAdvance;
+        const currentDue = targetEmp ? Math.max(0, (targetEmp.salary || 0) - totalDisbursed) : 0;
+        const parsedPayAmount = parseFloat(payAmount) || 0;
+        const remainingAfterPay = Math.max(0, currentDue - parsedPayAmount);
+
+        return (
+          <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-md z-[80] flex items-center justify-center p-3 sm:p-4 animate-in fade-in duration-200">
+            <div className="bg-white w-full max-w-lg rounded-[36px] overflow-hidden shadow-2xl border border-slate-100 flex flex-col max-h-[92vh]">
+              {/* Modal Header */}
+              <div className="p-6 bg-gradient-to-r from-emerald-700 via-teal-700 to-slate-900 text-white flex justify-between items-center shrink-0">
+                <div className="flex items-center gap-3">
+                  <div className="w-12 h-12 rounded-2xl bg-white/10 backdrop-blur-md border border-white/20 flex items-center justify-center text-emerald-300 shrink-0">
+                    <Coins className="w-6 h-6" />
+                  </div>
+                  <div>
+                    <h3 className="text-xl font-black tracking-tight">বেতন ও অগ্রিম প্রদান (Salary & Advance)</h3>
+                    <p className="text-xs text-emerald-100/90 font-medium">
+                      প্রাপক: <strong className="text-white underline">{targetEmp?.name}</strong> {targetEmp?.employeeIdCode ? `(${targetEmp.employeeIdCode})` : ""}
+                    </p>
+                  </div>
+                </div>
+                <button 
+                  onClick={() => setQuickPay(null)} 
+                  className="p-2 text-white/70 hover:text-white hover:bg-white/10 rounded-xl transition-all cursor-pointer"
+                >
+                  <X className="w-6 h-6" />
+                </button>
               </div>
-              <button onClick={() => setQuickPay(null)} className="p-2 hover:bg-black/10 rounded-xl transition-all">
-                <X className="w-6 h-6" />
-              </button>
-            </div>
-            
-            <form onSubmit={handleQuickPay} className="p-8 space-y-6">
-              <div className="space-y-1.5">
-                <label className="text-xs font-bold text-gray-400 uppercase tracking-widest pl-1">Amount (BDT)</label>
-                <div className="relative">
-                  <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 font-bold font-mono text-xl">৳</span>
+
+              {/* Explanatory Banner: Paid salary is an advance amount */}
+              <div className="bg-emerald-50 px-6 py-3 border-b border-emerald-100 flex items-center gap-2 text-emerald-900 text-xs font-semibold shrink-0">
+                <Coins className="w-4 h-4 text-emerald-600 shrink-0" />
+                <span>Paid salary is an advance amount — বেতন প্রদানই মূলত অগ্রিম অর্থ। কোনো আলাদা সেকশন ছাড়াই একক এন্ট্রিতে বেতন ও অগ্রিম সমন্বিত হয়।</span>
+              </div>
+              
+              <form onSubmit={handleQuickPay} className="p-6 sm:p-8 space-y-6 overflow-y-auto">
+                {/* Employee Financial Context Strip */}
+                <div className="grid grid-cols-3 gap-2 p-3 bg-slate-50 rounded-2xl border border-slate-200/70 text-center">
+                  <div>
+                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">মাসিক মূল বেতন</span>
+                    <span className="font-mono font-black text-sm text-slate-900">
+                      {isSuperAdmin && targetEmp ? formatCurrency(targetEmp.salary || 0) : "***"}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">ইতোমধ্যে প্রদেয়</span>
+                    <span className="font-mono font-black text-sm text-emerald-700">
+                      {isSuperAdmin ? formatCurrency(totalDisbursed) : "***"}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">অবশিষ্ট বকেয়া</span>
+                    <span className="font-mono font-black text-sm text-amber-700">
+                      {isSuperAdmin ? formatCurrency(currentDue) : "***"}
+                    </span>
+                  </div>
+                </div>
+
+                {/* THE BIG SALARY INPUT BOX (Lynn is big for full understanding) */}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between pl-1">
+                    <label className="text-xs font-black text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
+                      <span>প্রদেয় বেতন / অগ্রিম পরিমাণ (BDT Amount)</span>
+                      <span className="text-[10px] font-bold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-full">
+                        বড় ইনপুট বক্স
+                      </span>
+                    </label>
+                  </div>
+                  <div className="relative">
+                    <span className="absolute left-4 top-1/2 -translate-y-1/2 text-2xl sm:text-3xl font-black text-emerald-600 font-mono select-none">
+                      ৳
+                    </span>
+                    <input
+                      type="number"
+                      step="any"
+                      min="0"
+                      required
+                      autoFocus
+                      placeholder="০.০০"
+                      value={payAmount}
+                      onChange={(e) => setPayAmount(e.target.value)}
+                      className="w-full pl-12 pr-4 py-4 sm:py-5 bg-white border-2 border-emerald-400 focus:border-emerald-600 focus:ring-4 focus:ring-emerald-100 rounded-3xl text-2xl sm:text-3xl font-mono font-black text-slate-950 shadow-sm outline-none transition-all placeholder:text-slate-300"
+                    />
+                  </div>
+
+                  {/* Quick Auto-Fill Helper Buttons */}
+                  <div className="flex items-center gap-1.5 flex-wrap pt-1">
+                    {currentDue > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setPayAmount(currentDue.toString())}
+                        className="px-2.5 py-1.5 bg-emerald-100 hover:bg-emerald-200 text-emerald-900 rounded-xl text-xs font-black transition-all cursor-pointer active:scale-95"
+                      >
+                        বাকি সব (৳{currentDue.toLocaleString()})
+                      </button>
+                    )}
+                    {currentDue > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setPayAmount(Math.round(currentDue / 2).toString())}
+                        className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition-all cursor-pointer active:scale-95"
+                      >
+                        হাফ (৫০%)
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => setPayAmount("5000")}
+                      className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition-all cursor-pointer active:scale-95"
+                    >
+                      ৳৫,০০০
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPayAmount("10000")}
+                      className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition-all cursor-pointer active:scale-95"
+                    >
+                      ৳১০,০০০
+                    </button>
+                    {parsedPayAmount > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setPayAmount("")}
+                        className="px-2.5 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 rounded-xl text-xs font-bold transition-all cursor-pointer active:scale-95 ml-auto"
+                      >
+                        ক্লিয়ার
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Dynamic remaining calculation */}
+                  {parsedPayAmount > 0 && (
+                    <div className="p-3 bg-emerald-50/70 border border-emerald-200 rounded-2xl flex items-center justify-between text-xs font-bold text-emerald-900 animate-in fade-in">
+                      <span>এই পরিমাণ প্রদানের পর অবশিষ্ট থাকবে:</span>
+                      <span className="font-mono font-black text-sm text-emerald-800">
+                        ৳{remainingAfterPay.toLocaleString()}
+                      </span>
+                    </div>
+                  )}
+                </div>
+
+                {/* Payment Method */}
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold text-slate-500 uppercase tracking-widest pl-1">Payment Method (পরিশোধের মাধ্যম)</label>
+                  <div className="grid grid-cols-2 gap-3">
+                    <button
+                      type="button"
+                      onClick={() => setPayMethod("Cash")}
+                      className={cn(
+                        "flex items-center justify-center gap-2 p-3.5 rounded-2xl border-2 transition-all font-bold cursor-pointer text-xs uppercase tracking-wider",
+                        payMethod === "Cash" ? "border-slate-900 bg-slate-900 text-white shadow-sm" : "border-slate-200 text-slate-500 hover:border-slate-300"
+                      )}
+                    >
+                      <Wallet className="w-4 h-4 text-amber-400" /> Cash (ক্যাশ)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPayMethod(banks[0]?.name || "Bank")}
+                      className={cn(
+                        "flex items-center justify-center gap-2 p-3.5 rounded-2xl border-2 transition-all font-bold cursor-pointer text-xs uppercase tracking-wider",
+                        payMethod !== "Cash" ? "border-slate-900 bg-slate-900 text-white shadow-sm" : "border-slate-200 text-slate-500 hover:border-slate-300"
+                      )}
+                    >
+                      <Landmark className="w-4 h-4 text-indigo-400" /> Bank (ব্যাংক)
+                    </button>
+                  </div>
+                  {payMethod !== "Cash" && banks.length > 0 && (
+                    <select
+                      value={payMethod}
+                      onChange={(e) => setPayMethod(e.target.value)}
+                      className="w-full mt-2 px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-bold text-slate-800 outline-none cursor-pointer"
+                    >
+                      {banks.map(b => (
+                        <option key={b.id} value={b.name}>{b.name} (ব্যালেন্স: ৳{b.balance.toLocaleString()})</option>
+                      ))}
+                    </select>
+                  )}
+                </div>
+
+                {/* Notes */}
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold text-slate-500 uppercase tracking-widest pl-1">রেফারেন্স / নোটস (Optional)</label>
                   <input
-                    type="number"
-                    step="0.01"
-                    required
-                    placeholder="0.00"
-                    value={payAmount}
-                    onChange={(e) => setPayAmount(e.target.value)}
-                    className="w-full pl-10 pr-4 py-4 bg-gray-50 rounded-2xl border-none focus:ring-2 focus:ring-gray-200 text-2xl font-mono font-bold"
+                    placeholder="e.g. চলতি মাসের বেতন ও অগ্রিম প্রদান"
+                    value={payNotes}
+                    onChange={(e) => setPayNotes(e.target.value)}
+                    className="w-full px-4 py-3.5 bg-slate-50 border border-slate-200 rounded-2xl focus:border-slate-900 focus:bg-white text-xs font-bold text-slate-800 outline-none transition-all placeholder:text-slate-400"
                   />
                 </div>
-              </div>
 
-              <div className="space-y-1.5">
-                <label className="text-xs font-bold text-gray-400 uppercase tracking-widest pl-1">Payment Method</label>
-                <div className="grid grid-cols-2 gap-3">
-                  <button
-                    type="button"
-                    onClick={() => setPayMethod("Cash")}
-                    className={cn(
-                      "flex items-center justify-center gap-2 p-4 rounded-2xl border-2 transition-all font-bold",
-                      payMethod === "Cash" ? "border-gray-900 bg-gray-900 text-white" : "border-gray-100 text-gray-400 hover:border-gray-200"
-                    )}
-                  >
-                    <Wallet className="w-4 h-4" /> Cash
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setPayMethod(banks[0]?.name || "Bank")}
-                    className={cn(
-                      "flex items-center justify-center gap-2 p-4 rounded-2xl border-2 transition-all font-bold",
-                      payMethod !== "Cash" ? "border-gray-900 bg-gray-900 text-white" : "border-gray-100 text-gray-400 hover:border-gray-200"
-                    )}
-                  >
-                    <Landmark className="w-4 h-4" /> Bank
-                  </button>
-                </div>
-                {payMethod !== "Cash" && banks.length > 0 && (
-                  <select
-                    value={payMethod}
-                    onChange={(e) => setPayMethod(e.target.value)}
-                    className="w-full mt-2 px-4 py-3 bg-gray-50 rounded-2xl border-none text-sm font-medium"
-                  >
-                    {banks.map(b => <option key={b.id} value={b.name}>{b.name}</option>)}
-                  </select>
-                )}
-              </div>
-
-              <div className="space-y-1.5">
-                <label className="text-xs font-bold text-gray-400 uppercase tracking-widest pl-1">Notes (Optional)</label>
-                <input
-                  placeholder="e.g. For June Month"
-                  value={payNotes}
-                  onChange={(e) => setPayNotes(e.target.value)}
-                  className="w-full px-4 py-4 bg-gray-50 rounded-2xl border-none focus:ring-2 focus:ring-gray-200 font-medium"
-                />
-              </div>
-
-              <button
-                type="submit"
-                disabled={isPaying}
-                className={cn(
-                  "w-full py-5 rounded-2xl font-bold text-lg shadow-xl transition-all active:scale-95 disabled:opacity-50 text-white",
-                  quickPay.type === "Staff Salary" ? "bg-green-600 hover:bg-green-700" : "bg-orange-600 hover:bg-orange-700"
-                )}
-              >
-                {isPaying ? "Processing..." : `Confirm ${quickPay.type === "Staff Salary" ? "Payment" : "Advance"}`}
-              </button>
-            </form>
+                {/* Submit Button */}
+                <button
+                  type="submit"
+                  disabled={isPaying || !payAmount || parseFloat(payAmount) <= 0}
+                  className="w-full py-4 sm:py-5 rounded-2xl font-black text-base sm:text-lg shadow-xl shadow-emerald-700/20 transition-all active:scale-98 disabled:opacity-50 text-white bg-emerald-600 hover:bg-emerald-700 cursor-pointer flex items-center justify-center gap-2"
+                >
+                  <Coins className="w-5 h-5" />
+                  {isPaying ? "প্রক্রিয়াধীন..." : "বেতন ও অগ্রিম প্রদান নিশ্চিত করুন (Confirm Payment)"}
+                </button>
+              </form>
+            </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* Custom Employee Delete Modal */}
       {employeeToDelete && (

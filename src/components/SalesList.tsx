@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { User } from "firebase/auth";
-import { collection, onSnapshot, query, orderBy, deleteDoc, doc, increment, writeBatch } from "firebase/firestore";
+import { collection, onSnapshot, query, orderBy, deleteDoc, doc, increment, writeBatch, where, getDocs, getDoc } from "firebase/firestore";
 import { db, OperationType, handleFirestoreError, updateDoc } from "@/src/lib/firebase";
 import { Transaction, Bank, UserRole, Employee } from "@/src/types";
 import { cn, formatCurrency } from "@/src/lib/utils";
@@ -478,6 +478,64 @@ export default function SalesList({ user, role, onEditSales, onNavigateToNewSale
               balance: increment(-tx.amount),
               lastUpdated: new Date().toISOString()
             });
+          }
+        }
+
+        // If transaction was Counter Sale, also clean up matching counterSales document and customer stats
+        const isCounterTx = tx.category === "Counter Sale" || 
+          tx.category === "Counter Cash" || 
+          (tx.notes && (tx.notes.includes("Counter Sale") || tx.notes.includes("[CS-") || tx.notes.includes("কাউন্টার সেল"))) ||
+          (tx.subCategory && tx.subCategory.startsWith("CS-"));
+
+        if (isCounterTx) {
+          try {
+            let saleId = tx.subCategory;
+            if (!saleId && tx.notes) {
+              const m = tx.notes.match(/\[(CS-[^\]]+)\]/);
+              if (m) saleId = m[1];
+            }
+
+            let csDocs: any[] = [];
+            if (saleId) {
+              const csQuery = query(collection(db, "counterSales"), where("saleId", "==", saleId));
+              const csSnap = await getDocs(csQuery);
+              csDocs = [...csSnap.docs];
+            }
+            if (tx.id) {
+              const csQuery2 = query(collection(db, "counterSales"), where("transactionId", "==", tx.id));
+              const csSnap2 = await getDocs(csQuery2);
+              for (const d of csSnap2.docs) {
+                if (!csDocs.some(x => x.id === d.id)) csDocs.push(d);
+              }
+            }
+
+            for (const csDoc of csDocs) {
+              const csData = csDoc.data();
+              if (csData.customerId) {
+                try {
+                  const cRef = doc(db, "customers", csData.customerId);
+                  const cSnap = await getDoc(cRef);
+                  if (cSnap.exists()) {
+                    const c = cSnap.data();
+                    const payable = csData.netPayable ?? (csData.totalSlipsAmount - (csData.discountAmount || 0));
+                    await updateDoc(cRef, {
+                      totalPurchases: Math.max(0, (c.totalPurchases || 0) - payable),
+                      totalPaid: Math.max(0, (c.totalPaid || 0) - (csData.receivedAmount || 0)),
+                      totalDue: Math.max(0, (c.totalDue || 0) - (csData.dueAmount || 0)),
+                      totalDiscount: Math.max(0, (c.totalDiscount || 0) - (csData.discountAmount || 0)),
+                      totalPurchasesCount: Math.max(0, (c.totalPurchasesCount || 1) - 1),
+                      totalDueCount: (csData.dueAmount || 0) > 0 ? Math.max(0, (c.totalDueCount || 1) - 1) : (c.totalDueCount || 0),
+                      updatedAt: new Date().toISOString()
+                    });
+                  }
+                } catch (cErr) {
+                  console.warn("Could not revert customer stats:", cErr);
+                }
+              }
+              await deleteDoc(doc(db, "counterSales", csDoc.id));
+            }
+          } catch (csErr) {
+            console.warn("Error cascading delete to counterSales:", csErr);
           }
         }
       }

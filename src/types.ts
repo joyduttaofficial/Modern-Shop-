@@ -241,6 +241,9 @@ export interface CustomerProfile {
   totalPaid: number;
   totalDue: number;
   totalDiscount: number;
+  totalPurchasesCount?: number; // কতবার কেনাকাটা করেছে
+  totalDueCount?: number; // কতবার বাকি নিয়েছে
+  totalPaymentsCount?: number; // কতবার পেমেন্ট করেছে
   lastTransactionDate?: string;
   createdAt: string;
   updatedAt: string;
@@ -248,11 +251,16 @@ export interface CustomerProfile {
 
 export interface CustomerPayment {
   id?: string;
+  receiptNo?: string; // Money receipt number e.g. CR-261003-01
   customerId: string;
   customerName: string;
   customerPhone?: string;
+  customerAddress?: string;
   date: string;
+  time?: string;
   amount: number;
+  previousDue?: number;
+  remainingDue?: number;
   paymentMethod: string;
   notes?: string;
   receivedBy: string;

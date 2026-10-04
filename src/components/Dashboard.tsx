@@ -1,7 +1,7 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { User } from "firebase/auth";
-import { collection, query, where, orderBy, limit, onSnapshot, getDocs, doc } from "firebase/firestore";
-import { db, OperationType, handleFirestoreError } from "@/src/lib/firebase";
+import { collection, query, where, orderBy, limit, onSnapshot, getDocs, doc, deleteDoc, getDoc, updateDoc } from "firebase/firestore";
+import { db, OperationType, handleFirestoreError, cleanFirestoreData } from "@/src/lib/firebase";
 import { Transaction, Bank, UserRole, Product, CounterSale } from "@/src/types";
 import { PurchaseModel } from "./Purchase";
 import { cn } from "@/src/lib/utils";
@@ -38,7 +38,9 @@ import {
   Scale,
   DollarSign,
   Tag,
-  ArrowRight
+  ArrowRight,
+  Trash2,
+  RefreshCw
 } from "lucide-react";
 import { 
   XAxis, 
@@ -146,6 +148,94 @@ export default function Dashboard({
     totalDue: 0,
     totalCount: 0
   });
+
+  // Delete state for Counter Sale directly in Dashboard table
+  const [saleToDeleteInDashboard, setSaleToDeleteInDashboard] = useState<CounterSale | null>(null);
+  const [isDeletingSaleInDashboard, setIsDeletingSaleInDashboard] = useState(false);
+
+  const handleDeleteCounterSaleFromDashboard = async (sale: CounterSale) => {
+    if (!sale || !sale.id) return;
+    setIsDeletingSaleInDashboard(true);
+    try {
+      // 1. Delete counterSales document from Firestore
+      await deleteDoc(doc(db, "counterSales", sale.id));
+      setRawCounterSales(prev => prev.filter(c => c.id !== sale.id));
+
+      // 2. Delete linked income transaction from general transactions collection
+      if (sale.transactionId) {
+        try {
+          await deleteDoc(doc(db, "transactions", sale.transactionId));
+        } catch (e) {
+          console.warn("Could not delete matching transaction by ID in dashboard:", e);
+        }
+      }
+
+      // Also clean up any transactions that reference this saleId
+      try {
+        if (sale.saleId) {
+          const txSnap1 = await getDocs(query(collection(db, "transactions"), where("subCategory", "==", sale.saleId)));
+          for (const tDoc of txSnap1.docs) {
+            await deleteDoc(doc(db, "transactions", tDoc.id));
+          }
+        }
+        const txSnapAll = await getDocs(collection(db, "transactions"));
+        for (const tDoc of txSnapAll.docs) {
+          const tData = tDoc.data();
+          if (
+            (sale.transactionId && tDoc.id === sale.transactionId) ||
+            (sale.saleId && tData.subCategory === sale.saleId) ||
+            (sale.saleId && tData.notes && tData.notes.includes(sale.saleId))
+          ) {
+            await deleteDoc(doc(db, "transactions", tDoc.id));
+          }
+        }
+        setRawTransactions(prev => prev.filter(t => 
+          !(sale.transactionId && t.id === sale.transactionId) &&
+          !(sale.saleId && t.subCategory === sale.saleId) &&
+          !(sale.saleId && t.notes && t.notes.includes(sale.saleId))
+        ));
+      } catch (qErr) {
+        console.warn("Could not sweep matching transactions for saleId in dashboard:", qErr);
+      }
+
+      // 3. Revert Customer Profile totals if this sale was linked to a customer
+      if (sale.customerId) {
+        try {
+          const custDocRef = doc(db, "customers", sale.customerId);
+          const custDocSnap = await getDoc(custDocRef);
+          if (custDocSnap.exists()) {
+            const cData = custDocSnap.data();
+            const payable = sale.netPayable ?? (sale.totalSlipsAmount - (sale.discountAmount || 0));
+            const newPurchases = Math.max(0, (cData.totalPurchases || 0) - payable);
+            const newPaid = Math.max(0, (cData.totalPaid || 0) - (sale.receivedAmount || 0));
+            const newDue = Math.max(0, (cData.totalDue || 0) - (sale.dueAmount || 0));
+            const newDiscount = Math.max(0, (cData.totalDiscount || 0) - (sale.discountAmount || 0));
+            const newPurchasesCount = Math.max(0, (cData.totalPurchasesCount || 1) - 1);
+            const newDueCount = (sale.dueAmount || 0) > 0 ? Math.max(0, (cData.totalDueCount || 1) - 1) : (cData.totalDueCount || 0);
+
+            await updateDoc(custDocRef, cleanFirestoreData({
+              totalPurchases: newPurchases,
+              totalPaid: newPaid,
+              totalDue: newDue,
+              totalDiscount: newDiscount,
+              totalPurchasesCount: newPurchasesCount,
+              totalDueCount: newDueCount,
+              updatedAt: new Date().toISOString()
+            }));
+          }
+        } catch (cErr) {
+          console.warn("Could not revert customer stats upon sale deletion in dashboard:", cErr);
+        }
+      }
+
+      setSaleToDeleteInDashboard(null);
+    } catch (err) {
+      console.error("Error deleting counter sale from dashboard:", err);
+      alert("কাউন্টার সেল ডিলিট করতে সমস্যা হয়েছে।");
+    } finally {
+      setIsDeletingSaleInDashboard(false);
+    }
+  };
 
   const matchesUser = (item: any) => {
     if (!selectedUserFilter || selectedUserFilter === "all") return true;
@@ -311,13 +401,43 @@ export default function Dashboard({
     };
   }, []);
 
+  // Reconciled datasets: automatically filters out deleted counter cash & orphaned records
+  const validCounterSales = useMemo(() => {
+    return rawCounterSales.filter(cs => {
+      // If sale received cash, verify that its cash transaction was not deleted by user
+      if (!cs.receivedAmount || cs.receivedAmount <= 0) return true;
+      if (rawTransactions.length === 0) return true; // wait for initial transaction snapshot
+      return rawTransactions.some(t => 
+        (cs.transactionId && t.id === cs.transactionId) ||
+        (cs.saleId && t.subCategory === cs.saleId) ||
+        (cs.saleId && t.notes && t.notes.includes(cs.saleId))
+      );
+    });
+  }, [rawCounterSales, rawTransactions]);
+
+  const validTransactions = useMemo(() => {
+    return rawTransactions.filter(tx => {
+      const isCounterSaleTx = tx.category === "Counter Sale" || 
+        (tx.subCategory && tx.subCategory.startsWith("CS-")) ||
+        (tx.notes && (tx.notes.includes("Counter Sale [CS-") || tx.notes.includes("কাউন্টার সেল")));
+      if (!isCounterSaleTx) return true;
+      if (rawCounterSales.length === 0) return true; // wait for initial counter sales snapshot
+      return rawCounterSales.some(cs => 
+        (tx.subCategory && cs.saleId === tx.subCategory) ||
+        (cs.id === tx.subCategory) ||
+        (cs.transactionId && cs.transactionId === tx.id) ||
+        (tx.notes && cs.saleId && tx.notes.includes(cs.saleId))
+      );
+    });
+  }, [rawTransactions, rawCounterSales]);
+
   // Reactive Stats Recomputation triggered on data changes or user filter change
   useEffect(() => {
     const today = startOfDay(new Date());
     const todayFormatted = format(new Date(), "yyyy-MM-dd");
 
     // Filter datasets according to the active user input filter
-    const all = rawTransactions.filter(matchesUser);
+    const all = validTransactions.filter(matchesUser);
     const purchasesList = rawPurchases.filter(matchesUser);
     const supplierTransactionsList = rawSupplierTransactions.filter(matchesUser);
     const suppliersList = rawSuppliers;
@@ -452,7 +572,7 @@ export default function Dashboard({
 
       // 1c. Counter Sales Distinct Calculations from counterSales collection
       // Counter Sales Calculation: Gross Slips - Discounts = Net Payable -> Received Cash + Customer Due
-      const counterSalesFiltered = rawCounterSales.filter(matchesUser);
+      const counterSalesFiltered = validCounterSales.filter(matchesUser);
       let todayCounterCash = 0;
       let todayCounterGrossSlips = 0;
       let todayCounterDiscount = 0;
@@ -780,7 +900,131 @@ export default function Dashboard({
         return { name: dayLabel, income: dayIncome, expense: dayExpense };
       });
       setTrendChartData(days);
-  }, [rawTransactions, rawPurchases, rawSupplierTransactions, rawSuppliers, rawAttendance, rawEmployees, selectedUserFilter, systemUsers]);
+  }, [validTransactions, validCounterSales, rawPurchases, rawSupplierTransactions, rawSuppliers, rawAttendance, rawEmployees, selectedUserFilter, systemUsers]);
+
+  // Automated background reconciliation: cleans up orphan counterSales and orphan transactions from Firestore
+  useEffect(() => {
+    if (loading) return;
+    if (rawTransactions.length === 0 && rawCounterSales.length === 0) return;
+
+    // 1. Orphan counter sales (received cash deleted from transactions)
+    const orphanCounterSales = rawCounterSales.filter(cs => 
+      cs.receivedAmount && cs.receivedAmount > 0 &&
+      !rawTransactions.some(t => 
+        (cs.transactionId && t.id === cs.transactionId) ||
+        (cs.saleId && t.subCategory === cs.saleId) ||
+        (cs.saleId && t.notes && t.notes.includes(cs.saleId))
+      )
+    );
+
+    for (const ocs of orphanCounterSales) {
+      if (ocs.id) {
+        deleteDoc(doc(db, "counterSales", ocs.id)).catch(e => console.warn("Auto cleanup counterSale error:", e));
+      }
+    }
+
+    // 2. Orphan transactions (counter sale was deleted)
+    const orphanTxs = rawTransactions.filter(tx => {
+      const isCsTx = tx.category === "Counter Sale" || 
+        (tx.subCategory && tx.subCategory.startsWith("CS-")) ||
+        (tx.notes && (tx.notes.includes("Counter Sale [CS-") || tx.notes.includes("কাউন্টার সেল")));
+      if (!isCsTx) return false;
+      return !rawCounterSales.some(cs => 
+        (tx.subCategory && cs.saleId === tx.subCategory) ||
+        (cs.id === tx.subCategory) ||
+        (cs.transactionId && cs.transactionId === tx.id) ||
+        (tx.notes && cs.saleId && tx.notes.includes(cs.saleId))
+      );
+    });
+
+    for (const otx of orphanTxs) {
+      if (otx.id) {
+        deleteDoc(doc(db, "transactions", otx.id)).catch(e => console.warn("Auto cleanup tx error:", e));
+      }
+    }
+  }, [loading, rawTransactions, rawCounterSales]);
+
+  // Manual reconcile trigger
+  const [reconciling, setReconciling] = useState(false);
+  const [reconcileMessage, setReconcileMessage] = useState<string | null>(null);
+
+  const runReconciliation = async (showNotification = false) => {
+    setReconciling(true);
+    let cleanedCount = 0;
+    try {
+      // 1. Check for orphaned counterSales whose received cash transaction was deleted by user
+      for (const cs of rawCounterSales) {
+        if (cs.receivedAmount && cs.receivedAmount > 0) {
+          const hasTx = rawTransactions.some(t => 
+            (cs.transactionId && t.id === cs.transactionId) ||
+            (cs.saleId && t.subCategory === cs.saleId) ||
+            (cs.saleId && t.notes && t.notes.includes(cs.saleId))
+          );
+          if (!hasTx && cs.id) {
+            try {
+              await deleteDoc(doc(db, "counterSales", cs.id));
+              cleanedCount++;
+              if (cs.customerId) {
+                const cRef = doc(db, "customers", cs.customerId);
+                const cSnap = await getDoc(cRef);
+                if (cSnap.exists()) {
+                  const cd = cSnap.data();
+                  const payable = cs.netPayable ?? (cs.totalSlipsAmount - (cs.discountAmount || 0));
+                  await updateDoc(cRef, cleanFirestoreData({
+                    totalPurchases: Math.max(0, (cd.totalPurchases || 0) - payable),
+                    totalPaid: Math.max(0, (cd.totalPaid || 0) - (cs.receivedAmount || 0)),
+                    totalDue: Math.max(0, (cd.totalDue || 0) - (cs.dueAmount || 0)),
+                    totalDiscount: Math.max(0, (cd.totalDiscount || 0) - (cs.discountAmount || 0)),
+                    totalPurchasesCount: Math.max(0, (cd.totalPurchasesCount || 1) - 1),
+                    totalDueCount: (cs.dueAmount || 0) > 0 ? Math.max(0, (cd.totalDueCount || 1) - 1) : (cd.totalDueCount || 0),
+                    updatedAt: new Date().toISOString()
+                  }));
+                }
+              }
+            } catch (err) {
+              console.warn("Error deleting orphan counterSale:", err);
+            }
+          }
+        }
+      }
+
+      // 2. Check for orphaned transactions whose counter sale was deleted
+      for (const tx of rawTransactions) {
+        const isCounterSaleTx = tx.category === "Counter Sale" || 
+          (tx.subCategory && tx.subCategory.startsWith("CS-")) ||
+          (tx.notes && (tx.notes.includes("Counter Sale [CS-") || tx.notes.includes("কাউন্টার সেল")));
+        if (isCounterSaleTx && tx.id) {
+          const hasCs = rawCounterSales.some(cs => 
+            (tx.subCategory && cs.saleId === tx.subCategory) ||
+            (cs.id === tx.subCategory) ||
+            (cs.transactionId && cs.transactionId === tx.id) ||
+            (tx.notes && cs.saleId && tx.notes.includes(cs.saleId))
+          );
+          if (!hasCs) {
+            try {
+              await deleteDoc(doc(db, "transactions", tx.id));
+              cleanedCount++;
+            } catch (err) {
+              console.warn("Error deleting orphan transaction:", err);
+            }
+          }
+        }
+      }
+
+      if (showNotification) {
+        if (cleanedCount > 0) {
+          setReconcileMessage(`সফলভাবে ${cleanedCount} টি অসঙ্গতিপূর্ণ বা ডিলিটকৃত রেকর্ড সমন্বয় করা হয়েছে। ড্যাশবোর্ড এখন ১০০% নির্ভুল।`);
+        } else {
+          setReconcileMessage("সকল কাউন্টার ক্যাশ ও সেলস হিসাব ইতোমধ্যে ১০০% সমন্বিত ও নির্ভুল রয়েছে।");
+        }
+        setTimeout(() => setReconcileMessage(null), 5000);
+      }
+    } catch (e) {
+      console.error("Reconciliation error:", e);
+    } finally {
+      setReconciling(false);
+    }
+  };
 
   const totalBankLastCash = banks.reduce((sum, b) => sum + b.balance, 0);
 
@@ -972,14 +1216,35 @@ export default function Dashboard({
             {t("Welcome back,")} <strong className="text-slate-800">{user.displayName?.split(" ")[0]}</strong>. {t("Here's your shop's real-time performance matrix.")}
           </p>
         </div>
-        <button
-          onClick={() => window.print()}
-          className="print:hidden flex items-center gap-2 px-4 py-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl font-bold text-xs uppercase tracking-wider transition-all duration-200 shadow-sm shadow-slate-950/10 cursor-pointer border border-transparent hover:scale-[1.02] active:scale-[0.98] shrink-0"
-        >
-          <Printer className="w-4 h-4 text-emerald-400" />
-          {t("Print Ledger Report")}
-        </button>
+        <div className="flex items-center gap-2 print:hidden flex-wrap">
+          <button
+            onClick={() => runReconciliation(true)}
+            disabled={reconciling}
+            className="flex items-center gap-2 px-3.5 py-2.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-900 border border-indigo-200 rounded-xl font-bold text-xs uppercase tracking-wider transition-all duration-200 shadow-2xs cursor-pointer active:scale-98"
+            title="কাউন্টার ক্যাশ ও সেলস হিসাব যাচাই ও সমন্বয় করুন"
+          >
+            <RefreshCw className={cn("w-3.5 h-3.5 text-indigo-600", reconciling && "animate-spin")} />
+            <span>{reconciling ? "সমন্বয় হচ্ছে..." : "হিসাব অডিট ও সমন্বয়"}</span>
+          </button>
+          <button
+            onClick={() => window.print()}
+            className="flex items-center gap-2 px-4 py-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl font-bold text-xs uppercase tracking-wider transition-all duration-200 shadow-sm shadow-slate-950/10 cursor-pointer border border-transparent hover:scale-[1.02] active:scale-[0.98] shrink-0"
+          >
+            <Printer className="w-4 h-4 text-emerald-400" />
+            {t("Print Ledger Report")}
+          </button>
+        </div>
       </header>
+
+      {reconcileMessage && (
+        <div className="p-3.5 bg-emerald-50 border border-emerald-300 text-emerald-900 rounded-2xl flex items-center justify-between text-xs font-bold animate-in fade-in">
+          <div className="flex items-center gap-2">
+            <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+            <span>{reconcileMessage}</span>
+          </div>
+          <button onClick={() => setReconcileMessage(null)} className="text-emerald-700 hover:text-emerald-900 font-bold px-2 cursor-pointer">✕</button>
+        </div>
+      )}
 
       {/* Multi-User Calculation & Input Filter Scope Bar */}
       <div className="bg-white border border-slate-200 rounded-2xl p-4 sm:p-5 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -1717,7 +1982,14 @@ export default function Dashboard({
                   className="flex-1 py-2.5 px-4 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-black transition-all cursor-pointer shadow-sm active:scale-98 flex items-center justify-center gap-1.5"
                 >
                   <Receipt className="w-3.5 h-3.5" />
-                  <span>কাউন্টার রেজিস্টার ও বাকি খাতা</span>
+                  <span>কাউন্টার রেজিস্টার</span>
+                </button>
+                <button
+                  onClick={() => onNavigate?.("customerLedger")}
+                  className="py-2.5 px-4 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 rounded-xl text-xs font-bold transition-all cursor-pointer active:scale-98 flex items-center gap-1.5"
+                >
+                  <UserCheck className="w-3.5 h-3.5 text-amber-700" />
+                  <span>কাস্টমার লেজার (বাকি খাতা)</span>
                 </button>
                 <button
                   onClick={() => onNavigate?.("counterSale")}
@@ -1840,15 +2112,16 @@ export default function Dashboard({
                     <th className="px-4 py-3 text-right">প্রাপ্ত ক্যাশ</th>
                     <th className="px-4 py-3 text-right">বাকি (Due)</th>
                     <th className="px-4 py-3 text-center">স্ট্যাটাস</th>
+                    <th className="px-4 py-3 text-center">অ্যাকশন</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {rawCounterSales.length === 0 ? (
+                  {validCounterSales.length === 0 ? (
                     <tr>
-                      <td colSpan={9} className="px-4 py-8 text-center text-slate-400 italic">কাউন্টার সেলের কোনো রেকর্ড পাওয়া যায়নি</td>
+                      <td colSpan={10} className="px-4 py-8 text-center text-slate-400 italic">কাউন্টার সেলের কোনো রেকর্ড পাওয়া যায়নি</td>
                     </tr>
                   ) : (
-                    rawCounterSales.slice(0, 8).map(cs => (
+                    validCounterSales.slice(0, 10).map(cs => (
                       <tr key={cs.id} className="hover:bg-slate-50/60 transition-colors">
                         <td className="px-4 py-3 font-mono font-bold text-slate-900">
                           <div>{cs.saleId}</div>
@@ -1889,6 +2162,16 @@ export default function Dashboard({
                               ফেরত ৳{cs.changeAmount || 0}
                             </span>
                           )}
+                        </td>
+                        <td className="px-4 py-3 text-center">
+                          <button
+                            type="button"
+                            onClick={() => setSaleToDeleteInDashboard(cs)}
+                            className="p-1.5 text-rose-500 hover:text-rose-700 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer border border-transparent hover:border-rose-200"
+                            title="কাউন্টার সেল ডিলিট করুন (ড্যাশবোর্ড ও খাতা থেকে সমন্বয় হবে)"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
                         </td>
                       </tr>
                     ))
@@ -2511,6 +2794,60 @@ export default function Dashboard({
         </div>
       </div>
         </>
+      )}
+
+      {/* ================= IN-APP COUNTER SALE DELETE CONFIRMATION MODAL ================= */}
+      {saleToDeleteInDashboard && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-200">
+          <div className="bg-white rounded-3xl max-w-md w-full p-6 border border-gray-100 shadow-2xl space-y-4 animate-in zoom-in-95 duration-200">
+            <div className="w-12 h-12 rounded-2xl bg-rose-50 border border-rose-100 flex items-center justify-center text-rose-600">
+              <Trash2 className="w-6 h-6" />
+            </div>
+
+            <div className="space-y-1">
+              <h3 className="text-lg font-black text-gray-900">
+                কাউন্টার সেল মুছে ফেলবেন?
+              </h3>
+              <p className="text-xs text-gray-500 leading-relaxed">
+                সেল আইডি <strong className="text-gray-900 font-mono">{saleToDeleteInDashboard.saleId}</strong> (তারিখ: {saleToDeleteInDashboard.date}, মোট: ৳{(saleToDeleteInDashboard.totalSlipsAmount || 0).toLocaleString()}) স্থায়ীভাবে মুছে ফেলতে চান?
+              </p>
+            </div>
+
+            <div className="p-3 bg-rose-50/60 rounded-2xl border border-rose-100 text-[11px] text-rose-800 space-y-1">
+              <p className="font-bold">• ড্যাশবোর্ডের মোট সেল ও ক্যাশ ক্যালকুলেশন থেকে এটি তাৎক্ষণিকভাবে বাদ যাবে।</p>
+              <p>• সংশ্লিষ্ট ট্রানজ্যাকশন এবং কাস্টমার বাকি খাতা থেকে হিসাব সমন্বয় হয়ে যাবে।</p>
+            </div>
+
+            <div className="flex gap-2 pt-2">
+              <button
+                type="button"
+                disabled={isDeletingSaleInDashboard}
+                onClick={() => handleDeleteCounterSaleFromDashboard(saleToDeleteInDashboard)}
+                className="flex-1 py-3 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-black transition-all shadow-md active:scale-95 cursor-pointer flex items-center justify-center gap-2 disabled:opacity-50"
+              >
+                {isDeletingSaleInDashboard ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                    <span>মুছে ফেলা হচ্ছে...</span>
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="w-4 h-4" />
+                    <span>হ্যাঁ, ডিলিট করুন</span>
+                  </>
+                )}
+              </button>
+              <button
+                type="button"
+                disabled={isDeletingSaleInDashboard}
+                onClick={() => setSaleToDeleteInDashboard(null)}
+                className="px-5 py-3 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-xl text-xs font-bold transition-all cursor-pointer"
+              >
+                বাতিল
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

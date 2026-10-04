@@ -19,6 +19,7 @@ import {
   User as UserIcon,
   ShieldCheck,
   ShoppingCart,
+  UserCheck,
   ChevronDown,
   ChevronRight,
   UserPlus,
@@ -72,6 +73,7 @@ import Purchase from "./components/Purchase";
 import UsersManager from "./components/UsersManager";
 import Login from "./components/Login";
 import Inventory from "./components/Inventory";
+import CustomerLedger from "./components/CustomerLedger";
 
 function QuotaExceededOverlay({ onDismiss, databaseId, projectId }: { onDismiss: () => void; databaseId: string; projectId: string }) {
   const upgradeUrl = `https://console.firebase.google.com/project/${projectId}/firestore/databases/${databaseId}/data?openUpgradeDialog=true`;
@@ -151,11 +153,12 @@ function QuotaExceededOverlay({ onDismiss, databaseId, projectId }: { onDismiss:
   );
 }
 
-type View = "dashboard" | "transactions" | "counterSale" | "counterSalesLedger" | "newSale" | "salesList" | "newEmployee" | "employeesList" | "employees" | "salaryEntry" | "salarySheet" | "addAttendance" | "breakfastBoard" | "attendanceList" | "attendance" | "reports" | "settings" | "newSupplier" | "suppliersList" | "suppliers" | "newPurchase" | "purchaseList" | "paySupplierDue" | "newUser" | "usersList" | "rolesList" | "profileView" | "inventory";
+type View = "dashboard" | "transactions" | "customerLedger" | "counterSale" | "counterSalesLedger" | "newSale" | "salesList" | "newEmployee" | "employeesList" | "employees" | "salaryEntry" | "salarySheet" | "addAttendance" | "breakfastBoard" | "attendanceList" | "attendance" | "reports" | "settings" | "newSupplier" | "suppliersList" | "suppliers" | "newPurchase" | "purchaseList" | "paySupplierDue" | "newUser" | "usersList" | "rolesList" | "profileView" | "inventory";
 
 const VALID_VIEWS: View[] = [
   "dashboard",
   "transactions",
+  "customerLedger",
   "counterSale",
   "counterSalesLedger",
   "newSale",
@@ -660,6 +663,7 @@ export default function App() {
 
   const navItems = [
     { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
+    { id: "customerLedger", label: "Customer Ledger", icon: UserCheck },
     { id: "transactions", label: "Transactions", icon: ReceiptIndianRupee },
     { 
       id: "sales", 
@@ -668,6 +672,7 @@ export default function App() {
       children: [
         { id: "counterSale", label: "Counter Sale (স্লিপ সেল)" },
         { id: "counterSalesLedger", label: "Counter Sales Ledger (কাউন্টার লেজার)" },
+        { id: "customerLedger", label: "Customer Ledger (কাস্টমার খতিয়ান)" },
         { id: "newSale", label: "Staff Daily Sales (কর্মী বিক্রয়)" },
         { id: "salesList", label: "Staff Sales Ledger (কর্মী লেজার)" }
       ]
@@ -1068,6 +1073,7 @@ export default function App() {
             <div>
               <h1 className="text-lg font-extrabold text-slate-900 tracking-tight">
                 {t(activeView === "dashboard" ? "Dashboard" : 
+                   activeView === "customerLedger" ? "Customer Ledger" :
                    activeView === "transactions" ? "Transactions" :
                    activeView === "counterSale" ? "Counter Sale" :
                    activeView === "newSale" ? "New Sale" :
@@ -1307,6 +1313,13 @@ export default function App() {
                   onClearInitialActiveTab={() => setInitialActiveTab("income")}
                 />
               )}
+              {activeView === "customerLedger" && (
+                <CustomerLedger 
+                  user={user} 
+                  role={profile.role} 
+                  onNavigateToCounterSale={() => setActiveView("counterSale")}
+                />
+              )}
               {activeView === "counterSale" && (
                 <CounterSaleView 
                   user={user} 
@@ -1314,6 +1327,7 @@ export default function App() {
                   initialTab="entry"
                   onNavigateToStaffSales={() => setActiveView("newSale")}
                   onNavigateToSalesLedger={() => setActiveView("counterSalesLedger")}
+                  onNavigateToCustomerLedger={() => setActiveView("customerLedger")}
                 />
               )}
               {activeView === "counterSalesLedger" && (
@@ -1323,6 +1337,7 @@ export default function App() {
                   initialTab="register"
                   onNavigateToStaffSales={() => setActiveView("newSale")}
                   onNavigateToSalesLedger={() => setActiveView("counterSalesLedger")}
+                  onNavigateToCustomerLedger={() => setActiveView("customerLedger")}
                 />
               )}
               {activeView === "newSale" && (

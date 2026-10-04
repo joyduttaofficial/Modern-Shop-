@@ -47,7 +47,13 @@ import {
   Percent,
   FileText,
   ChevronRight,
-  Check
+  Check,
+  UserPlus,
+  Phone,
+  MapPin,
+  Users,
+  X,
+  FileSpreadsheet
 } from "lucide-react";
 import { format } from "date-fns";
 import { motion, AnimatePresence } from "motion/react";
@@ -57,6 +63,7 @@ interface CounterSaleProps {
   role: UserRole;
   onNavigateToStaffSales?: () => void;
   onNavigateToSalesLedger?: () => void;
+  onNavigateToCustomerLedger?: () => void;
   initialTab?: "entry" | "register" | "customers";
 }
 
@@ -65,6 +72,7 @@ export default function CounterSaleView({
   role, 
   onNavigateToStaffSales, 
   onNavigateToSalesLedger,
+  onNavigateToCustomerLedger,
   initialTab = "entry"
 }: CounterSaleProps) {
   const { language, t, formatDate, formatNumber } = useLanguage();
@@ -103,6 +111,8 @@ export default function CounterSaleView({
   const [customersList, setCustomersList] = useState<CustomerProfile[]>([]);
   const [customerPaymentsList, setCustomerPaymentsList] = useState<CustomerPayment[]>([]);
   const [selectedCustomerForView, setSelectedCustomerForView] = useState<CustomerProfile | null>(null);
+  const [customerToDelete, setCustomerToDelete] = useState<CustomerProfile | null>(null);
+  const [isDeletingCustomer, setIsDeletingCustomer] = useState<boolean>(false);
   const [isCollectingPayment, setIsCollectingPayment] = useState(false);
   const [paymentCustomer, setPaymentCustomer] = useState<CustomerProfile | null>(null);
   const [collectionAmount, setCollectionAmount] = useState<string>("");
@@ -111,6 +121,50 @@ export default function CounterSaleView({
   const [isExportingPdf, setIsExportingPdf] = useState(false);
   const [customerSearchTerm, setCustomerSearchTerm] = useState<string>("");
   const [customerFilterStatus, setCustomerFilterStatus] = useState<"all" | "due" | "paid">("all");
+
+  // New Customer Profile Modal states
+  const [isAddingCustomerModal, setIsAddingCustomerModal] = useState<boolean>(false);
+  const [newCustName, setNewCustName] = useState<string>("");
+  const [newCustPhone, setNewCustPhone] = useState<string>("");
+  const [newCustAddress, setNewCustAddress] = useState<string>("");
+  const [newCustOpeningDue, setNewCustOpeningDue] = useState<string>("");
+
+  // Collection Receipt Voucher Modal states ("COLLECTION receipt")
+  const [lastCollectionPayment, setLastCollectionPayment] = useState<CustomerPayment | null>(null);
+  const [showCollectionReceiptModal, setShowCollectionReceiptModal] = useState<boolean>(false);
+
+  // Customer link & autocomplete in Fast Slip Entry Desk
+  const [selectedCustomerId, setSelectedCustomerId] = useState<string>("");
+  const [customerSearchQueryInEntry, setCustomerSearchQueryInEntry] = useState<string>("");
+  const [showCustomerDropdownInEntry, setShowCustomerDropdownInEntry] = useState<boolean>(false);
+
+  // Dynamic helper functions for customer counts ("কতবার বাকি নিচ্ছে কেনাকাটা করছে পেমেন্ট করছে")
+  const getCustomerPurchasesCount = (cust: CustomerProfile) => {
+    const listCount = counterSalesList.filter(s => 
+      (s.customerId && s.customerId === cust.id) ||
+      (cust.phone && s.customerPhone && s.customerPhone.trim() === cust.phone.trim()) ||
+      (s.customerName && s.customerName.trim().toLowerCase() === cust.name.trim().toLowerCase())
+    ).length;
+    return Math.max(cust.totalPurchasesCount || 0, listCount);
+  };
+
+  const getCustomerDueCount = (cust: CustomerProfile) => {
+    const listCount = counterSalesList.filter(s => 
+      ((s.customerId && s.customerId === cust.id) ||
+      (cust.phone && s.customerPhone && s.customerPhone.trim() === cust.phone.trim()) ||
+      (s.customerName && s.customerName.trim().toLowerCase() === cust.name.trim().toLowerCase())) &&
+      (s.dueAmount || 0) > 0
+    ).length;
+    return Math.max(cust.totalDueCount || 0, listCount);
+  };
+
+  const getCustomerPaymentsCount = (cust: CustomerProfile) => {
+    const listCount = customerPaymentsList.filter(p => 
+      p.customerId === cust.id ||
+      (cust.phone && p.customerPhone && p.customerPhone.trim() === cust.phone.trim())
+    ).length;
+    return Math.max(cust.totalPaymentsCount || 0, listCount);
+  };
 
   // State for in-app deletion confirmation modal (works reliably inside iframes without window.confirm)
   const [saleToDelete, setSaleToDelete] = useState<CounterSale | null>(null);
@@ -332,6 +386,9 @@ export default function CounterSaleView({
     setCustomerAddress("");
     setSaleNotes("");
     setPaymentMethod("Cash");
+    setSelectedCustomerId("");
+    setCustomerSearchQueryInEntry("");
+    setShowCustomerDropdownInEntry(false);
   };
 
   // Quick Action: Match received to net payable ("সমান সমান করুন")
@@ -400,15 +457,17 @@ export default function CounterSaleView({
       const trimmedNotes = saleNotes.trim();
 
       // Customer Profile Creation/Update for Due or named sales
-      let assignedCustomerId: string | undefined = undefined;
+      let assignedCustomerId: string | undefined = selectedCustomerId || undefined;
       const effectiveCustomerName = trimmedCustomer || (dueAmount > 0 ? `কাস্টমার #${finalDailySerial} (${finalSaleId})` : "");
 
-      if (effectiveCustomerName || trimmedPhone) {
-        // Find existing customer by phone or name
-        const existingCust = customersList.find(c => 
-          (trimmedPhone && c.phone && c.phone.trim() === trimmedPhone) ||
-          (effectiveCustomerName && c.name.trim().toLowerCase() === effectiveCustomerName.toLowerCase())
-        );
+      if (effectiveCustomerName || trimmedPhone || assignedCustomerId) {
+        // Find existing customer by selectedCustomerId, or phone, or name
+        let existingCust = assignedCustomerId 
+          ? customersList.find(c => c.id === assignedCustomerId) 
+          : customersList.find(c => 
+              (trimmedPhone && c.phone && c.phone.trim() === trimmedPhone) ||
+              (effectiveCustomerName && c.name.trim().toLowerCase() === effectiveCustomerName.toLowerCase())
+            );
 
         if (existingCust && existingCust.id) {
           assignedCustomerId = existingCust.id;
@@ -416,15 +475,20 @@ export default function CounterSaleView({
           const updatedPaid = (existingCust.totalPaid || 0) + finalReceived;
           const updatedDue = Math.max(0, (existingCust.totalDue || 0) + dueAmount);
           const updatedDiscount = (existingCust.totalDiscount || 0) + computedDiscountAmount;
+          const updatedPurchasesCount = (existingCust.totalPurchasesCount || 0) + 1;
+          const updatedDueCount = dueAmount > 0 ? ((existingCust.totalDueCount || 0) + 1) : (existingCust.totalDueCount || 0);
 
           const updatePayload: Record<string, any> = {
             totalPurchases: updatedPurchases,
             totalPaid: updatedPaid,
             totalDue: updatedDue,
             totalDiscount: updatedDiscount,
+            totalPurchasesCount: updatedPurchasesCount,
+            totalDueCount: updatedDueCount,
             lastTransactionDate: datePart,
             updatedAt: new Date().toISOString()
           };
+          if (trimmedCustomer && (!existingCust.name || existingCust.name.startsWith("কাস্টমার #"))) updatePayload.name = trimmedCustomer;
           if (trimmedPhone && !existingCust.phone) updatePayload.phone = trimmedPhone;
           if (trimmedAddress && !existingCust.address) updatePayload.address = trimmedAddress;
 
@@ -437,6 +501,9 @@ export default function CounterSaleView({
             totalPaid: finalReceived,
             totalDue: dueAmount,
             totalDiscount: computedDiscountAmount,
+            totalPurchasesCount: 1,
+            totalDueCount: dueAmount > 0 ? 1 : 0,
+            totalPaymentsCount: 0,
             lastTransactionDate: datePart,
             createdAt: new Date().toISOString(),
             updatedAt: new Date().toISOString()
@@ -688,28 +755,47 @@ export default function CounterSaleView({
       const now = new Date();
       const isoDate = now.toISOString();
       const dateStr = format(now, "yyyy-MM-dd");
+      const timeStr = format(now, "hh:mm:ss a");
+
+      // Generate sequential collection receipt number e.g. CR-261003-01
+      const yy = format(now, "yy");
+      const mm = format(now, "MM");
+      const dd = format(now, "dd");
+      const dateCode = `${yy}${mm}${dd}`;
+      const dayPayments = customerPaymentsList.filter(p => p.date === dateStr);
+      const receiptSeq = String(dayPayments.length + 1).padStart(2, "0");
+      const receiptNo = `CR-${dateCode}-${receiptSeq}`;
+
+      const previousDue = paymentCustomer.totalDue || 0;
+      const newTotalPaid = (paymentCustomer.totalPaid || 0) + amountNum;
+      const newTotalDue = Math.max(0, previousDue - amountNum);
+      const newPaymentsCount = (paymentCustomer.totalPaymentsCount || 0) + 1;
 
       // 1. Create customerPayments record
       const paymentRecord: Record<string, any> = {
+        receiptNo: receiptNo,
         customerId: paymentCustomer.id,
         customerName: paymentCustomer.name,
+        customerPhone: paymentCustomer.phone || "",
+        customerAddress: paymentCustomer.address || "",
         date: dateStr,
+        time: timeStr,
         amount: amountNum,
+        previousDue: previousDue,
+        remainingDue: newTotalDue,
         paymentMethod: collectionMethod,
         receivedBy: user.uid,
         createdAt: isoDate
       };
-      if (paymentCustomer.phone) paymentRecord.customerPhone = paymentCustomer.phone;
       if (collectionNotes.trim()) paymentRecord.notes = collectionNotes.trim();
 
       const payDocRef = await addDoc(collection(db, "customerPayments"), cleanFirestoreData(paymentRecord));
 
       // 2. Update customer profile
-      const newTotalPaid = (paymentCustomer.totalPaid || 0) + amountNum;
-      const newTotalDue = Math.max(0, (paymentCustomer.totalDue || 0) - amountNum);
       await updateDoc(doc(db, "customers", paymentCustomer.id), cleanFirestoreData({
         totalPaid: newTotalPaid,
         totalDue: newTotalDue,
+        totalPaymentsCount: newPaymentsCount,
         lastTransactionDate: dateStr,
         updatedAt: isoDate
       }));
@@ -723,7 +809,7 @@ export default function CounterSaleView({
           subCategory: paymentCustomer.name,
           amount: amountNum,
           paymentMethod: collectionMethod,
-          notes: `Customer Due Collection: ${paymentCustomer.name} (${paymentCustomer.phone || 'No phone'}) - আদায়: ৳${amountNum} | অবশিষ্ট বাকি: ৳${newTotalDue}`,
+          notes: `Customer Due Collection [${receiptNo}]: ${paymentCustomer.name} (${paymentCustomer.phone || 'No phone'}) - আদায়: ৳${amountNum} | অবশিষ্ট বাকি: ৳${newTotalDue}`,
           createdBy: user.uid
         }));
         await updateDoc(doc(db, "customerPayments", payDocRef.id), { transactionId: txDoc.id });
@@ -731,11 +817,14 @@ export default function CounterSaleView({
         console.warn("Failed to create transaction for payment collection:", txErr);
       }
 
+      const fullPayment = { id: payDocRef.id, ...paymentRecord } as CustomerPayment;
+
       if (selectedCustomerForView && selectedCustomerForView.id === paymentCustomer.id) {
         setSelectedCustomerForView({
           ...selectedCustomerForView,
           totalPaid: newTotalPaid,
           totalDue: newTotalDue,
+          totalPaymentsCount: newPaymentsCount,
           lastTransactionDate: dateStr,
           updatedAt: isoDate
         });
@@ -745,11 +834,288 @@ export default function CounterSaleView({
       setPaymentCustomer(null);
       setCollectionAmount("");
       setCollectionNotes("");
-      alert(`৳${amountNum.toLocaleString()} সফলভাবে আদায় ও ক্যাশে জমা করা হয়েছে!`);
+
+      // Open the Collection Receipt Voucher Modal immediately
+      setLastCollectionPayment(fullPayment);
+      setShowCollectionReceiptModal(true);
+
     } catch (err) {
       handleFirestoreError(err, OperationType.CREATE, "customerPayments");
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  // Print Single Collection Money Receipt ("কালেকশন রিসিট প্রিন্ট")
+  const handlePrintCollectionReceipt = (payment: CustomerPayment) => {
+    const printWindow = window.open("", "_blank", "width=360,height=600");
+    if (!printWindow) {
+      alert("Please allow popups to print receipt.");
+      return;
+    }
+    const dateFormatted = payment.date;
+    const timeFormatted = payment.time || "";
+
+    printWindow.document.write(`
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <title>Collection Receipt - ${payment.receiptNo || 'CR'}</title>
+          <style>
+            @page { margin: 0; size: 80mm auto; }
+            body { 
+              font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; 
+              width: 76mm; 
+              margin: 0 auto; 
+              padding: 10px 6px; 
+              color: #0f172a;
+            }
+            .center { text-align: center; }
+            .bold { font-weight: bold; }
+            .header { margin-bottom: 8px; }
+            .header h2 { margin: 0; font-size: 18px; text-transform: uppercase; }
+            .header p { margin: 2px 0; font-size: 11px; color: #64748b; }
+            .receipt-title { font-weight: 800; font-size: 12px; border-top: 1px dashed #cbd5e1; border-bottom: 1px dashed #cbd5e1; padding: 4px 0; margin-top: 4px; text-transform: uppercase; }
+            .info-block { font-size: 11px; margin-bottom: 8px; padding-bottom: 6px; border-bottom: 1px solid #000; }
+            .info-row { display: flex; justify-content: space-between; margin: 3px 0; }
+            .amount-box { margin: 8px 0; padding: 8px; border: 2px solid #047857; background: #ecfdf5; border-radius: 6px; text-align: center; }
+            .amount-val { font-size: 18px; font-weight: 900; font-family: monospace; color: #047857; }
+            .footer { margin-top: 16px; text-align: center; font-size: 10px; color: #64748b; }
+            .sign-row { display: flex; justify-content: space-between; margin-top: 28px; font-size: 9px; }
+            .sign-line { border-top: 1px dashed #64748b; width: 33mm; text-align: center; padding-top: 3px; }
+          </style>
+        </head>
+        <body>
+          <div class="header center">
+            <h2>${companyName}</h2>
+            <p>${companyAddress}</p>
+            <p>ফোন: ${companyPhone}</p>
+            <div class="receipt-title">কালেকশন রিসিট / মানি রিসিট (COLLECTION RECEIPT)</div>
+          </div>
+
+          <div class="info-block">
+            <div class="info-row">
+              <span>রিসিট নং:</span>
+              <span class="bold" style="font-family: monospace;">${payment.receiptNo || 'CR-' + payment.date.replace(/-/g, '')}</span>
+            </div>
+            <div class="info-row">
+              <span>তারিখ ও সময়:</span>
+              <span>${dateFormatted} ${timeFormatted}</span>
+            </div>
+            <div class="info-row">
+              <span>কাস্টমার নাম:</span>
+              <span class="bold">${payment.customerName}</span>
+            </div>
+            ${payment.customerPhone ? `
+            <div class="info-row">
+              <span>মোবাইল নং:</span>
+              <span class="bold font-mono">${payment.customerPhone}</span>
+            </div>` : ''}
+            ${payment.customerAddress ? `
+            <div class="info-row">
+              <span>ঠিকানা:</span>
+              <span>${payment.customerAddress}</span>
+            </div>` : ''}
+            <div class="info-row">
+              <span>পেমেন্ট মাধ্যম:</span>
+              <span class="bold">${payment.paymentMethod}</span>
+            </div>
+            ${payment.notes ? `
+            <div class="info-row">
+              <span>মন্তব্য:</span>
+              <span>${payment.notes}</span>
+            </div>` : ''}
+          </div>
+
+          <div class="amount-box">
+            <div style="font-size: 10px; color: #065f46; font-weight: bold; text-transform: uppercase;">আদায়কৃত মোট টাকা (Received Amount)</div>
+            <div class="amount-val">৳ ${payment.amount.toLocaleString()}</div>
+          </div>
+
+          <div style="font-size: 11px; margin-top: 6px;">
+            ${payment.previousDue !== undefined ? `
+            <div class="info-row">
+              <span style="color: #64748b;">পূর্বের মোট বাকি:</span>
+              <span class="bold font-mono">৳ ${payment.previousDue.toLocaleString()}</span>
+            </div>` : ''}
+            <div class="info-row" style="color: #047857; font-weight: bold;">
+              <span>জমা/পরিশোধ:</span>
+              <span class="font-mono">- ৳ ${payment.amount.toLocaleString()}</span>
+            </div>
+            ${payment.remainingDue !== undefined ? `
+            <div class="info-row" style="border-top: 1px dashed #cbd5e1; padding-top: 3px; font-weight: 800; color: ${payment.remainingDue > 0 ? '#b45309' : '#047857'};">
+              <span>বর্তমান অবশিষ্ট বাকি:</span>
+              <span class="font-mono">৳ ${payment.remainingDue.toLocaleString()}</span>
+            </div>` : ''}
+          </div>
+
+          <div class="sign-row">
+            <div class="sign-line">গ্রাহকের স্বাক্ষর</div>
+            <div class="sign-line">আদায়কারীর স্বাক্ষর</div>
+          </div>
+
+          <div class="footer">
+            <p>বাকি পরিশোধের জন্য আন্তরিক ধন্যবাদ!</p>
+            <p style="font-family: monospace; font-size: 8px;">ModernManager Automated POS</p>
+          </div>
+
+          <script>
+            window.onload = function() {
+              window.print();
+              setTimeout(() => window.close(), 500);
+            };
+          </script>
+        </body>
+      </html>
+    `);
+    printWindow.document.close();
+  };
+
+  // Download Single Collection Money Receipt PDF
+  const handleDownloadCollectionReceiptPdf = async (payment: CustomerPayment) => {
+    setIsExportingPdf(true);
+    try {
+      const html = `
+        <div style="font-family: 'Hind Siliguri', 'Noto Sans Bengali', sans-serif; color: #0f172a; padding: 16px; max-width: 480px; margin: 0 auto; border: 1px solid #cbd5e1; border-radius: 8px;">
+          <div style="text-align: center; border-bottom: 2px solid #0f172a; padding-bottom: 8px; margin-bottom: 12px;">
+            <h2 style="margin: 0; font-size: 20px; font-weight: 900;">${companyName}</h2>
+            <p style="margin: 2px 0; font-size: 11px; color: #64748b;">${companyAddress} • ফোন: ${companyPhone}</p>
+            <div style="display: inline-block; background-color: #047857; color: white; padding: 3px 12px; border-radius: 4px; font-size: 11px; font-weight: bold; margin-top: 4px;">
+              বাকি আদায়ের মানি রিসিট (COLLECTION RECEIPT)
+            </div>
+          </div>
+
+          <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 10px; font-size: 11px; margin-bottom: 12px;">
+            <div style="display: flex; justify-content: space-between; margin-bottom: 3px;">
+              <span><strong>রিসিট নং:</strong> ${payment.receiptNo || 'CR-' + payment.date.replace(/-/g, '')}</span>
+              <span><strong>তারিখ:</strong> ${payment.date} ${payment.time || ''}</span>
+            </div>
+            <div style="margin-bottom: 3px;"><strong>গ্রাহক নাম:</strong> ${payment.customerName}</div>
+            ${payment.customerPhone ? `<div style="margin-bottom: 3px;"><strong>মোবাইল:</strong> ${payment.customerPhone}</div>` : ''}
+            ${payment.customerAddress ? `<div style="margin-bottom: 3px;"><strong>ঠিকানা:</strong> ${payment.customerAddress}</div>` : ''}
+            <div><strong>পেমেন্ট মাধ্যম:</strong> ${payment.paymentMethod}</div>
+            ${payment.notes ? `<div><strong>মন্তব্য:</strong> ${payment.notes}</div>` : ''}
+          </div>
+
+          <div style="background-color: #ecfdf5; border: 2px solid #059669; border-radius: 8px; padding: 12px; text-align: center; margin-bottom: 12px;">
+            <div style="font-size: 10px; font-weight: bold; color: #065f46; text-transform: uppercase;">আদায়কৃত মোট টাকা (Collected Amount)</div>
+            <div style="font-size: 24px; font-weight: 900; font-family: monospace; color: #047857; margin-top: 2px;">
+              ৳ ${payment.amount.toLocaleString()}
+            </div>
+          </div>
+
+          <div style="font-size: 11px; padding: 8px; background: white; border: 1px solid #e2e8f0; border-radius: 6px; margin-bottom: 24px;">
+            ${payment.previousDue !== undefined ? `
+            <div style="display: flex; justify-content: space-between; margin-bottom: 3px;">
+              <span style="color: #64748b;">পূর্বের মোট বাকি:</span>
+              <span style="font-weight: bold; font-family: monospace;">৳ ${payment.previousDue.toLocaleString()}</span>
+            </div>` : ''}
+            <div style="display: flex; justify-content: space-between; margin-bottom: 3px; color: #047857; font-weight: bold;">
+              <span>জমা প্রদান:</span>
+              <span style="font-family: monospace;">- ৳ ${payment.amount.toLocaleString()}</span>
+            </div>
+            ${payment.remainingDue !== undefined ? `
+            <div style="display: flex; justify-content: space-between; border-top: 1px dashed #cbd5e1; padding-top: 4px; font-weight: 900; color: ${payment.remainingDue > 0 ? '#b45309' : '#047857'}; font-size: 12px;">
+              <span>বর্তমান অবশিষ্ট বাকি:</span>
+              <span style="font-family: monospace;">৳ ${payment.remainingDue.toLocaleString()}</span>
+            </div>` : ''}
+          </div>
+
+          <div style="display: flex; justify-content: space-between; margin-top: 32px; font-size: 10px;">
+            <div style="text-align: center;">
+              <div style="border-top: 1px dashed #64748b; width: 120px; margin-bottom: 4px;"></div>
+              <span>গ্রাহকের স্বাক্ষর</span>
+            </div>
+            <div style="text-align: center;">
+              <div style="border-top: 1px dashed #64748b; width: 120px; margin-bottom: 4px;"></div>
+              <span>আদায়কারীর স্বাক্ষর</span>
+            </div>
+          </div>
+        </div>
+      `;
+      await exportHtmlToPdf(html, `Collection_Receipt_${payment.receiptNo || payment.customerName}`);
+    } catch (err) {
+      console.error("Failed to export collection receipt PDF:", err);
+      alert("রিসিট পিডিএফ তৈরি করতে সমস্যা হয়েছে।");
+    } finally {
+      setIsExportingPdf(false);
+    }
+  };
+
+  // Delete Customer Payment Record
+  const handleDeleteCustomerPayment = async (payment: CustomerPayment) => {
+    if (!payment || !payment.id) return;
+    const confirmDelete = window.confirm(`আপনি কি নিশ্চিত যে ৳${payment.amount.toLocaleString()} এর বাকি আদায় হিসাবটি মুছে ফেলতে চান? এটি মুছে দিলে কাস্টমারের বকেয়া পুনরায় বৃদ্ধি পাবে।`);
+    if (!confirmDelete) return;
+
+    try {
+      await deleteDoc(doc(db, "customerPayments", payment.id));
+      if (payment.transactionId) {
+        try {
+          await deleteDoc(doc(db, "transactions", payment.transactionId));
+        } catch (e) {
+          console.warn("Could not delete matching transaction:", e);
+        }
+      }
+
+      // Revert customer totals
+      if (payment.customerId) {
+        const custRef = doc(db, "customers", payment.customerId);
+        const custSnap = await getDoc(custRef);
+        if (custSnap.exists()) {
+          const cData = custSnap.data();
+          const newTotalPaid = Math.max(0, (cData.totalPaid || 0) - payment.amount);
+          const newTotalDue = (cData.totalDue || 0) + payment.amount;
+          const newPaymentsCount = Math.max(0, (cData.totalPaymentsCount || 1) - 1);
+          await updateDoc(custRef, cleanFirestoreData({
+            totalPaid: newTotalPaid,
+            totalDue: newTotalDue,
+            totalPaymentsCount: newPaymentsCount,
+            updatedAt: new Date().toISOString()
+          }));
+        }
+      }
+      alert("বাকি আদায় রেকর্ড মুছে ফেলা হয়েছে এবং কাস্টমার বকেয়া পুনর্বহাল করা হয়েছে।");
+    } catch (err) {
+      handleFirestoreError(err, OperationType.DELETE, `customerPayments/${payment.id}`);
+    }
+  };
+
+  // Add New Customer Profile Manually ("+ নতুন কাস্টমার প্রোফাইল যোগ করুন")
+  const handleCreateNewCustomer = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newCustName.trim()) {
+      alert("অনুগ্রহ করে কাস্টমার নাম লিখুন।");
+      return;
+    }
+    const openingDueNum = parseFloat(newCustOpeningDue) || 0;
+    try {
+      const now = new Date();
+      const newCust: Record<string, any> = {
+        name: newCustName.trim(),
+        totalPurchases: openingDueNum,
+        totalPaid: 0,
+        totalDue: openingDueNum,
+        totalDiscount: 0,
+        totalPurchasesCount: openingDueNum > 0 ? 1 : 0,
+        totalDueCount: openingDueNum > 0 ? 1 : 0,
+        totalPaymentsCount: 0,
+        lastTransactionDate: format(now, "yyyy-MM-dd"),
+        createdAt: now.toISOString(),
+        updatedAt: now.toISOString()
+      };
+      if (newCustPhone.trim()) newCust.phone = newCustPhone.trim();
+      if (newCustAddress.trim()) newCust.address = newCustAddress.trim();
+
+      await addDoc(collection(db, "customers"), cleanFirestoreData(newCust));
+      setIsAddingCustomerModal(false);
+      setNewCustName("");
+      setNewCustPhone("");
+      setNewCustAddress("");
+      setNewCustOpeningDue("");
+      alert("নতুন কাস্টমার প্রোফাইল সফলভাবে তৈরি হয়েছে!");
+    } catch (err) {
+      handleFirestoreError(err, OperationType.CREATE, "customers");
     }
   };
 
@@ -1009,6 +1375,7 @@ export default function CounterSaleView({
     try {
       // 1. Delete counterSales document from Firestore
       await deleteDoc(doc(db, "counterSales", sale.id));
+      setCounterSalesList(prev => prev.filter(c => c.id !== sale.id));
 
       // 2. Delete linked income transaction from general transactions collection
       if (sale.transactionId) {
@@ -1021,17 +1388,25 @@ export default function CounterSaleView({
 
       // Also clean up any transactions that reference this saleId to ensure 100% clean sync
       try {
-        const txQuery = query(
-          collection(db, "transactions"), 
-          where("category", "==", "Counter Sale"), 
-          where("subCategory", "==", sale.saleId)
-        );
-        const txSnap = await getDocs(txQuery);
-        for (const tDoc of txSnap.docs) {
-          await deleteDoc(doc(db, "transactions", tDoc.id));
+        if (sale.saleId) {
+          const txSnap1 = await getDocs(query(collection(db, "transactions"), where("subCategory", "==", sale.saleId)));
+          for (const tDoc of txSnap1.docs) {
+            await deleteDoc(doc(db, "transactions", tDoc.id));
+          }
+        }
+        const txSnapAll = await getDocs(collection(db, "transactions"));
+        for (const tDoc of txSnapAll.docs) {
+          const tData = tDoc.data();
+          if (
+            (sale.transactionId && tDoc.id === sale.transactionId) ||
+            (sale.saleId && tData.subCategory === sale.saleId) ||
+            (sale.saleId && tData.notes && tData.notes.includes(sale.saleId))
+          ) {
+            await deleteDoc(doc(db, "transactions", tDoc.id));
+          }
         }
       } catch (qErr) {
-        console.warn("Could not query matching transactions for saleId:", qErr);
+        console.warn("Could not sweep matching transactions for saleId:", qErr);
       }
 
       // 3. Revert Customer Profile totals if this sale was linked to a customer
@@ -1046,17 +1421,38 @@ export default function CounterSaleView({
             const newPaid = Math.max(0, (cData.totalPaid || 0) - (sale.receivedAmount || 0));
             const newDue = Math.max(0, (cData.totalDue || 0) - (sale.dueAmount || 0));
             const newDiscount = Math.max(0, (cData.totalDiscount || 0) - (sale.discountAmount || 0));
+            const newPurchasesCount = Math.max(0, (cData.totalPurchasesCount || 1) - 1);
+            const newDueCount = (sale.dueAmount || 0) > 0 ? Math.max(0, (cData.totalDueCount || 1) - 1) : (cData.totalDueCount || 0);
 
             await updateDoc(custDocRef, cleanFirestoreData({
               totalPurchases: newPurchases,
               totalPaid: newPaid,
               totalDue: newDue,
               totalDiscount: newDiscount,
+              totalPurchasesCount: newPurchasesCount,
+              totalDueCount: newDueCount,
               updatedAt: new Date().toISOString()
             }));
           }
         } catch (cErr) {
           console.warn("Could not revert customer stats upon sale deletion:", cErr);
+        }
+
+        // Keep modal view in sync immediately if open
+        if (selectedCustomerForView && selectedCustomerForView.id === sale.customerId) {
+          setSelectedCustomerForView(prev => {
+            if (!prev) return null;
+            const payable = sale.netPayable ?? (sale.totalSlipsAmount - (sale.discountAmount || 0));
+            return {
+              ...prev,
+              totalPurchases: Math.max(0, (prev.totalPurchases || 0) - payable),
+              totalPaid: Math.max(0, (prev.totalPaid || 0) - (sale.receivedAmount || 0)),
+              totalDue: Math.max(0, (prev.totalDue || 0) - (sale.dueAmount || 0)),
+              totalDiscount: Math.max(0, (prev.totalDiscount || 0) - (sale.discountAmount || 0)),
+              totalPurchasesCount: Math.max(0, (prev.totalPurchasesCount || 1) - 1),
+              totalDueCount: (sale.dueAmount || 0) > 0 ? Math.max(0, (prev.totalDueCount || 1) - 1) : (prev.totalDueCount || 0)
+            };
+          });
         }
       }
 
@@ -1069,6 +1465,27 @@ export default function CounterSaleView({
       handleFirestoreError(err, OperationType.DELETE, `counterSales/${sale.id}`);
     } finally {
       setIsDeletingSale(false);
+    }
+  };
+
+  // Delete customer profile handler
+  const promptDeleteCustomer = (cust: CustomerProfile) => {
+    setCustomerToDelete(cust);
+  };
+
+  const executeDeleteCustomer = async (cust: CustomerProfile) => {
+    if (!cust || !cust.id) return;
+    setIsDeletingCustomer(true);
+    try {
+      await deleteDoc(doc(db, "customers", cust.id));
+      if (selectedCustomerForView?.id === cust.id) {
+        setSelectedCustomerForView(null);
+      }
+      setCustomerToDelete(null);
+    } catch (err) {
+      handleFirestoreError(err, OperationType.DELETE, `customers/${cust.id}`);
+    } finally {
+      setIsDeletingCustomer(false);
     }
   };
 
@@ -1173,6 +1590,17 @@ export default function CounterSaleView({
               <span>বাকি খাতা ও প্রোফাইল {customersWithDue.length > 0 ? `(${customersWithDue.length} বাকি)` : `(${customersList.length})`}</span>
             </button>
           </div>
+
+          {onNavigateToCustomerLedger && (
+            <button
+              onClick={onNavigateToCustomerLedger}
+              className="px-3.5 py-2 bg-amber-50 hover:bg-amber-100 text-amber-900 rounded-xl text-xs font-bold border border-amber-200 shadow-2xs transition-all flex items-center gap-1.5 cursor-pointer"
+              title="Open Full Customer Ledger Module"
+            >
+              <UserCheck className="w-3.5 h-3.5 text-amber-700" />
+              <span>কাস্টমার লেজার মডিউল</span>
+            </button>
+          )}
 
           {onNavigateToStaffSales && (
             <button
@@ -1332,14 +1760,32 @@ export default function CounterSaleView({
                   </p>
                 </div>
 
-                <button
-                  type="button"
-                  onClick={addSlipRow}
-                  className="px-3.5 py-1.5 bg-white hover:bg-gray-50 text-gray-900 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer border border-gray-300 shadow-2xs"
-                >
-                  <Plus className="w-3.5 h-3.5" />
-                  <span>+ আরও স্লিপ যোগ করুন</span>
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSlips([{ id: "1", amount: "", note: "" }]);
+                      setReceivedAmount("");
+                      setDiscountInput("");
+                      setSelectedCustomerId("");
+                      setCustomerSearchQueryInEntry("");
+                    }}
+                    className="px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer border border-rose-200"
+                    title="সকল স্লিপ ইনপুট পরিষ্কার করুন"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>সব মুছুন</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={addSlipRow}
+                    className="px-3.5 py-1.5 bg-white hover:bg-gray-50 text-gray-900 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer border border-gray-300 shadow-2xs"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>+ আরও স্লিপ যোগ করুন</span>
+                  </button>
+                </div>
               </div>
 
               {/* Slips List */}
@@ -1450,15 +1896,131 @@ export default function CounterSaleView({
 
             {/* Optional Customer Information & Payment Details (Non-mandatory as requested) */}
             <div className="pt-4 border-t border-gray-200 space-y-4">
-              <div className="flex items-center justify-between">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                 <span className="text-[11px] font-black uppercase text-gray-500 tracking-wider flex items-center gap-1.5">
                   <UserCircle className="w-4 h-4 text-gray-700" />
                   <span>কাস্টমার তথ্য ও পেমেন্ট (ঐচ্ছিক — কোনো তথ্যই বাধ্যতামূলক নয়)</span>
                 </span>
-                <span className="text-[10px] font-bold text-gray-500 bg-white border border-gray-200 px-2 py-0.5 rounded-md shadow-2xs">
-                  ঐচ্ছিক / Optional
-                </span>
+                
+                {/* Fast Customer Autocomplete / Picker Button */}
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowCustomerDropdownInEntry(!showCustomerDropdownInEntry)}
+                    className="text-xs font-bold text-gray-800 bg-white hover:bg-gray-100 border border-gray-300 px-3 py-1.5 rounded-xl shadow-2xs flex items-center gap-1.5 cursor-pointer transition-all"
+                  >
+                    <Users className="w-3.5 h-3.5 text-gray-700" />
+                    <span>বিদ্যমান কাস্টমার খুঁজুন ({customersList.length})</span>
+                  </button>
+                  <span className="text-[10px] font-bold text-gray-500 bg-white border border-gray-200 px-2 py-0.5 rounded-md shadow-2xs">
+                    ঐচ্ছিক / Optional
+                  </span>
+                </div>
               </div>
+
+              {/* Fast Customer Search & Selection Dropdown */}
+              {showCustomerDropdownInEntry && (
+                <div className="p-3 bg-white rounded-2xl border border-gray-300 shadow-md space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-black text-gray-900 flex items-center gap-1.5">
+                      <Search className="w-3.5 h-3.5 text-gray-700" />
+                      <span>কাস্টমার সিলেক্ট করুন:</span>
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setShowCustomerDropdownInEntry(false)}
+                      className="text-xs text-gray-400 hover:text-gray-700 font-bold p-1 cursor-pointer"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                  <input
+                    type="text"
+                    placeholder="নাম বা মোবাইল নম্বর দিয়ে খুঁজুন..."
+                    value={customerSearchQueryInEntry}
+                    onChange={e => setCustomerSearchQueryInEntry(e.target.value)}
+                    className="w-full px-3 py-2 bg-white rounded-xl border border-gray-300 text-xs font-medium text-gray-900 placeholder:text-gray-400 focus:outline-none focus:border-gray-900"
+                    autoFocus
+                  />
+                  <div className="max-h-48 overflow-y-auto divide-y divide-gray-100 border border-gray-200 rounded-xl bg-white">
+                    {customersList
+                      .filter(c => {
+                        if (!customerSearchQueryInEntry.trim()) return true;
+                        const q = customerSearchQueryInEntry.toLowerCase();
+                        return c.name.toLowerCase().includes(q) || (c.phone && c.phone.includes(q));
+                      })
+                      .slice(0, 10)
+                      .map(cust => (
+                        <button
+                          key={cust.id}
+                          type="button"
+                          onClick={() => {
+                            setCustomerName(cust.name);
+                            setCustomerPhone(cust.phone || "");
+                            setCustomerAddress(cust.address || "");
+                            setSelectedCustomerId(cust.id || "");
+                            setShowCustomerDropdownInEntry(false);
+                            setCustomerSearchQueryInEntry("");
+                          }}
+                          className="w-full p-2.5 text-left hover:bg-gray-50 flex items-center justify-between text-xs transition-colors cursor-pointer"
+                        >
+                          <div>
+                            <span className="font-extrabold text-gray-900 block">{cust.name}</span>
+                            <span className="text-[11px] text-gray-500 font-mono">{cust.phone || "ফোন নেই"}</span>
+                          </div>
+                          <div className="text-right">
+                            <span className={cn(
+                              "text-xs font-mono font-bold block",
+                              cust.totalDue > 0 ? "text-amber-800" : "text-emerald-700"
+                            )}>
+                              {cust.totalDue > 0 ? `বাকি: ৳${cust.totalDue.toLocaleString()}` : "পরিশোধিত ✓"}
+                            </span>
+                            <span className="text-[10px] text-gray-400 font-medium">
+                              {getCustomerPurchasesCount(cust)} বার কেনাকাটা
+                            </span>
+                          </div>
+                        </button>
+                      ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Linked Customer Profile Info Badge */}
+              {selectedCustomerId && (
+                <div className="p-3.5 bg-white border-2 border-gray-900 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-2xs">
+                  <div className="flex items-center gap-3">
+                    <div className="w-9 h-9 rounded-xl bg-gray-900 text-white flex items-center justify-center font-bold text-xs shrink-0 shadow-2xs">
+                      <UserCheck className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <div className="text-xs font-black text-gray-900 flex flex-wrap items-center gap-2">
+                        <span>{customerName}</span>
+                        <span className="text-[10px] bg-gray-100 text-gray-800 font-mono font-bold px-2 py-0.5 rounded-full border border-gray-200">
+                          {getCustomerPurchasesCount(customersList.find(c => c.id === selectedCustomerId)!)} বার কেনাকাটা
+                        </span>
+                        <span className="text-[10px] bg-amber-50 text-amber-900 font-mono font-bold px-2 py-0.5 rounded-full border border-amber-200">
+                          {getCustomerDueCount(customersList.find(c => c.id === selectedCustomerId)!)} বার বাকি
+                        </span>
+                      </div>
+                      <div className="text-[11px] text-gray-600 font-medium mt-0.5">
+                        পূর্বের মোট বকেয়া বাকি: <strong className="font-mono font-black text-amber-900 text-xs">৳{(customersList.find(c => c.id === selectedCustomerId)?.totalDue || 0).toLocaleString()}</strong>
+                      </div>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectedCustomerId("");
+                      setCustomerName("");
+                      setCustomerPhone("");
+                      setCustomerAddress("");
+                    }}
+                    className="text-xs text-rose-600 hover:text-rose-800 font-bold px-2.5 py-1 bg-white hover:bg-rose-50 rounded-xl border border-rose-200 cursor-pointer shadow-2xs transition-all self-end sm:self-auto"
+                  >
+                    লিঙ্ক বিচ্ছিন্ন করুন ✕
+                  </button>
+                </div>
+              )}
 
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 {/* Customer Name */}
@@ -2130,15 +2692,26 @@ export default function CounterSaleView({
               </div>
             </div>
 
-            <div className="relative w-full sm:w-72">
-              <Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
-              <input
-                type="text"
-                placeholder="কাস্টমারের নাম, ফোন বা ঠিকানা..."
-                value={customerSearchTerm}
-                onChange={e => setCustomerSearchTerm(e.target.value)}
-                className="w-full pl-9 pr-4 py-2 bg-white rounded-xl border border-gray-300 text-xs text-gray-900 placeholder:text-gray-400 focus:outline-none focus:border-gray-900"
-              />
+            <div className="flex flex-wrap items-center gap-2.5 w-full sm:w-auto">
+              <div className="relative flex-1 sm:w-64">
+                <Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  placeholder="কাস্টমারের নাম, ফোন বা ঠিকানা..."
+                  value={customerSearchTerm}
+                  onChange={e => setCustomerSearchTerm(e.target.value)}
+                  className="w-full pl-9 pr-4 py-2 bg-white rounded-xl border border-gray-300 text-xs text-gray-900 placeholder:text-gray-400 focus:outline-none focus:border-gray-900"
+                />
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setIsAddingCustomerModal(true)}
+                className="px-3.5 py-2 bg-gray-900 hover:bg-black text-white text-xs font-bold rounded-xl flex items-center gap-1.5 shadow-2xs transition-all cursor-pointer shrink-0"
+              >
+                <UserPlus className="w-3.5 h-3.5" />
+                <span>+ নতুন কাস্টমার প্রোফাইল</span>
+              </button>
             </div>
           </div>
 
@@ -2150,112 +2723,148 @@ export default function CounterSaleView({
                   <UserCheck className="w-6 h-6 text-gray-600" />
                 </div>
                 <p className="text-sm font-bold text-gray-600">কোন কাস্টমার প্রোফাইল পাওয়া যায়নি</p>
-                <p className="text-xs text-gray-400">স্লিপ এন্ট্রি করার সময় বাকি থাকলে স্বয়ংক্রিয়ভাবে কাস্টমার প্রোফাইল তৈরি হবে</p>
+                <p className="text-xs text-gray-400">স্লিপ এন্ট্রি করার সময় বাকি থাকলে স্বয়ংক্রিয়ভাবে কাস্টমার প্রোফাইল তৈরি হবে, অথবা উপরে '+ নতুন কাস্টমার প্রোফাইল' বাটনে ক্লিক করুন</p>
               </div>
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full text-left border-collapse">
                   <thead>
-                    <tr className="bg-white border-b border-gray-200 text-[11px] font-black uppercase text-gray-400 tracking-wider">
-                      <th className="px-5 py-4">কাস্টমার তথ্য</th>
-                      <th className="px-5 py-4 text-right">মোট কেনাকাটা</th>
+                    <tr className="bg-slate-50 border-b border-gray-200 text-[11px] font-black uppercase text-gray-500 tracking-wider">
+                      <th className="px-5 py-4">কাস্টমার প্রোফাইল</th>
+                      <th className="px-5 py-4 text-center">কেনাকাটা (Shopping)</th>
+                      <th className="px-5 py-4 text-center">বাকি নেওয়া (Credit/Due)</th>
+                      <th className="px-5 py-4 text-center">পরিশোধ (Payments)</th>
                       <th className="px-5 py-4 text-right">মোট ছাড়</th>
-                      <th className="px-5 py-4 text-right">মোট পরিশোধ</th>
-                      <th className="px-5 py-4 text-right">বর্তমান বাকি</th>
                       <th className="px-5 py-4 text-center">অ্যাকশন</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-100 text-xs font-medium">
-                    {filteredCustomers.map((cust) => (
-                      <tr key={cust.id} className="hover:bg-gray-50/70 transition-colors bg-white">
-                        <td className="px-5 py-4">
-                          <div className="space-y-0.5">
-                            <div className="font-extrabold text-sm text-gray-900">
-                              {cust.name}
+                    {filteredCustomers.map((cust) => {
+                      const purchasesCount = getCustomerPurchasesCount(cust);
+                      const dueCount = getCustomerDueCount(cust);
+                      const paymentsCount = getCustomerPaymentsCount(cust);
+
+                      return (
+                        <tr key={cust.id} className="hover:bg-gray-50/70 transition-colors bg-white">
+                          <td className="px-5 py-4">
+                            <div className="space-y-0.5">
+                              <div className="font-extrabold text-sm text-gray-900 flex items-center gap-1.5">
+                                <span>{cust.name}</span>
+                              </div>
+                              {cust.phone && (
+                                <div className="text-[11px] text-gray-600 font-mono">
+                                  📞 {cust.phone}
+                                </div>
+                              )}
+                              {cust.address && (
+                                <div className="text-[11px] text-gray-400">
+                                  📍 {cust.address}
+                                </div>
+                              )}
+                              {cust.lastTransactionDate && (
+                                <div className="text-[10px] text-gray-400 pt-0.5">
+                                  শেষ হিসাব: {cust.lastTransactionDate}
+                                </div>
+                              )}
                             </div>
-                            {cust.phone && (
-                              <div className="text-[11px] text-gray-600 font-mono">
-                                📞 {cust.phone}
-                              </div>
-                            )}
-                            {cust.address && (
-                              <div className="text-[11px] text-gray-400">
-                                📍 {cust.address}
-                              </div>
-                            )}
-                            {cust.lastTransactionDate && (
-                              <div className="text-[10px] text-gray-400 pt-0.5">
-                                শেষ লেনদেন: {cust.lastTransactionDate}
-                              </div>
-                            )}
-                          </div>
-                        </td>
+                          </td>
 
-                        <td className="px-5 py-4 text-right font-mono font-black text-gray-900 text-sm">
-                          ৳ {cust.totalPurchases.toLocaleString()}
-                        </td>
-
-                        <td className="px-5 py-4 text-right font-mono text-gray-600">
-                          ৳ {(cust.totalDiscount || 0).toLocaleString()}
-                        </td>
-
-                        <td className="px-5 py-4 text-right font-mono font-bold text-emerald-700">
-                          ৳ {cust.totalPaid.toLocaleString()}
-                        </td>
-
-                        <td className="px-5 py-4 text-right font-mono font-black text-sm">
-                          {cust.totalDue > 0 ? (
-                            <span className="inline-block px-2.5 py-1 rounded-xl bg-amber-50 text-amber-900 border border-amber-200">
-                              ৳ {cust.totalDue.toLocaleString()}
+                          {/* Shopping / Purchases */}
+                          <td className="px-5 py-4 text-center">
+                            <div className="font-mono font-black text-gray-900 text-sm">
+                              ৳ {cust.totalPurchases.toLocaleString()}
+                            </div>
+                            <span className="inline-block mt-1 px-2 py-0.5 rounded-full bg-slate-100 text-slate-700 text-[10px] font-bold font-mono border border-slate-200">
+                              {purchasesCount} বার কেনাকাটা
                             </span>
-                          ) : (
-                            <span className="inline-block px-2 py-0.5 rounded-lg bg-emerald-50 text-emerald-800 text-[11px] font-bold border border-emerald-200">
-                              পরিশোধিত ✓
+                          </td>
+
+                          {/* Credit / Due */}
+                          <td className="px-5 py-4 text-center">
+                            <div className="font-mono font-black text-sm">
+                              {cust.totalDue > 0 ? (
+                                <span className="text-amber-900 font-black">
+                                  ৳ {cust.totalDue.toLocaleString()}
+                                </span>
+                              ) : (
+                                <span className="text-emerald-700 font-bold">
+                                  পরিশোধিত ✓
+                                </span>
+                              )}
+                            </div>
+                            <span className={cn(
+                              "inline-block mt-1 px-2 py-0.5 rounded-full text-[10px] font-bold font-mono border",
+                              dueCount > 0 ? "bg-amber-50 text-amber-900 border-amber-200" : "bg-gray-50 text-gray-500 border-gray-200"
+                            )}>
+                              {dueCount} বার বাকি
                             </span>
-                          )}
-                        </td>
+                          </td>
 
-                        <td className="px-5 py-4 text-center">
-                          <div className="flex items-center justify-center gap-1.5">
-                            <button
-                              type="button"
-                              onClick={() => setSelectedCustomerForView(cust)}
-                              className="px-2.5 py-1.5 bg-white hover:bg-gray-100 text-gray-800 rounded-xl text-xs font-bold border border-gray-300 shadow-2xs transition-all flex items-center gap-1 cursor-pointer"
-                              title="হিসাব খাতা ও কেনাবেচার ইতিহাস দেখুন"
-                            >
-                              <FileText className="w-3.5 h-3.5" />
-                              <span>খাতা দেখুন</span>
-                            </button>
+                          {/* Payments Made */}
+                          <td className="px-5 py-4 text-center">
+                            <div className="font-mono font-bold text-emerald-700 text-sm">
+                              ৳ {cust.totalPaid.toLocaleString()}
+                            </div>
+                            <span className="inline-block mt-1 px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-900 text-[10px] font-bold font-mono border border-emerald-200">
+                              {paymentsCount} বার পরিশোধ
+                            </span>
+                          </td>
 
-                            {cust.totalDue > 0 && (
+                          <td className="px-5 py-4 text-right font-mono text-gray-600">
+                            ৳ {(cust.totalDiscount || 0).toLocaleString()}
+                          </td>
+
+                          <td className="px-5 py-4 text-center">
+                            <div className="flex items-center justify-center gap-1.5">
                               <button
                                 type="button"
-                                onClick={() => {
-                                  setPaymentCustomer(cust);
-                                  setCollectionAmount(cust.totalDue.toString());
-                                  setIsCollectingPayment(true);
-                                }}
-                                className="px-2.5 py-1.5 bg-gray-900 hover:bg-black text-white rounded-xl text-xs font-bold shadow-2xs transition-all flex items-center gap-1 cursor-pointer"
-                                title="বাকি আদায় করুন"
+                                onClick={() => setSelectedCustomerForView(cust)}
+                                className="px-2.5 py-1.5 bg-white hover:bg-gray-100 text-gray-800 rounded-xl text-xs font-bold border border-gray-300 shadow-2xs transition-all flex items-center gap-1 cursor-pointer"
+                                title="হিসাব খাতা ও কেনাবেচার ইতিহাস দেখুন"
                               >
-                                <DollarSign className="w-3.5 h-3.5" />
-                                <span>বাকি জমা</span>
+                                <FileText className="w-3.5 h-3.5" />
+                                <span>খাতা দেখুন</span>
                               </button>
-                            )}
 
-                            <button
-                              type="button"
-                              onClick={() => handleDownloadCustomerLedgerPdf(cust)}
-                              disabled={isExportingPdf}
-                              className="p-1.5 text-gray-500 hover:text-gray-900 hover:bg-gray-100 rounded-xl transition-colors cursor-pointer border border-transparent hover:border-gray-200"
-                              title="পূর্ণাঙ্গ লেজার পিডিএফ ডাউনলোড করুন"
-                            >
-                              <Download className="w-4 h-4" />
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
+                              {cust.totalDue > 0 && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setPaymentCustomer(cust);
+                                    setCollectionAmount(cust.totalDue.toString());
+                                    setIsCollectingPayment(true);
+                                  }}
+                                  className="px-2.5 py-1.5 bg-gray-900 hover:bg-black text-white rounded-xl text-xs font-bold shadow-2xs transition-all flex items-center gap-1 cursor-pointer"
+                                  title="বাকি আদায় / পেমেন্ট রিসিভ"
+                                >
+                                  <DollarSign className="w-3.5 h-3.5" />
+                                  <span>বাকি জমা</span>
+                                </button>
+                              )}
+
+                              <button
+                                type="button"
+                                onClick={() => handleDownloadCustomerLedgerPdf(cust)}
+                                disabled={isExportingPdf}
+                                className="p-1.5 text-gray-500 hover:text-gray-900 hover:bg-gray-100 rounded-xl transition-colors cursor-pointer border border-transparent hover:border-gray-200"
+                                title="পূর্ণাঙ্গ লেজার পিডিএফ ডাউনলোড করুন"
+                              >
+                                <Download className="w-4 h-4" />
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={() => promptDeleteCustomer(cust)}
+                                className="p-1.5 text-rose-500 hover:text-rose-700 hover:bg-rose-50 rounded-xl transition-colors cursor-pointer border border-transparent hover:border-rose-200"
+                                title="কাস্টমার প্রোফাইল মুছুন (Delete Customer Profile)"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -2319,6 +2928,15 @@ export default function CounterSaleView({
 
                 <button
                   type="button"
+                  onClick={() => promptDeleteCustomer(selectedCustomerForView)}
+                  className="p-2 text-rose-500 hover:text-rose-700 rounded-xl hover:bg-rose-50 cursor-pointer border border-transparent hover:border-rose-200 transition-colors"
+                  title="এই কাস্টমার প্রোফাইলটি মুছে ফেলুন (Delete Profile)"
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
+
+                <button
+                  type="button"
                   onClick={() => setSelectedCustomerForView(null)}
                   className="p-2 text-gray-400 hover:text-gray-700 rounded-xl hover:bg-gray-100 cursor-pointer"
                 >
@@ -2332,18 +2950,28 @@ export default function CounterSaleView({
               <div className="p-3.5 bg-gray-50 rounded-2xl border border-gray-200">
                 <span className="text-[10px] font-black uppercase text-gray-500">মোট কেনাকাটা</span>
                 <p className="text-lg font-black font-mono text-gray-900 mt-0.5">৳ {selectedCustomerForView.totalPurchases.toLocaleString()}</p>
-              </div>
-              <div className="p-3.5 bg-gray-50 rounded-2xl border border-gray-200">
-                <span className="text-[10px] font-black uppercase text-gray-500">মোট ডিসকাউন্ট</span>
-                <p className="text-lg font-black font-mono text-rose-600 mt-0.5">৳ {(selectedCustomerForView.totalDiscount || 0).toLocaleString()}</p>
-              </div>
-              <div className="p-3.5 bg-gray-50 rounded-2xl border border-gray-200">
-                <span className="text-[10px] font-black uppercase text-gray-500">মোট পরিশোধ</span>
-                <p className="text-lg font-black font-mono text-emerald-700 mt-0.5">৳ {selectedCustomerForView.totalPaid.toLocaleString()}</p>
+                <span className="text-[10px] text-gray-600 font-bold block mt-1">
+                  🛒 {getCustomerPurchasesCount(selectedCustomerForView)} বার কেনাকাটা
+                </span>
               </div>
               <div className="p-3.5 bg-amber-50 rounded-2xl border border-amber-200">
-                <span className="text-[10px] font-black uppercase text-amber-800">অবশিষ্ট বাকি</span>
+                <span className="text-[10px] font-black uppercase text-amber-800">অবশিষ্ট বকেয়া বাকি</span>
                 <p className="text-lg font-black font-mono text-amber-900 mt-0.5">৳ {selectedCustomerForView.totalDue.toLocaleString()}</p>
+                <span className="text-[10px] text-amber-900 font-bold block mt-1">
+                  ⚠️ {getCustomerDueCount(selectedCustomerForView)} বার বাকি
+                </span>
+              </div>
+              <div className="p-3.5 bg-emerald-50 rounded-2xl border border-emerald-200">
+                <span className="text-[10px] font-black uppercase text-emerald-800">মোট পরিশোধ</span>
+                <p className="text-lg font-black font-mono text-emerald-700 mt-0.5">৳ {selectedCustomerForView.totalPaid.toLocaleString()}</p>
+                <span className="text-[10px] text-emerald-900 font-bold block mt-1">
+                  ✅ {getCustomerPaymentsCount(selectedCustomerForView)} বার পরিশোধ
+                </span>
+              </div>
+              <div className="p-3.5 bg-gray-50 rounded-2xl border border-gray-200">
+                <span className="text-[10px] font-black uppercase text-gray-500">মোট ছাড় / ডিসকাউন্ট</span>
+                <p className="text-lg font-black font-mono text-rose-600 mt-0.5">৳ {(selectedCustomerForView.totalDiscount || 0).toLocaleString()}</p>
+                <span className="text-[10px] text-gray-400 font-bold block mt-1">বিশেষ ছাড়</span>
               </div>
             </div>
 
@@ -2378,7 +3006,7 @@ export default function CounterSaleView({
                           <th className="p-3 text-right">প্রদেয়</th>
                           <th className="p-3 text-right">পরিশোধ</th>
                           <th className="p-3 text-right">বাকি</th>
-                          <th className="p-3 text-center">স্লিপ প্রিন্ট</th>
+                          <th className="p-3 text-center">অ্যাকশন</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-gray-100">
@@ -2420,7 +3048,7 @@ export default function CounterSaleView({
                                 <button
                                   type="button"
                                   onClick={() => handlePrintSlip(sale)}
-                                  className="p-1 text-gray-500 hover:text-gray-900 rounded hover:bg-gray-100"
+                                  className="p-1 text-gray-500 hover:text-gray-900 rounded hover:bg-gray-100 cursor-pointer"
                                   title="স্লিপ প্রিন্ট করুন"
                                 >
                                   <Printer className="w-3.5 h-3.5" />
@@ -2428,10 +3056,18 @@ export default function CounterSaleView({
                                 <button
                                   type="button"
                                   onClick={() => handleDownloadSlipPdf(sale)}
-                                  className="p-1 text-gray-500 hover:text-gray-900 rounded hover:bg-gray-100"
+                                  className="p-1 text-gray-500 hover:text-gray-900 rounded hover:bg-gray-100 cursor-pointer"
                                   title="স্লিপ পিডিএফ ডাউনলোড"
                                 >
                                   <Download className="w-3.5 h-3.5" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => promptDeleteSale(sale)}
+                                  className="p-1 text-rose-500 hover:text-rose-700 rounded hover:bg-rose-50 cursor-pointer"
+                                  title="এই সেলটি ডিলিট করুন (Delete Sale)"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
                                 </button>
                               </div>
                             </td>
@@ -2466,19 +3102,65 @@ export default function CounterSaleView({
                     <table className="w-full text-left text-xs">
                       <thead>
                         <tr className="bg-gray-50 border-b border-gray-200 text-[10px] font-black uppercase text-gray-500">
-                          <th className="p-3">আদায়ের তারিখ</th>
+                          <th className="p-3">রশিদ নং ও তারিখ</th>
+                          <th className="p-3 text-right">পূর্বের বকেয়া</th>
                           <th className="p-3 text-right">আদায়কৃত টাকা</th>
-                          <th className="p-3">পেমেন্ট মাধ্যম</th>
+                          <th className="p-3 text-right">অবশিষ্ট বাকি</th>
+                          <th className="p-3">মাধ্যম</th>
                           <th className="p-3">মন্তব্য</th>
+                          <th className="p-3 text-center">মানি রিসিট ও অ্যাকশন</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-gray-100">
                         {custPayments.map((p) => (
                           <tr key={p.id} className="hover:bg-gray-50/70">
-                            <td className="p-3 font-bold text-gray-900">{p.date}</td>
-                            <td className="p-3 text-right font-mono font-black text-emerald-700">৳ {p.amount.toLocaleString()}</td>
-                            <td className="p-3 font-medium text-gray-700">{p.paymentMethod}</td>
-                            <td className="p-3 text-gray-500">{p.notes || '-'}</td>
+                            <td className="p-3">
+                              <span className="font-mono font-bold text-gray-900 block">{p.receiptNo || "CR-Manual"}</span>
+                              <span className="text-[10px] text-gray-500">{p.date} {p.time ? `• ${p.time}` : ""}</span>
+                            </td>
+                            <td className="p-3 text-right font-mono text-gray-500">
+                              {p.previousDue !== undefined ? `৳${p.previousDue.toLocaleString()}` : "-"}
+                            </td>
+                            <td className="p-3 text-right font-mono font-black text-emerald-700">
+                              ৳ {p.amount.toLocaleString()}
+                            </td>
+                            <td className="p-3 text-right font-mono font-bold text-amber-800">
+                              {p.remainingDue !== undefined ? `৳${p.remainingDue.toLocaleString()}` : "-"}
+                            </td>
+                            <td className="p-3 font-medium text-gray-700">
+                              <span className="px-2 py-0.5 rounded bg-gray-100 text-gray-800 font-mono text-[10px]">
+                                {p.paymentMethod}
+                              </span>
+                            </td>
+                            <td className="p-3 text-gray-500 max-w-xs truncate">{p.notes || '-'}</td>
+                            <td className="p-3 text-center">
+                              <div className="flex items-center justify-center gap-1">
+                                <button
+                                  type="button"
+                                  onClick={() => handlePrintCollectionReceipt(p)}
+                                  className="p-1 text-gray-600 hover:text-gray-900 rounded hover:bg-gray-100 cursor-pointer"
+                                  title="কালেকশন রিসিট প্রিন্ট করুন"
+                                >
+                                  <Printer className="w-3.5 h-3.5" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleDownloadCollectionReceiptPdf(p)}
+                                  className="p-1 text-gray-600 hover:text-gray-900 rounded hover:bg-gray-100 cursor-pointer"
+                                  title="রিসিট PDF ডাউনলোড"
+                                >
+                                  <Download className="w-3.5 h-3.5" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleDeleteCustomerPayment(p)}
+                                  className="p-1 text-rose-500 hover:text-rose-700 rounded hover:bg-rose-50 cursor-pointer"
+                                  title="পেমেন্ট এন্ট্রি বাতিল/মুছুন"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            </td>
                           </tr>
                         ))}
                       </tbody>
@@ -2592,6 +3274,235 @@ export default function CounterSaleView({
                 className="px-4 py-3 bg-white hover:bg-gray-50 border border-gray-200 text-gray-700 rounded-xl text-xs font-bold cursor-pointer"
               >
                 বাতিল
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ================= NEW CUSTOMER PROFILE CREATION MODAL ================= */}
+      {isAddingCustomerModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-2xs">
+          <div className="bg-white rounded-3xl max-w-md w-full p-6 border border-gray-200 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between border-b border-gray-200 pb-3">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-xl bg-gray-900 text-white flex items-center justify-center">
+                  <UserPlus className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="font-extrabold text-base text-gray-900">
+                    নতুন কাস্টমার প্রোফাইল তৈরি
+                  </h3>
+                  <p className="text-xs text-gray-500">বাকি ও নগদ কেনাবেচার সার্বিক হিসাব খাতা</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsAddingCustomerModal(false);
+                  setNewCustName("");
+                  setNewCustPhone("");
+                  setNewCustAddress("");
+                  setNewCustOpeningDue("");
+                }}
+                className="text-gray-400 hover:text-gray-600 text-sm font-bold p-1 cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="space-y-3 text-xs">
+              <div>
+                <label className="block font-bold text-gray-800 mb-1">
+                  কাস্টমারের নাম <span className="text-rose-500">*</span>:
+                </label>
+                <input
+                  type="text"
+                  placeholder="যেমন: হাজী আব্দুল করিম বা মেসার্স বাবলু ট্রেডার্স"
+                  value={newCustName}
+                  onChange={e => setNewCustName(e.target.value)}
+                  className="w-full px-3.5 py-2.5 bg-white rounded-xl border border-gray-300 text-xs font-medium text-gray-900 focus:outline-none focus:border-gray-900"
+                  autoFocus
+                />
+              </div>
+
+              <div>
+                <label className="block font-bold text-gray-700 mb-1">মোবাইল নম্বর (ঐচ্ছিক):</label>
+                <div className="relative">
+                  <Phone className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="text"
+                    placeholder="01XXXXXXXXX"
+                    value={newCustPhone}
+                    onChange={e => setNewCustPhone(e.target.value)}
+                    className="w-full pl-9 pr-3.5 py-2.5 bg-white rounded-xl border border-gray-300 text-xs font-mono text-gray-900 focus:outline-none focus:border-gray-900"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block font-bold text-gray-700 mb-1">ঠিকানা / এলাকা (ঐচ্ছিক):</label>
+                <div className="relative">
+                  <MapPin className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="text"
+                    placeholder="যেমন: চকবাজার, দোকান নং ৫"
+                    value={newCustAddress}
+                    onChange={e => setNewCustAddress(e.target.value)}
+                    className="w-full pl-9 pr-3.5 py-2.5 bg-white rounded-xl border border-gray-300 text-xs text-gray-900 focus:outline-none focus:border-gray-900"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block font-bold text-gray-700 mb-1">
+                  প্রারম্ভিক / পূর্বের বকেয়া বাকি (যদি থাকে):
+                </label>
+                <div className="relative">
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 font-bold text-xs">৳</span>
+                  <input
+                    type="number"
+                    step="any"
+                    placeholder="0.00"
+                    value={newCustOpeningDue}
+                    onChange={e => setNewCustOpeningDue(e.target.value)}
+                    className="w-full pl-8 pr-3.5 py-2.5 bg-white rounded-xl border border-gray-300 text-xs font-mono font-bold text-gray-900 focus:outline-none focus:border-gray-900"
+                  />
+                </div>
+                <p className="text-[10px] text-gray-400 mt-1">পূর্বে কোনো টাকা বাকি থাকলে তা লিখে রাখুন</p>
+              </div>
+            </div>
+
+            <div className="pt-2 flex gap-2">
+              <button
+                type="button"
+                onClick={(e) => handleCreateNewCustomer(e)}
+                disabled={isSubmitting || !newCustName.trim()}
+                className="flex-1 py-3 bg-gray-900 hover:bg-black text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer shadow-xs disabled:opacity-50"
+              >
+                {isSubmitting ? "সংরক্ষণ হচ্ছে..." : "কাস্টমার প্রোফাইল তৈরি করুন ✓"}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsAddingCustomerModal(false);
+                  setNewCustName("");
+                  setNewCustPhone("");
+                  setNewCustAddress("");
+                  setNewCustOpeningDue("");
+                }}
+                className="px-4 py-3 bg-white hover:bg-gray-50 border border-gray-200 text-gray-700 rounded-xl text-xs font-bold cursor-pointer"
+              >
+                বাতিল
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ================= MONEY RECEIPT / COLLECTION VOUCHER MODAL ================= */}
+      {showCollectionReceiptModal && lastCollectionPayment && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-2xs">
+          <div className="bg-white rounded-3xl max-w-md w-full p-6 border border-gray-200 shadow-2xl space-y-5 animate-in zoom-in-95 duration-200">
+            {/* Header */}
+            <div className="flex items-center justify-between border-b border-gray-100 pb-3">
+              <div className="flex items-center gap-2">
+                <div className="w-9 h-9 rounded-xl bg-emerald-600 text-white flex items-center justify-center shadow-xs">
+                  <CheckCircle2 className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-extrabold text-base text-gray-900">
+                    বাকি আদায় মানি রিসিট
+                  </h3>
+                  <p className="text-xs text-emerald-700 font-bold">পেমেন্ট সফলভাবে সংরক্ষিত হয়েছে</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowCollectionReceiptModal(false)}
+                className="text-gray-400 hover:text-gray-600 text-sm font-bold p-1 cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Receipt Body Card */}
+            <div className="p-4 bg-slate-50 rounded-2xl border border-gray-200 space-y-3 font-sans">
+              <div className="flex justify-between items-center border-b border-gray-200 pb-2">
+                <div>
+                  <span className="text-[10px] font-black uppercase text-gray-400 block">রশিদ নম্বর</span>
+                  <span className="font-mono font-bold text-gray-900 text-sm">{lastCollectionPayment.receiptNo}</span>
+                </div>
+                <div className="text-right">
+                  <span className="text-[10px] font-black uppercase text-gray-400 block">তারিখ ও সময়</span>
+                  <span className="text-xs font-bold text-gray-800">{lastCollectionPayment.date} {lastCollectionPayment.time ? `• ${lastCollectionPayment.time}` : ""}</span>
+                </div>
+              </div>
+
+              <div>
+                <span className="text-[10px] font-black uppercase text-gray-400 block">কাস্টমারের তথ্য</span>
+                <p className="font-bold text-sm text-gray-900">{lastCollectionPayment.customerName}</p>
+                {lastCollectionPayment.customerPhone && (
+                  <p className="text-xs text-gray-600 font-mono">মোবাইল: {lastCollectionPayment.customerPhone}</p>
+                )}
+                {lastCollectionPayment.customerAddress && (
+                  <p className="text-xs text-gray-500">ঠিকানা: {lastCollectionPayment.customerAddress}</p>
+                )}
+              </div>
+
+              {/* Amount Breakdown Table */}
+              <div className="bg-white rounded-xl p-3 border border-gray-200 space-y-1.5 text-xs">
+                {lastCollectionPayment.previousDue !== undefined && (
+                  <div className="flex justify-between text-gray-600">
+                    <span>পূর্বের মোট বকেয়া বাকি:</span>
+                    <span className="font-mono font-bold">৳ {lastCollectionPayment.previousDue.toLocaleString()}</span>
+                  </div>
+                )}
+                <div className="flex justify-between text-emerald-800 font-bold py-1 border-y border-dashed border-gray-200 text-sm">
+                  <span>আদায়কৃত টাকা (জমা):</span>
+                  <span className="font-mono font-black text-emerald-700">৳ {lastCollectionPayment.amount.toLocaleString()}</span>
+                </div>
+                {lastCollectionPayment.remainingDue !== undefined && (
+                  <div className="flex justify-between font-bold text-amber-900 pt-0.5">
+                    <span>বর্তমান অবশিষ্ট বকেয়া:</span>
+                    <span className="font-mono font-black">৳ {lastCollectionPayment.remainingDue.toLocaleString()}</span>
+                  </div>
+                )}
+              </div>
+
+              <div className="text-[11px] text-gray-600 flex justify-between">
+                <span>পেমেন্ট মাধ্যম: <strong className="text-gray-900">{lastCollectionPayment.paymentMethod}</strong></span>
+                {lastCollectionPayment.notes && (
+                  <span>নোট: <strong className="text-gray-900">{lastCollectionPayment.notes}</strong></span>
+                )}
+              </div>
+            </div>
+
+            {/* Actions */}
+            <div className="flex flex-wrap gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => handlePrintCollectionReceipt(lastCollectionPayment)}
+                className="flex-1 min-w-[120px] py-2.5 bg-gray-900 hover:bg-black text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer shadow-xs transition-all"
+              >
+                <Printer className="w-3.5 h-3.5" />
+                <span>রশিদ প্রিন্ট করুন</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => handleDownloadCollectionReceiptPdf(lastCollectionPayment)}
+                disabled={isExportingPdf}
+                className="flex-1 min-w-[120px] py-2.5 bg-white hover:bg-gray-100 border border-gray-300 text-gray-800 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer shadow-2xs transition-all"
+              >
+                <Download className="w-3.5 h-3.5" />
+                <span>{isExportingPdf ? "প্রস্তুত হচ্ছে..." : "PDF রিসিট"}</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowCollectionReceiptModal(false)}
+                className="w-full py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-xl text-xs font-bold cursor-pointer"
+              >
+                ঠিক আছে, বন্ধ করুন
               </button>
             </div>
           </div>
@@ -2785,6 +3696,61 @@ export default function CounterSaleView({
                 type="button"
                 disabled={isDeletingSale}
                 onClick={() => setSaleToDelete(null)}
+                className="px-5 py-3 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-xl text-xs font-bold transition-all cursor-pointer"
+              >
+                বাতিল
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ================= IN-APP CUSTOMER PROFILE DELETE CONFIRMATION MODAL ================= */}
+      {customerToDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-200">
+          <div className="bg-white rounded-3xl max-w-md w-full p-6 border border-gray-100 shadow-2xl space-y-4 animate-in zoom-in-95 duration-200">
+            <div className="w-12 h-12 rounded-2xl bg-rose-50 border border-rose-100 flex items-center justify-center text-rose-600">
+              <Trash2 className="w-6 h-6" />
+            </div>
+
+            <div className="space-y-1">
+              <h3 className="text-lg font-black text-gray-900">
+                কাস্টমার প্রোফাইল মুছে ফেলবেন?
+              </h3>
+              <p className="text-xs text-gray-500 leading-relaxed">
+                আপনি কি নিশ্চিত যে গ্রাহক <strong className="text-gray-900 font-bold">{customerToDelete.name}</strong> এর প্রোফাইল স্থায়ীভাবে মুছে ফেলতে চান?
+              </p>
+            </div>
+
+            {customerToDelete.totalDue > 0 && (
+              <div className="p-3 bg-amber-50 rounded-2xl border border-amber-200 text-[11px] text-amber-900 font-bold space-y-1">
+                ⚠️ সতর্কতা: এই কাস্টমারের নিকট এখনো ৳{customerToDelete.totalDue.toLocaleString()} বকেয়া বাকি রয়েছে!
+              </div>
+            )}
+
+            <div className="flex gap-2 pt-2">
+              <button
+                type="button"
+                disabled={isDeletingCustomer}
+                onClick={() => executeDeleteCustomer(customerToDelete)}
+                className="flex-1 py-3 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-black transition-all shadow-md active:scale-95 cursor-pointer flex items-center justify-center gap-2 disabled:opacity-50"
+              >
+                {isDeletingCustomer ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                    <span>মুছে ফেলা হচ্ছে...</span>
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="w-4 h-4" />
+                    <span>হ্যাঁ, প্রোফাইল মুছুন</span>
+                  </>
+                )}
+              </button>
+              <button
+                type="button"
+                disabled={isDeletingCustomer}
+                onClick={() => setCustomerToDelete(null)}
                 className="px-5 py-3 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-xl text-xs font-bold transition-all cursor-pointer"
               >
                 বাতিল

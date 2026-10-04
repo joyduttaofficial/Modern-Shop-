@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { User } from "firebase/auth";
-import { collection, addDoc, query, orderBy, onSnapshot, limit, deleteDoc, doc, increment, where, getDocs } from "firebase/firestore";
+import { collection, addDoc, query, orderBy, onSnapshot, limit, deleteDoc, doc, increment, where, getDocs, getDoc } from "firebase/firestore";
 import { db, OperationType, handleFirestoreError, updateDoc } from "@/src/lib/firebase";
 import { Transaction, TransactionType, Category, Bank, UserRole, Employee, Supplier } from "@/src/types";
 import { cn, formatCurrency, sortSuppliersByCode } from "@/src/lib/utils";
@@ -609,6 +609,118 @@ export default function Transactions({
     try {
       if (tx.id) {
         await deleteDoc(doc(db, "transactions", tx.id));
+
+        // If it was a Counter Sale transaction, cascade delete from counterSales collection and revert customer stats
+        const isCounterTx = tx.category === "Counter Sale" || 
+          tx.category === "Counter Cash" || 
+          tx.category?.toLowerCase().includes("counter") || 
+          (tx.notes && (tx.notes.includes("Counter Sale") || tx.notes.includes("[CS-") || tx.notes.includes("কাউন্টার সেল"))) ||
+          (tx.subCategory && tx.subCategory.startsWith("CS-"));
+
+        if (isCounterTx) {
+          try {
+            let csDocs: any[] = [];
+            let targetSaleId = tx.subCategory;
+            if (!targetSaleId && tx.notes) {
+              const m = tx.notes.match(/\[(CS-[^\]]+)\]/);
+              if (m) targetSaleId = m[1];
+            }
+
+            if (targetSaleId) {
+              const qCs = query(collection(db, "counterSales"), where("saleId", "==", targetSaleId));
+              const sCs = await getDocs(qCs);
+              csDocs = [...sCs.docs];
+            }
+            if (tx.id) {
+              const qCs2 = query(collection(db, "counterSales"), where("transactionId", "==", tx.id));
+              const sCs2 = await getDocs(qCs2);
+              for (const d of sCs2.docs) {
+                if (!csDocs.some(x => x.id === d.id)) csDocs.push(d);
+              }
+            }
+            // Fallback: search all counterSales if not yet found
+            if (csDocs.length === 0) {
+              const allCsSnap = await getDocs(collection(db, "counterSales"));
+              csDocs = allCsSnap.docs.filter(d => {
+                const data = d.data();
+                const amtMatch = data.receivedAmount === tx.amount;
+                const saleMatch = targetSaleId ? data.saleId === targetSaleId : false;
+                const dateMatch = tx.date && data.dateTime && (data.dateTime.startsWith(tx.date.substring(0, 10)) || data.date === tx.date.substring(0, 10));
+                return saleMatch || (amtMatch && dateMatch);
+              });
+            }
+
+            for (const cDoc of csDocs) {
+              const cData = cDoc.data();
+              if (cData.customerId) {
+                try {
+                  const custRef = doc(db, "customers", cData.customerId);
+                  const custSnap = await getDoc(custRef);
+                  if (custSnap.exists()) {
+                    const custData = custSnap.data();
+                    const payable = cData.netPayable ?? (cData.totalSlipsAmount - (cData.discountAmount || 0));
+                    const newPurchases = Math.max(0, (custData.totalPurchases || 0) - payable);
+                    const newPaid = Math.max(0, (custData.totalPaid || 0) - (cData.receivedAmount || 0));
+                    const newDue = Math.max(0, (custData.totalDue || 0) - (cData.dueAmount || 0));
+                    const newDiscount = Math.max(0, (custData.totalDiscount || 0) - (cData.discountAmount || 0));
+                    const newPurchasesCount = Math.max(0, (custData.totalPurchasesCount || 1) - 1);
+                    const newDueCount = (cData.dueAmount || 0) > 0 ? Math.max(0, (custData.totalDueCount || 1) - 1) : (custData.totalDueCount || 0);
+
+                    await updateDoc(custRef, {
+                      totalPurchases: newPurchases,
+                      totalPaid: newPaid,
+                      totalDue: newDue,
+                      totalDiscount: newDiscount,
+                      totalPurchasesCount: newPurchasesCount,
+                      totalDueCount: newDueCount,
+                      updatedAt: new Date().toISOString()
+                    });
+                  }
+                } catch (custErr) {
+                  console.warn("Could not revert customer stats upon counterSale tx delete:", custErr);
+                }
+              }
+              await deleteDoc(doc(db, "counterSales", cDoc.id));
+            }
+          } catch (csErr) {
+            console.warn("Could not cleanup matching counterSales:", csErr);
+          }
+        }
+
+        // If it was a Due Collection transaction, cascade delete from customerPayments and revert customer due
+        if (tx.category === "Due Collection") {
+          try {
+            const qCp = query(collection(db, "customerPayments"), where("transactionId", "==", tx.id));
+            const sCp = await getDocs(qCp);
+            for (const pDoc of sCp.docs) {
+              const pData = pDoc.data();
+              if (pData.customerId) {
+                try {
+                  const custRef = doc(db, "customers", pData.customerId);
+                  const custSnap = await getDoc(custRef);
+                  if (custSnap.exists()) {
+                    const custData = custSnap.data();
+                    const paymentAmt = pData.amount || tx.amount;
+                    const newTotalPaid = Math.max(0, (custData.totalPaid || 0) - paymentAmt);
+                    const newTotalDue = (custData.totalDue || 0) + paymentAmt;
+                    const newPaymentsCount = Math.max(0, (custData.totalPaymentsCount || 1) - 1);
+                    await updateDoc(custRef, {
+                      totalPaid: newTotalPaid,
+                      totalDue: newTotalDue,
+                      totalPaymentsCount: newPaymentsCount,
+                      updatedAt: new Date().toISOString()
+                    });
+                  }
+                } catch (cErr) {
+                  console.warn("Could not revert customer due upon payment tx delete:", cErr);
+                }
+              }
+              await deleteDoc(doc(db, "customerPayments", pDoc.id));
+            }
+          } catch (cpErr) {
+            console.warn("Could not cleanup matching customerPayments:", cpErr);
+          }
+        }
 
         // If it was a supplier payment, revert outstanding and clean up supplierTransactions
         if (tx.category === "Supplier Due Payment" && tx.supplierId) {

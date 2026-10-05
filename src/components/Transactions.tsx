@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import { motion } from "motion/react";
 import { format } from "date-fns";
+import { logUserActivity } from "@/src/lib/activityLogger";
 
 export default function Transactions({ 
   user, 
@@ -365,6 +366,19 @@ export default function Transactions({
       setEmployeeId("");
       setSupplierId("");
       showFeedback(`✓ ${computedType === "income" ? "Income" : "Expense"} entry of ৳${numAmount.toLocaleString()} successfully recorded.`);
+
+      // Log notification for Super Admin
+      logUserActivity({
+        userId: user.uid,
+        userName: user.displayName || user.email?.split("@")[0] || "User",
+        userEmail: user.email || "",
+        userRole: role,
+        menuId: "transactions",
+        menuLabel: "ট্রানজেকশন (ক্যাশ খাতা)",
+        action: "create",
+        title: `নতুন ${computedType === "income" ? "আয়" : "ব্যয়"} ট্রানজেকশন এন্ট্রি (৳${numAmount.toLocaleString()})`,
+        note: `ক্যাটাগরি: ${category}${subCategory.trim() ? ` (${subCategory.trim()})` : ""} | পরিমাণ: ৳${numAmount.toLocaleString()} | মাধ্যম: ${paymentMethod}${notes.trim() ? ` | নোট: ${notes.trim()}` : ""}`
+      });
     } catch (error) {
       const errStr = error instanceof Error ? error.message : String(error);
       const isOfflineErr = !navigator.onLine || 
@@ -748,6 +762,19 @@ export default function Transactions({
             });
           }
         }
+
+        // Log delete activity for Super Admin
+        logUserActivity({
+          userId: user.uid,
+          userName: user.displayName || user.email?.split("@")[0] || "User",
+          userEmail: user.email || "",
+          userRole: role,
+          menuId: "transactions",
+          menuLabel: "ট্রানজেকশন (ক্যাশ খাতা)",
+          action: "delete",
+          title: `ট্রানজেকশন ডিলিট করা হয়েছে (${tx.category} - ৳${tx.amount.toLocaleString()})`,
+          note: `ক্যাটাগরি: ${tx.category} | পরিমাণ: ৳${tx.amount.toLocaleString()} | মাধ্যম: ${tx.paymentMethod}${tx.notes ? ` | পূর্বের নোট: ${tx.notes}` : ""}`
+        });
       }
       alert("Ledger transaction deleted successfully.");
     } catch (error) {

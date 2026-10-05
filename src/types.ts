@@ -18,12 +18,26 @@ export interface UserProfile {
   password?: string;
 }
 
+export type PermissionAction = "view" | "create" | "edit" | "delete" | "export" | "financials";
+
+export interface RoleActions {
+  view?: boolean;
+  create?: boolean;
+  edit?: boolean;
+  delete?: boolean;
+  export?: boolean;
+  financials?: boolean;
+}
+
 export interface RolePermission {
   id?: string;
   name: string;
   allowedMenus: string[];
+  actions?: Record<string, RoleActions>;
+  colorBadge?: string; // "indigo" | "emerald" | "amber" | "rose" | "purple" | "blue" | "slate"
   description?: string;
   createdAt: string;
+  isDefault?: boolean;
 }
 
 export interface Employee {
@@ -265,6 +279,26 @@ export interface CustomerPayment {
   notes?: string;
   receivedBy: string;
   transactionId?: string;
+  createdAt: string;
+}
+
+export type ActivityAction = "create" | "edit" | "delete" | "view";
+
+export interface ActivityNotification {
+  id?: string;
+  userId: string;
+  userName: string;
+  userEmail: string;
+  userRole: string;
+  userPhoto?: string;
+  menuId: string;       // e.g. "counterSale", "transactions", "employees"
+  menuLabel: string;    // e.g. "কাউন্টার সেল", "ট্রানজেকশন", "কর্মচারী"
+  action: ActivityAction;
+  title: string;        // Short headline
+  note: string;         // Detailed explanation of the action performed
+  metadata?: Record<string, any>;
+  timestamp: string;    // ISO timestamp
+  readBy: string[];     // Array of admin user IDs who have viewed/dismissed it
   createdAt: string;
 }
 

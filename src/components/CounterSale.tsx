@@ -57,6 +57,7 @@ import {
 } from "lucide-react";
 import { format } from "date-fns";
 import { motion, AnimatePresence } from "motion/react";
+import { logUserActivity } from "@/src/lib/activityLogger";
 
 interface CounterSaleProps {
   user: User;
@@ -596,6 +597,19 @@ export default function CounterSaleView({
       setSaveSuccess(true);
       resetForm();
 
+      // Log notification for Super Admin
+      logUserActivity({
+        userId: user.uid,
+        userName: user.displayName || user.email?.split("@")[0] || "User",
+        userEmail: user.email || "",
+        userRole: role,
+        menuId: "counterSale",
+        menuLabel: "কাউন্টার সেল (স্লিপ বিক্রয়)",
+        action: "create",
+        title: `নতুন কাউন্টার সেল স্লিপ বিক্রয় সম্পন্ন (${newCounterSale.saleId})`,
+        note: `রসিদ #${newCounterSale.saleId} | মোট স্লিপ: ${validSlips.length}টি (৳${totalSlipsAmount}) | নেট প্রদেয়: ৳${netPayable} | ক্যাশ গ্রহণ: ৳${finalReceived} | বকেয়া: ৳${dueAmount} | ক্রেতা: ${effectiveCustomerName || "সাধারণ ক্রেতা"}`
+      });
+
       setTimeout(() => {
         setSaveSuccess(false);
       }, 3500);
@@ -834,6 +848,19 @@ export default function CounterSaleView({
       setPaymentCustomer(null);
       setCollectionAmount("");
       setCollectionNotes("");
+
+      // Log notification for Super Admin
+      logUserActivity({
+        userId: user.uid,
+        userName: user.displayName || user.email?.split("@")[0] || "User",
+        userEmail: user.email || "",
+        userRole: role,
+        menuId: "customerLedger",
+        menuLabel: "কাস্টমার লেজার (বকেয়া আদায়)",
+        action: "create",
+        title: `কাস্টমার বকেয়া টাকা আদায় (${paymentCustomer.name} - ৳${amountNum})`,
+        note: `রসিদ #${receiptNo} | ক্রেতা: ${paymentCustomer.name} | আদায়কৃত টাকা: ৳${amountNum} | মাধ্যম: ${collectionMethod} | পূর্বের বাকি: ৳${previousDue} | অবশিষ্ট বাকি: ৳${newTotalDue}`
+      });
 
       // Open the Collection Receipt Voucher Modal immediately
       setLastCollectionPayment(fullPayment);
@@ -1461,6 +1488,19 @@ export default function CounterSaleView({
       if (selectedSaleForView?.id === sale.id) {
         setSelectedSaleForView(null);
       }
+
+      // Log notification for Super Admin
+      logUserActivity({
+        userId: user.uid,
+        userName: user.displayName || user.email?.split("@")[0] || "User",
+        userEmail: user.email || "",
+        userRole: role,
+        menuId: "counterSale",
+        menuLabel: "কাউন্টার সেল (স্লিপ বিক্রয়)",
+        action: "delete",
+        title: `কাউন্টার সেল রেকর্ড ডিলিট করা হয়েছে (${sale.saleId})`,
+        note: `রসিদ #${sale.saleId} | মোট স্লিপ: ৳${sale.totalSlipsAmount} | নগদ গ্রহণ ছিল: ৳${sale.receivedAmount} | ক্রেতা: ${sale.customerName || "সাধারণ ক্রেতা"}`
+      });
     } catch (err) {
       handleFirestoreError(err, OperationType.DELETE, `counterSales/${sale.id}`);
     } finally {

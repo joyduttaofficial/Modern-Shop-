@@ -250,9 +250,33 @@
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["customerId", "customerName", "date", "amount", "paymentMethod", "receivedBy", "createdAt"]
+    },
+    "ActivityNotification": {
+      "title": "Activity Notification",
+      "description": "Real-time user action logs (create, edit, delete, view) notifying Super Admin",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "userName": { "type": "string" },
+        "userEmail": { "type": "string" },
+        "userRole": { "type": "string" },
+        "userPhoto": { "type": "string" },
+        "menuId": { "type": "string" },
+        "menuLabel": { "type": "string" },
+        "action": { "type": "string", "enum": ["create", "edit", "delete", "view"] },
+        "title": { "type": "string" },
+        "note": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "menuId", "menuLabel", "action", "title", "note", "timestamp", "createdAt"]
     }
   },
   "firestore": {
+    "/activityNotifications/{notificationId}": {
+      "schema": "ActivityNotification",
+      "description": "System activity log notifications for Super Admin"
+    },
     "/customers/{customerId}": {
       "schema": "CustomerProfile",
       "description": "Counter customer profiles and due balances"

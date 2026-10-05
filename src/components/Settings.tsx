@@ -9,6 +9,7 @@ import { format } from "date-fns";
 import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
 import { clearAllOfflineData } from "@/src/lib/indexedDbFallback";
+import SupabaseSqlHub from "./SupabaseSqlHub";
 
 export default function Settings({ user, role }: { user: User; role: UserRole }) {
   const [categories, setCategories] = useState<Category[]>([]);
@@ -1793,6 +1794,9 @@ export default function Settings({ user, role }: { user: User; role: UserRole })
           </div>
         </div>
       </section>
+
+      {/* Supabase PostgreSQL Schema & Migration Hub */}
+      <SupabaseSqlHub />
 
       {role === "admin" && (
         <div className="space-y-6">

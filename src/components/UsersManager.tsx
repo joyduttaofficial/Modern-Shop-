@@ -13,6 +13,7 @@ import {
   FileText, ArrowLeft, Camera, LayoutGrid, Award, CheckSquare, Square
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
+import { logUserActivity } from "@/src/lib/activityLogger";
 
 const SYSTEM_MENUS = [
   {
@@ -295,6 +296,19 @@ export default function UsersManager({
       await setDoc(doc(db, "users", docId), profilePayload);
       setSuccessMsg(`User profile for "${userDisplayName}" ${editingUser ? "updated" : "created"} successfully!`);
       
+      // Log activity for Super Admin
+      logUserActivity({
+        userId: user.uid,
+        userName: user.displayName || user.email?.split("@")[0] || "User",
+        userEmail: user.email || "",
+        userRole: role,
+        menuId: "usersList",
+        menuLabel: "ইউজার ব্যবস্থাপনা (Users Manager)",
+        action: editingUser ? "edit" : "create",
+        title: `ইউজার অ্যাকাউন্ট ${editingUser ? "আপডেট" : "তৈরি"} করা হয়েছে (${userDisplayName.trim()})`,
+        note: `নাম: ${userDisplayName.trim()} | ইমেইল: ${finalEmail} | রোল: ${userRole} | পদবি: ${userDesignation.trim() || "নেই"} | স্ট্যাটাস: ${userStatus}`
+      });
+
       if (onProfileUpdated && editingUser?.uid === user.uid) {
         onProfileUpdated();
       }
@@ -334,6 +348,19 @@ export default function UsersManager({
       await setDoc(doc(db, "roles", cleanRoleId), rolePayload);
       setSuccessMsg(`Role configuration for "${roleName}" saved successfully!`);
       
+      // Log activity for Super Admin
+      logUserActivity({
+        userId: user.uid,
+        userName: user.displayName || user.email?.split("@")[0] || "User",
+        userEmail: user.email || "",
+        userRole: role,
+        menuId: "rolesList",
+        menuLabel: "রোল পারমিশন (Custom Roles)",
+        action: editingRole ? "edit" : "create",
+        title: `কাস্টম রোল পারমিশন ${editingRole ? "আপডেট" : "তৈরি"} করা হয়েছে (${roleName.trim()})`,
+        note: `রোল নাম: ${roleName.trim()} | অনুমোদিত মেনু: ${roleAllowedMenus.length}টি | বিবরণ: ${roleDescription.trim() || "নেই"}`
+      });
+
       setTimeout(() => {
         setSuccessMsg("");
         setRoleFormOpen(false);
@@ -358,6 +385,20 @@ export default function UsersManager({
     try {
       await deleteDoc(doc(db, "users", profileId));
       setSuccessMsg("User profile deleted successfully.");
+      
+      // Log activity for Super Admin
+      logUserActivity({
+        userId: user.uid,
+        userName: user.displayName || user.email?.split("@")[0] || "User",
+        userEmail: user.email || "",
+        userRole: role,
+        menuId: "usersList",
+        menuLabel: "ইউজার ব্যবস্থাপনা (Users Manager)",
+        action: "delete",
+        title: `ইউজার অ্যাকাউন্ট ডিলিট করা হয়েছে (${targetUser?.displayName || "ইউজার"})`,
+        note: `ইউজার নাম: ${targetUser?.displayName || "ইউজার"} | ইমেইল: ${targetUser?.email || "নেই"} | রোল ছিল: ${targetUser?.role || "নেই"}`
+      });
+
       setDeleteConfirmUserId(null);
       if (selectedProfile?.id === profileId) {
         setSelectedProfile(null);
@@ -374,9 +415,24 @@ export default function UsersManager({
       setTimeout(() => setErrorMsg(""), 4000);
       return;
     }
+    const targetRole = roles.find(r => r.id === roleId);
     try {
       await deleteDoc(doc(db, "roles", roleId));
       setSuccessMsg("Role configuration deleted.");
+      
+      // Log activity for Super Admin
+      logUserActivity({
+        userId: user.uid,
+        userName: user.displayName || user.email?.split("@")[0] || "User",
+        userEmail: user.email || "",
+        userRole: role,
+        menuId: "rolesList",
+        menuLabel: "রোল পারমিশন (Custom Roles)",
+        action: "delete",
+        title: `কাস্টম রোল পারমিশন ডিলিট করা হয়েছে (${targetRole?.name || roleId})`,
+        note: `রোল নাম: ${targetRole?.name || roleId} | পূর্বের অনুমতি ছিল: ${targetRole?.allowedMenus?.length || 0}টি মেনু`
+      });
+
       setDeleteConfirmRoleId(null);
       setTimeout(() => setSuccessMsg(""), 2000);
     } catch (err) {

@@ -1,0 +1,191 @@
+import { collection, addDoc, updateDoc, doc, deleteDoc, getDocs, writeBatch } from "firebase/firestore";
+import { db } from "./firebase";
+import { ActivityAction, ActivityNotification } from "../types";
+
+// In-memory debounce cache to prevent duplicate view logging within a short window
+const recentViewLogs: Record<string, number> = {};
+
+export interface LogActivityParams {
+  userId?: string;
+  userName?: string;
+  userEmail?: string;
+  userRole?: string;
+  userPhoto?: string;
+  menuId: string;
+  menuLabel: string;
+  action: ActivityAction;
+  title: string;
+  note: string;
+  metadata?: Record<string, any>;
+}
+
+/**
+ * Logs user activity (create, edit, delete, view) directly to Firestore `activityNotifications`
+ * so Super Admins receive real-time alerts.
+ */
+export async function logUserActivity(params: LogActivityParams): Promise<string | null> {
+  try {
+    const {
+      userId = "system",
+      userName = "User",
+      userEmail = "anonymous@system.local",
+      userRole = "user",
+      userPhoto,
+      menuId,
+      menuLabel,
+      action,
+      title,
+      note,
+      metadata = {}
+    } = params;
+
+    // Prevent spamming view logs for the same menu within 30 seconds by the same user
+    if (action === "view") {
+      const viewKey = `${userId}_${menuId}`;
+      const now = Date.now();
+      const lastLogged = recentViewLogs[viewKey] || 0;
+      if (now - lastLogged < 30000) {
+        return null;
+      }
+      recentViewLogs[viewKey] = now;
+    }
+
+    const newNotification: Omit<ActivityNotification, "id"> = {
+      userId,
+      userName: userName || userEmail.split("@")[0] || "User",
+      userEmail,
+      userRole,
+      userPhoto: userPhoto || undefined,
+      menuId,
+      menuLabel,
+      action,
+      title,
+      note,
+      metadata,
+      timestamp: new Date().toISOString(),
+      readBy: [],
+      createdAt: new Date().toISOString()
+    };
+
+    // Clean any undefined fields before sending to Firestore
+    const cleanedData: Record<string, any> = {};
+    for (const [key, value] of Object.entries(newNotification)) {
+      if (value !== undefined) {
+        cleanedData[key] = value;
+      }
+    }
+
+    const docRef = await addDoc(collection(db, "activityNotifications"), cleanedData);
+
+    // Dispatch custom browser event for instant local reactive updates
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(
+        new CustomEvent("activity-notification-created", {
+          detail: { id: docRef.id, ...cleanedData }
+        })
+      );
+    }
+
+    return docRef.id;
+  } catch (error) {
+    console.warn("Could not record activity notification:", error);
+    return null;
+  }
+}
+
+/**
+ * Web Audio API gentle chime sound for real-time notifications
+ */
+export function playNotificationChime() {
+  if (typeof window === "undefined") return;
+  try {
+    const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+    if (!AudioContextClass) return;
+    const ctx = new AudioContextClass();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+
+    osc.type = "sine";
+    // Pleasant dual-tone chime
+    osc.frequency.setValueAtTime(587.33, ctx.currentTime); // D5
+    osc.frequency.exponentialRampToValueAtTime(880, ctx.currentTime + 0.08); // A5
+
+    gain.gain.setValueAtTime(0.001, ctx.currentTime);
+    gain.gain.linearRampToValueAtTime(0.15, ctx.currentTime + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.28);
+
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+
+    osc.start(ctx.currentTime);
+    osc.stop(ctx.currentTime + 0.3);
+  } catch (e) {
+    // Audio autoplay might be restricted by browser policy before first interaction
+  }
+}
+
+/**
+ * Mark a single notification as read by the admin user
+ */
+export async function markNotificationAsRead(notificationId: string, adminUserId: string) {
+  try {
+    const notifRef = doc(db, "activityNotifications", notificationId);
+    await updateDoc(notifRef, {
+      readBy: [adminUserId]
+    });
+  } catch (e) {
+    console.warn("Error marking notification as read:", e);
+  }
+}
+
+/**
+ * Mark all visible unread notifications as read by admin
+ */
+export async function markAllNotificationsAsRead(notifications: ActivityNotification[], adminUserId: string) {
+  try {
+    const unreadList = notifications.filter(n => !n.readBy || !n.readBy.includes(adminUserId));
+    if (unreadList.length === 0) return;
+
+    const batch = writeBatch(db);
+    unreadList.forEach(n => {
+      if (n.id) {
+        const notifRef = doc(db, "activityNotifications", n.id);
+        const currentRead = Array.isArray(n.readBy) ? n.readBy : [];
+        batch.update(notifRef, {
+          readBy: [...new Set([...currentRead, adminUserId])]
+        });
+      }
+    });
+    await batch.commit();
+  } catch (e) {
+    console.warn("Error marking all notifications as read:", e);
+  }
+}
+
+/**
+ * Clear/delete a specific activity notification
+ */
+export async function deleteActivityNotification(notificationId: string) {
+  try {
+    await deleteDoc(doc(db, "activityNotifications", notificationId));
+  } catch (e) {
+    console.warn("Error deleting notification:", e);
+  }
+}
+
+/**
+ * Clear/delete all notifications (Admin only)
+ */
+export async function clearAllActivityNotifications(notifications: ActivityNotification[]) {
+  try {
+    const batch = writeBatch(db);
+    notifications.forEach(n => {
+      if (n.id) {
+        batch.delete(doc(db, "activityNotifications", n.id));
+      }
+    });
+    await batch.commit();
+  } catch (e) {
+    console.warn("Error clearing notifications:", e);
+  }
+}

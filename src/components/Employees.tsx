@@ -8,6 +8,7 @@ import { Users, Plus, Trash2, UserPlus, CreditCard, History, Wallet, UserCircle,
 import { format, startOfYear, endOfYear } from "date-fns";
 import { increment, setDoc } from "firebase/firestore";
 import { motion, AnimatePresence } from "motion/react";
+import { logUserActivity } from "@/src/lib/activityLogger";
 
 export default function Employees({ 
   user, 
@@ -376,8 +377,30 @@ export default function Employees({
 
       if (editingEmployee?.id) {
         await updateDoc(doc(db, "employees", editingEmployee.id), employeeData);
+        logUserActivity({
+          userId: user.uid,
+          userName: user.displayName || user.email?.split("@")[0] || "User",
+          userEmail: user.email || "",
+          userRole: role,
+          menuId: "employees",
+          menuLabel: "কর্মচারী ব্যবস্থাপনা",
+          action: "edit",
+          title: `কর্মচারী প্রোফাইল সম্পাদনা করা হয়েছে (${name.trim()})`,
+          note: `নাম: ${name.trim()} | পদবি: ${empRole || "স্টাফ"} | বিভাগ: ${department} | স্ট্যাটাস: ${status} | আইডি: ${employeeIdCode.trim() || "নেই"}`
+        });
       } else {
         await addDoc(collection(db, "employees"), employeeData);
+        logUserActivity({
+          userId: user.uid,
+          userName: user.displayName || user.email?.split("@")[0] || "User",
+          userEmail: user.email || "",
+          userRole: role,
+          menuId: "employees",
+          menuLabel: "কর্মচারী ব্যবস্থাপনা",
+          action: "create",
+          title: `নতুন কর্মচারী যুক্ত করা হয়েছে (${name.trim()})`,
+          note: `নাম: ${name.trim()} | পদবি: ${empRole || "স্টাফ"} | বিভাগ: ${department} | স্ট্যাটাস: ${status} | আইডি: ${employeeIdCode.trim() || "নেই"}`
+        });
       }
       
       resetForm();
@@ -440,9 +463,21 @@ export default function Employees({
   const confirmDeleteEmployee = async () => {
     if (!employeeToDelete) return;
     const id = employeeToDelete;
+    const targetEmp = employees.find(e => e.id === id);
     setEmployeeToDelete(null);
     try {
       await deleteDoc(doc(db, "employees", id));
+      logUserActivity({
+        userId: user.uid,
+        userName: user.displayName || user.email?.split("@")[0] || "User",
+        userEmail: user.email || "",
+        userRole: role,
+        menuId: "employees",
+        menuLabel: "কর্মচারী ব্যবস্থাপনা",
+        action: "delete",
+        title: `কর্মচারী প্রোফাইল ডিলিট করা হয়েছে (${targetEmp?.name || "কর্মচারী"})`,
+        note: `নাম: ${targetEmp?.name || "কর্মচারী"} | পদবি: ${targetEmp?.role || "নেই"} | আইডি: ${targetEmp?.employeeIdCode || "নেই"}`
+      });
     } catch (e) {
       handleFirestoreError(e, OperationType.DELETE, "employees");
     }

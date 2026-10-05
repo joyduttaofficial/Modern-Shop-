@@ -74,6 +74,9 @@ import UsersManager from "./components/UsersManager";
 import Login from "./components/Login";
 import Inventory from "./components/Inventory";
 import CustomerLedger from "./components/CustomerLedger";
+import AdminNotificationCenter from "./components/AdminNotificationCenter";
+import AuditTrail from "./components/AuditTrail";
+import { logUserActivity } from "@/src/lib/activityLogger";
 
 function QuotaExceededOverlay({ onDismiss, databaseId, projectId }: { onDismiss: () => void; databaseId: string; projectId: string }) {
   const upgradeUrl = `https://console.firebase.google.com/project/${projectId}/firestore/databases/${databaseId}/data?openUpgradeDialog=true`;
@@ -153,7 +156,7 @@ function QuotaExceededOverlay({ onDismiss, databaseId, projectId }: { onDismiss:
   );
 }
 
-type View = "dashboard" | "transactions" | "customerLedger" | "counterSale" | "counterSalesLedger" | "newSale" | "salesList" | "newEmployee" | "employeesList" | "employees" | "salaryEntry" | "salarySheet" | "addAttendance" | "breakfastBoard" | "attendanceList" | "attendance" | "reports" | "settings" | "newSupplier" | "suppliersList" | "suppliers" | "newPurchase" | "purchaseList" | "paySupplierDue" | "newUser" | "usersList" | "rolesList" | "profileView" | "inventory";
+type View = "dashboard" | "transactions" | "customerLedger" | "counterSale" | "counterSalesLedger" | "newSale" | "salesList" | "newEmployee" | "employeesList" | "employees" | "salaryEntry" | "salarySheet" | "addAttendance" | "breakfastBoard" | "attendanceList" | "attendance" | "reports" | "settings" | "newSupplier" | "suppliersList" | "suppliers" | "newPurchase" | "purchaseList" | "paySupplierDue" | "newUser" | "usersList" | "rolesList" | "profileView" | "inventory" | "auditTrail";
 
 const VALID_VIEWS: View[] = [
   "dashboard",
@@ -184,7 +187,8 @@ const VALID_VIEWS: View[] = [
   "usersList",
   "rolesList",
   "profileView",
-  "inventory"
+  "inventory",
+  "auditTrail"
 ];
 
 export default function App() {
@@ -661,6 +665,59 @@ export default function App() {
     };
   }, []);
 
+  // Real-time automatic activity log for menu viewing
+  useEffect(() => {
+    if (!profile || !user) return;
+    
+    const viewLabels: Record<string, string> = {
+      dashboard: "ড্যাশবোর্ড (Dashboard)",
+      counterSale: "কাউন্টার সেল (Counter Sale)",
+      counterSalesLedger: "কাউন্টার সেল লেজার",
+      customerLedger: "কাস্টমার লেজার (Customer Ledger)",
+      transactions: "ট্রানজেকশন (Transactions)",
+      newSale: "কর্মী বিক্রয় (Staff Daily Sales)",
+      salesList: "কর্মী বিক্রয় লেজার (Sales Ledger)",
+      inventory: "ইনভেন্টরি হাব (Inventory)",
+      newSupplier: "নতুন সরবরাহকারী",
+      suppliersList: "সরবরাহকারী লেজার",
+      suppliers: "সরবরাহকারী লেজার",
+      newPurchase: "নতুন ক্রয় (New Purchase)",
+      purchaseList: "ক্রয় তালিকা (Purchase List)",
+      paySupplierDue: "সরবরাহকারী বকেয়া পরিশোধ",
+      newEmployee: "নতুন কর্মচারী যুক্ত",
+      employeesList: "কর্মচারী তালিকা",
+      employees: "কর্মচারী ব্যবস্থাপনা",
+      salaryEntry: "বেতন প্রদান (Salary Entry)",
+      salarySheet: "বেতন শিট (Salary Sheet)",
+      addAttendance: "দৈনিক উপস্থিতি (Attendance)",
+      breakfastBoard: "নাস্তা ও লেট চার্ট বোর্ড",
+      attendanceList: "উপস্থিতি খাতা",
+      attendance: "উপস্থিতি ব্যবস্থাপনা",
+      reports: "রিপোর্ট ও পিডিএফ (Reports)",
+      settings: "সেটিংস (Settings)",
+      newUser: "নতুন ইউজার রেজিস্ট্রেশন",
+      usersList: "ইউজার তালিকা (Users List)",
+      rolesList: "রোল পারমিশন তালিকা",
+      profileView: "প্রোফাইল ভিউ",
+      auditTrail: "সুপার এডমিন অডিট ট্রেইল"
+    };
+
+    const label = viewLabels[activeView] || activeView;
+
+    logUserActivity({
+      userId: user.uid,
+      userName: profile.displayName || user.displayName || user.email?.split("@")[0] || "User",
+      userEmail: user.email || "",
+      userRole: profile.role,
+      userPhoto: profile.photoURL || user.photoURL || undefined,
+      menuId: activeView,
+      menuLabel: label,
+      action: "view",
+      title: `${label} মেনু পরিদর্শন করেছেন`,
+      note: `ইউজার ${profile.displayName || user.email} সফলভাবে ${label} পেজ ওপেন ও ভিউ করেছেন।`
+    });
+  }, [activeView, profile, user]);
+
   const navItems = [
     { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
     { id: "customerLedger", label: "Customer Ledger", icon: UserCheck },
@@ -726,7 +783,8 @@ export default function App() {
       children: [
         { id: "newUser", label: "New User" },
         { id: "usersList", label: "Users List" },
-        { id: "rolesList", label: "Roles List" }
+        { id: "rolesList", label: "Roles List" },
+        { id: "auditTrail", label: "Audit Notifications (অডিট লগ)" }
       ]
     },
     { id: "settings", label: "Settings Pane", icon: SettingsIcon },
@@ -738,8 +796,8 @@ export default function App() {
     // Admins always have full, unrestricted access to all menus
     if (profile.role === "admin") return true;
 
-    // Strict Admin-only views - Settings, Users and Roles are strictly locked to admin role
-    const absoluteAdminOnly = ["settings", "newUser", "usersList", "rolesList"];
+    // Strict Admin-only views - Settings, Users, Roles and Audit Trail are strictly locked to admin role
+    const absoluteAdminOnly = ["settings", "newUser", "usersList", "rolesList", "auditTrail"];
     if (absoluteAdminOnly.includes(viewId)) {
       return false;
     }
@@ -1146,6 +1204,19 @@ export default function App() {
                 )}
               </div>
 
+              {/* Super Admin Live Activity Notifications Center */}
+              {profile && (profile.role === "admin" || profile.role === "superadmin") && (
+                <AdminNotificationCenter
+                  currentUserId={user.uid}
+                  userRole={profile.role}
+                  onNavigateMenu={(menuId) => {
+                    if (VALID_VIEWS.includes(menuId as View)) {
+                      setActiveView(menuId as View);
+                    }
+                  }}
+                />
+              )}
+
               {/* Dark Mode Switcher Button */}
               <div className="bg-slate-50 p-1 rounded-xl border border-slate-150 flex items-center gap-1">
                 <button
@@ -1501,6 +1572,17 @@ export default function App() {
               {activeView === "inventory" && <Inventory user={user} role={profile.role} />}
               {activeView === "reports" && <Reports user={user} role={profile.role} />}
               {activeView === "settings" && <Settings user={user} role={profile.role} />}
+              {activeView === "auditTrail" && (
+                <AuditTrail 
+                  currentUserId={user.uid} 
+                  userRole={profile.role} 
+                  onNavigateMenu={(menuId) => {
+                    if (VALID_VIEWS.includes(menuId as View)) {
+                      setActiveView(menuId as View);
+                    }
+                  }}
+                />
+              )}
               {(activeView === "newUser" || activeView === "usersList" || activeView === "rolesList" || activeView === "profileView") && (
                 <UsersManager 
                   user={user} 

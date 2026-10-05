@@ -48,6 +48,7 @@ import {
 } from "lucide-react";
 import { format } from "date-fns";
 import { motion, AnimatePresence } from "motion/react";
+import { logUserActivity } from "@/src/lib/activityLogger";
 
 interface CustomerLedgerProps {
   user: User | null;
@@ -547,6 +548,20 @@ export default function CustomerLedger({
       }
 
       setSaleToDelete(null);
+
+      if (user) {
+        logUserActivity({
+          userId: user.uid,
+          userName: user.displayName || user.email?.split("@")[0] || "User",
+          userEmail: user.email || "",
+          userRole: role || "user",
+          menuId: "customerLedger",
+          menuLabel: "কাস্টমার লেজার (খতিয়ান)",
+          action: "delete",
+          title: `কাস্টমার বিক্রয় স্লিপ ডিলিট করা হয়েছে (${sale.saleId})`,
+          note: `রসিদ #${sale.saleId} | পরিমাণ: ৳${sale.totalSlipsAmount} | নগদ গ্রহণ: ৳${sale.receivedAmount} | ক্রেতা: ${sale.customerName || "কাস্টমার"}`
+        });
+      }
     } catch (err) {
       handleFirestoreError(err, OperationType.DELETE, `counterSales/${sale.id}`);
     } finally {
@@ -620,6 +635,20 @@ export default function CustomerLedger({
         }
       }
       setPaymentToDelete(null);
+
+      if (user) {
+        logUserActivity({
+          userId: user.uid,
+          userName: user.displayName || user.email?.split("@")[0] || "User",
+          userEmail: user.email || "",
+          userRole: role || "user",
+          menuId: "customerLedger",
+          menuLabel: "কাস্টমার লেজার (খতিয়ান)",
+          action: "delete",
+          title: `কাস্টমার বকেয়া পেমেন্ট রসিদ ডিলিট করা হয়েছে (${payment.receiptNo})`,
+          note: `রসিদ #${payment.receiptNo} | ক্রেতা: ${payment.customerName} | ফেরত আনা বকেয়া: ৳${payment.amount}`
+        });
+      }
     } catch (err) {
       handleFirestoreError(err, OperationType.DELETE, `customerPayments/${payment.id}`);
     } finally {
@@ -637,6 +666,20 @@ export default function CustomerLedger({
       await deleteDoc(doc(db, "customers", cust.id));
       setSelectedCustomerId("");
       setCustomerToDelete(null);
+
+      if (user) {
+        logUserActivity({
+          userId: user.uid,
+          userName: user.displayName || user.email?.split("@")[0] || "User",
+          userEmail: user.email || "",
+          userRole: role || "user",
+          menuId: "customerLedger",
+          menuLabel: "কাস্টমার লেজার (খতিয়ান)",
+          action: "delete",
+          title: `কাস্টমার প্রোফাইল ডিলিট করা হয়েছে (${cust.name})`,
+          note: `ক্রেতা: ${cust.name} | মোবাইল: ${cust.phone || "নেই"} | মোট কেনাকাটা ছিল: ৳${cust.totalPurchases} | বকেয়া ছিল: ৳${cust.totalDue}`
+        });
+      }
     } catch (err) {
       handleFirestoreError(err, OperationType.DELETE, `customers/${cust.id}`);
     } finally {

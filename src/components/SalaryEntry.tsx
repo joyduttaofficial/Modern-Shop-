@@ -23,6 +23,7 @@ import {
 } from "lucide-react";
 import { format } from "date-fns";
 import { motion } from "motion/react";
+import { logUserActivity } from "@/src/lib/activityLogger";
 
 interface RowState {
   amount: string; // Unified paid salary / advance amount
@@ -173,6 +174,20 @@ export default function SalaryEntry({ user, role }: { user: User; role: UserRole
       }
 
       setSuccess(true);
+      
+      // Log activity for Super Admin
+      logUserActivity({
+        userId: user.uid,
+        userName: user.displayName || user.email?.split("@")[0] || "User",
+        userEmail: user.email || "",
+        userRole: role,
+        menuId: "salaryEntry",
+        menuLabel: "বেতন প্রদান (Salary Entry)",
+        action: "create",
+        title: `কর্মচারীদের বেতন প্রদান সম্পন্ন (${entries.length} জন - মোট ৳${totalExpense.toLocaleString()})`,
+        note: `মাস: ${monthDisplayName} | মোট কর্মী: ${entries.length} জন | মোট ব্যয়: ৳${totalExpense.toLocaleString()} | মাধ্যম: ${paymentMethod}`
+      });
+
       // Reset sheet
       const resetData: Record<string, RowState> = {};
       employees.forEach(emp => {

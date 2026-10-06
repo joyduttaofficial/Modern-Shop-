@@ -292,6 +292,37 @@ Return the results matching the configured response schema.`;
   }
 });
 
+// API route for Supabase PostgreSQL live status check
+app.get("/api/supabase/status", async (req, res) => {
+  const { Client } = await import("pg");
+  const dbUrl = process.env.DATABASE_URL || "postgresql://postgres:Joy@398878j@db.qwqdjdvxzljuhyczemub.supabase.co:5432/postgres";
+  let client: any = null;
+  try {
+    client = new Client({
+      connectionString: dbUrl,
+      ssl: { rejectUnauthorized: false }
+    });
+    await client.connect();
+    const tables = [
+      "roles", "banks", "categories", "employees", "counter_sales",
+      "customer_payments", "suppliers", "supplier_transactions",
+      "purchases", "transactions", "activity_notifications", "company_settings"
+    ];
+    const counts: Record<string, number> = {};
+    for (const t of tables) {
+      const q = await client.query(`SELECT COUNT(*) FROM public.${t}`);
+      counts[t] = parseInt(q.rows[0].count, 10);
+    }
+    await client.end();
+    res.json({ success: true, host: "db.qwqdjdvxzljuhyczemub.supabase.co", counts });
+  } catch (err: any) {
+    if (client) {
+      try { await client.end(); } catch {}
+    }
+    res.status(500).json({ success: false, error: err?.message || String(err) });
+  }
+});
+
 // Server check-in/out endpoints or assets
 async function startServer() {
   if (process.env.NODE_ENV !== "production") {

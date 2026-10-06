@@ -1,6 +1,8 @@
 import { collection, addDoc, updateDoc, doc, deleteDoc, getDocs, writeBatch } from "firebase/firestore";
 import { db } from "./firebase";
 import { ActivityAction, ActivityNotification } from "../types";
+import { saveActivityNotificationToSupabase } from "./supabaseDb";
+import { isSupabaseConfigured } from "./supabase";
 
 // In-memory debounce cache to prevent duplicate view logging within a short window
 const recentViewLogs: Record<string, number> = {};
@@ -67,6 +69,13 @@ export async function logUserActivity(params: LogActivityParams): Promise<string
       createdAt: new Date().toISOString()
     };
 
+    // If Supabase is configured, write directly to Supabase activity_notifications
+    if (isSupabaseConfigured()) {
+      saveActivityNotificationToSupabase(newNotification).catch(err => {
+        console.warn("Could not save activity notification to Supabase:", err);
+      });
+    }
+
     // Clean any undefined fields before sending to Firestore
     const cleanedData: Record<string, any> = {};
     for (const [key, value] of Object.entries(newNotification)) {
@@ -75,18 +84,25 @@ export async function logUserActivity(params: LogActivityParams): Promise<string
       }
     }
 
-    const docRef = await addDoc(collection(db, "activityNotifications"), cleanedData);
+    let docId = "local-" + Date.now();
+    try {
+      const docRef = await addDoc(collection(db, "activityNotifications"), cleanedData);
+      docId = docRef.id;
+    } catch (fsErr) {
+      // Ignore Firestore quota/network errors so application never crashes
+      console.warn("Firestore notification sync restricted:", fsErr);
+    }
 
     // Dispatch custom browser event for instant local reactive updates
     if (typeof window !== "undefined") {
       window.dispatchEvent(
         new CustomEvent("activity-notification-created", {
-          detail: { id: docRef.id, ...cleanedData }
+          detail: { id: docId, ...cleanedData }
         })
       );
     }
 
-    return docRef.id;
+    return docId;
   } catch (error) {
     console.warn("Could not record activity notification:", error);
     return null;

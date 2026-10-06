@@ -58,6 +58,7 @@ import {
 import { format } from "date-fns";
 import { motion, AnimatePresence } from "motion/react";
 import { logUserActivity } from "@/src/lib/activityLogger";
+import { saveCounterSaleToSupabase, deleteCounterSaleFromSupabase } from "@/src/lib/supabaseDb";
 
 interface CounterSaleProps {
   user: User;
@@ -592,6 +593,11 @@ export default function CounterSaleView({
           console.warn("Could not log matching transaction record:", txErr);
         }
       }
+
+      // Also persist directly into Supabase PostgreSQL database
+      saveCounterSaleToSupabase(newCounterSale as unknown as CounterSale).catch(sbErr => {
+        console.warn("Could not save sale to Supabase:", sbErr);
+      });
 
       setLastSavedSale({ id: docRef.id, ...newCounterSale } as CounterSale);
       setSaveSuccess(true);
@@ -1400,7 +1406,12 @@ export default function CounterSaleView({
     setIsDeletingSale(true);
 
     try {
-      // 1. Delete counterSales document from Firestore
+      // 1. Delete counterSales document from Firestore and Supabase
+      if (sale.saleId) {
+        deleteCounterSaleFromSupabase(sale.saleId).catch(sbErr => {
+          console.warn("Could not delete sale from Supabase:", sbErr);
+        });
+      }
       await deleteDoc(doc(db, "counterSales", sale.id));
       setCounterSalesList(prev => prev.filter(c => c.id !== sale.id));
 

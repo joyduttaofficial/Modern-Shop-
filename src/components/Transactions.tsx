@@ -19,6 +19,7 @@ import {
 import { motion } from "motion/react";
 import { format } from "date-fns";
 import { logUserActivity } from "@/src/lib/activityLogger";
+import { saveTransactionToSupabase, deleteTransactionFromSupabase } from "@/src/lib/supabaseDb";
 
 export default function Transactions({ 
   user, 
@@ -328,6 +329,11 @@ export default function Transactions({
 
       await addDoc(collection(db, "transactions"), newTx);
 
+      // Save directly to Supabase
+      saveTransactionToSupabase(newTx).catch(err => {
+        console.warn("Could not save transaction to Supabase:", err);
+      });
+
       // Decrement Supplier Due balance if singular
       if (category === "Supplier Due Payment" && supplierId) {
         await updateDoc(doc(db, "suppliers", supplierId), {
@@ -622,6 +628,10 @@ export default function Transactions({
   const handleDelete = async (tx: Transaction) => {
     try {
       if (tx.id) {
+        // Also delete from Supabase
+        deleteTransactionFromSupabase(tx.id).catch(sbErr => {
+          console.warn("Could not delete tx from Supabase:", sbErr);
+        });
         await deleteDoc(doc(db, "transactions", tx.id));
 
         // If it was a Counter Sale transaction, cascade delete from counterSales collection and revert customer stats

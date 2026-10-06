@@ -380,7 +380,7 @@ CREATE TABLE IF NOT EXISTS public.customer_payments (
 );
 
 -- ============================================================================
--- 9. COMPANY PREFERENCES & BRANDING
+-- 9. COMPANY PREFERENCES & AUDIT TRAIL
 -- ============================================================================
 
 CREATE TABLE IF NOT EXISTS public.company_settings (
@@ -394,6 +394,26 @@ CREATE TABLE IF NOT EXISTS public.company_settings (
     currency TEXT DEFAULT 'BDT',
     currency_symbol TEXT DEFAULT '৳',
     updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Super Admin Real-time Activity Notifications & Audit Trail
+CREATE TABLE IF NOT EXISTS public.activity_notifications (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id TEXT NOT NULL,
+    user_name TEXT NOT NULL,
+    user_email TEXT NOT NULL,
+    user_role TEXT NOT NULL DEFAULT 'user',
+    user_photo TEXT,
+    menu_id TEXT NOT NULL,
+    menu_label TEXT NOT NULL,
+    action TEXT NOT NULL CHECK (action IN ('create', 'edit', 'delete', 'view')),
+    title TEXT NOT NULL,
+    note TEXT NOT NULL,
+    metadata JSONB DEFAULT '{}'::jsonb,
+    is_read BOOLEAN DEFAULT false,
+    read_by JSONB DEFAULT '[]'::jsonb,
+    timestamp TIMESTAMPTZ DEFAULT NOW(),
+    created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
 -- ============================================================================
@@ -516,29 +536,28 @@ ALTER TABLE public.customers ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.counter_sales ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.customer_payments ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.company_settings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.activity_notifications ENABLE ROW LEVEL SECURITY;
 
--- Create Policies for Authenticated Application Users
-CREATE POLICY "Authenticated users can manage roles" ON public.roles FOR ALL TO authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "Authenticated users can manage profiles" ON public.profiles FOR ALL TO authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "Authenticated users can manage departments" ON public.departments FOR ALL TO authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "Authenticated users can manage employees" ON public.employees FOR ALL TO authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "Authenticated users can manage attendance_settings" ON public.attendance_settings FOR ALL TO authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "Authenticated users can manage attendance" ON public.attendance FOR ALL TO authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "Authenticated users can manage categories" ON public.categories FOR ALL TO authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "Authenticated users can manage banks" ON public.banks FOR ALL TO authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "Authenticated users can manage transactions" ON public.transactions FOR ALL TO authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "Authenticated users can manage suppliers" ON public.suppliers FOR ALL TO authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "Authenticated users can manage supplier_transactions" ON public.supplier_transactions FOR ALL TO authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "Authenticated users can manage purchases" ON public.purchases FOR ALL TO authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "Authenticated users can manage products" ON public.products FOR ALL TO authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "Authenticated users can manage stock_ledger" ON public.stock_ledger FOR ALL TO authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "Authenticated users can manage customers" ON public.customers FOR ALL TO authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "Authenticated users can manage counter_sales" ON public.counter_sales FOR ALL TO authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "Authenticated users can manage customer_payments" ON public.customer_payments FOR ALL TO authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "Authenticated users can manage company_settings" ON public.company_settings FOR ALL TO authenticated USING (true) WITH CHECK (true);
-
--- Allow public read of company settings (for login page logo/name display)
-CREATE POLICY "Public read company settings" ON public.company_settings FOR SELECT TO anon USING (true);
+-- Create Policies for Authenticated & Anon Application Access
+CREATE POLICY "App users can manage roles" ON public.roles FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
+CREATE POLICY "App users can manage profiles" ON public.profiles FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
+CREATE POLICY "App users can manage departments" ON public.departments FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
+CREATE POLICY "App users can manage employees" ON public.employees FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
+CREATE POLICY "App users can manage attendance_settings" ON public.attendance_settings FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
+CREATE POLICY "App users can manage attendance" ON public.attendance FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
+CREATE POLICY "App users can manage categories" ON public.categories FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
+CREATE POLICY "App users can manage banks" ON public.banks FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
+CREATE POLICY "App users can manage transactions" ON public.transactions FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
+CREATE POLICY "App users can manage suppliers" ON public.suppliers FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
+CREATE POLICY "App users can manage supplier_transactions" ON public.supplier_transactions FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
+CREATE POLICY "App users can manage purchases" ON public.purchases FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
+CREATE POLICY "App users can manage products" ON public.products FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
+CREATE POLICY "App users can manage stock_ledger" ON public.stock_ledger FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
+CREATE POLICY "App users can manage customers" ON public.customers FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
+CREATE POLICY "App users can manage counter_sales" ON public.counter_sales FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
+CREATE POLICY "App users can manage customer_payments" ON public.customer_payments FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
+CREATE POLICY "App users can manage company_settings" ON public.company_settings FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
+CREATE POLICY "App users can manage activity_notifications" ON public.activity_notifications FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
 
 -- ============================================================================
 -- 13. BUSINESS ANALYTICS & REPORTING VIEWS

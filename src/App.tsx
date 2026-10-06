@@ -77,6 +77,7 @@ import CustomerLedger from "./components/CustomerLedger";
 import AdminNotificationCenter from "./components/AdminNotificationCenter";
 import AuditTrail from "./components/AuditTrail";
 import { logUserActivity } from "@/src/lib/activityLogger";
+import { isSupabaseConfigured } from "@/src/lib/supabase";
 
 function QuotaExceededOverlay({ onDismiss, databaseId, projectId }: { onDismiss: () => void; databaseId: string; projectId: string }) {
   const upgradeUrl = `https://console.firebase.google.com/project/${projectId}/firestore/databases/${databaseId}/data?openUpgradeDialog=true`;

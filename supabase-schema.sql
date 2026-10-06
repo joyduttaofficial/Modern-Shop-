@@ -200,7 +200,7 @@ CREATE TABLE IF NOT EXISTS public.transactions (
     notes TEXT,
     created_by TEXT NOT NULL,
     employee_id UUID REFERENCES public.employees(id) ON DELETE SET NULL,
-    supplier_id UUID,
+    supplier_id UUID, -- References suppliers(id), added via constraint below
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -230,6 +230,7 @@ CREATE TRIGGER set_suppliers_updated_at
 BEFORE UPDATE ON public.suppliers
 FOR EACH ROW EXECUTE FUNCTION public.handle_updated_at();
 
+-- Add foreign key constraint to transactions
 ALTER TABLE public.transactions 
 DROP CONSTRAINT IF EXISTS fk_transactions_supplier,
 ADD CONSTRAINT fk_transactions_supplier FOREIGN KEY (supplier_id) REFERENCES public.suppliers(id) ON DELETE SET NULL;
@@ -338,7 +339,7 @@ CREATE TABLE IF NOT EXISTS public.counter_sales (
     date_time TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     date DATE NOT NULL DEFAULT CURRENT_DATE,
     time TIME NOT NULL DEFAULT CURRENT_TIME,
-    slips JSONB NOT NULL DEFAULT '[]'::jsonb,
+    slips JSONB NOT NULL DEFAULT '[]'::jsonb, -- Array of slip items: [{"slipNo": 1, "amount": 450, "notes": "Silk"}]
     total_slips_amount NUMERIC(14, 2) NOT NULL DEFAULT 0.00,
     discount_type TEXT CHECK (discount_type IN ('amount', 'percent')),
     discount_percent NUMERIC(5, 2) DEFAULT 0.00,
@@ -379,7 +380,7 @@ CREATE TABLE IF NOT EXISTS public.customer_payments (
 );
 
 -- ============================================================================
--- 9. COMPANY PREFERENCES & BRANDING
+-- 9. COMPANY PREFERENCES & AUDIT TRAIL
 -- ============================================================================
 
 CREATE TABLE IF NOT EXISTS public.company_settings (
@@ -393,6 +394,26 @@ CREATE TABLE IF NOT EXISTS public.company_settings (
     currency TEXT DEFAULT 'BDT',
     currency_symbol TEXT DEFAULT '৳',
     updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Super Admin Real-time Activity Notifications & Audit Trail
+CREATE TABLE IF NOT EXISTS public.activity_notifications (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id TEXT NOT NULL,
+    user_name TEXT NOT NULL,
+    user_email TEXT NOT NULL,
+    user_role TEXT NOT NULL DEFAULT 'user',
+    user_photo TEXT,
+    menu_id TEXT NOT NULL,
+    menu_label TEXT NOT NULL,
+    action TEXT NOT NULL CHECK (action IN ('create', 'edit', 'delete', 'view')),
+    title TEXT NOT NULL,
+    note TEXT NOT NULL,
+    metadata JSONB DEFAULT '{}'::jsonb,
+    is_read BOOLEAN DEFAULT false,
+    read_by JSONB DEFAULT '[]'::jsonb,
+    timestamp TIMESTAMPTZ DEFAULT NOW(),
+    created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
 -- ============================================================================
@@ -423,6 +444,7 @@ CREATE INDEX IF NOT EXISTS idx_purchases_supplier ON public.purchases(supplier_i
 -- 11. AUTOMATED BUSINESS LOGIC (TRIGGERS & PROCEDURES)
 -- ============================================================================
 
+-- A. Auto-sync Customer Ledger totals when Counter Sale is logged
 CREATE OR REPLACE FUNCTION public.sync_customer_on_counter_sale()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -446,6 +468,7 @@ CREATE TRIGGER trg_counter_sale_customer_sync
 AFTER INSERT ON public.counter_sales
 FOR EACH ROW EXECUTE FUNCTION public.sync_customer_on_counter_sale();
 
+-- B. Auto-sync Customer Ledger totals when Customer Payment is logged
 CREATE OR REPLACE FUNCTION public.sync_customer_on_payment()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -464,6 +487,7 @@ CREATE TRIGGER trg_customer_payment_sync
 AFTER INSERT ON public.customer_payments
 FOR EACH ROW EXECUTE FUNCTION public.sync_customer_on_payment();
 
+-- C. Auto-sync Bank Balance when a Transaction occurs
 CREATE OR REPLACE FUNCTION public.sync_bank_on_transaction()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -493,6 +517,7 @@ FOR EACH ROW EXECUTE FUNCTION public.sync_bank_on_transaction();
 -- 12. ROW LEVEL SECURITY (RLS) POLICIES
 -- ============================================================================
 
+-- Enable RLS on all tables
 ALTER TABLE public.roles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.departments ENABLE ROW LEVEL SECURITY;
@@ -511,32 +536,34 @@ ALTER TABLE public.customers ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.counter_sales ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.customer_payments ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.company_settings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.activity_notifications ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY "Authenticated users can manage roles" ON public.roles FOR ALL TO authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "Authenticated users can manage profiles" ON public.profiles FOR ALL TO authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "Authenticated users can manage departments" ON public.departments FOR ALL TO authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "Authenticated users can manage employees" ON public.employees FOR ALL TO authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "Authenticated users can manage attendance_settings" ON public.attendance_settings FOR ALL TO authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "Authenticated users can manage attendance" ON public.attendance FOR ALL TO authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "Authenticated users can manage categories" ON public.categories FOR ALL TO authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "Authenticated users can manage banks" ON public.banks FOR ALL TO authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "Authenticated users can manage transactions" ON public.transactions FOR ALL TO authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "Authenticated users can manage suppliers" ON public.suppliers FOR ALL TO authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "Authenticated users can manage supplier_transactions" ON public.supplier_transactions FOR ALL TO authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "Authenticated users can manage purchases" ON public.purchases FOR ALL TO authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "Authenticated users can manage products" ON public.products FOR ALL TO authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "Authenticated users can manage stock_ledger" ON public.stock_ledger FOR ALL TO authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "Authenticated users can manage customers" ON public.customers FOR ALL TO authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "Authenticated users can manage counter_sales" ON public.counter_sales FOR ALL TO authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "Authenticated users can manage customer_payments" ON public.customer_payments FOR ALL TO authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "Authenticated users can manage company_settings" ON public.company_settings FOR ALL TO authenticated USING (true) WITH CHECK (true);
-
-CREATE POLICY "Public read company settings" ON public.company_settings FOR SELECT TO anon USING (true);
+-- Create Policies for Authenticated & Anon Application Access
+CREATE POLICY "App users can manage roles" ON public.roles FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
+CREATE POLICY "App users can manage profiles" ON public.profiles FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
+CREATE POLICY "App users can manage departments" ON public.departments FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
+CREATE POLICY "App users can manage employees" ON public.employees FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
+CREATE POLICY "App users can manage attendance_settings" ON public.attendance_settings FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
+CREATE POLICY "App users can manage attendance" ON public.attendance FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
+CREATE POLICY "App users can manage categories" ON public.categories FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
+CREATE POLICY "App users can manage banks" ON public.banks FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
+CREATE POLICY "App users can manage transactions" ON public.transactions FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
+CREATE POLICY "App users can manage suppliers" ON public.suppliers FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
+CREATE POLICY "App users can manage supplier_transactions" ON public.supplier_transactions FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
+CREATE POLICY "App users can manage purchases" ON public.purchases FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
+CREATE POLICY "App users can manage products" ON public.products FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
+CREATE POLICY "App users can manage stock_ledger" ON public.stock_ledger FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
+CREATE POLICY "App users can manage customers" ON public.customers FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
+CREATE POLICY "App users can manage counter_sales" ON public.counter_sales FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
+CREATE POLICY "App users can manage customer_payments" ON public.customer_payments FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
+CREATE POLICY "App users can manage company_settings" ON public.company_settings FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
+CREATE POLICY "App users can manage activity_notifications" ON public.activity_notifications FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
 
 -- ============================================================================
 -- 13. BUSINESS ANALYTICS & REPORTING VIEWS
 -- ============================================================================
 
+-- Daily Sales Summary View
 CREATE OR REPLACE VIEW public.v_daily_sales_summary AS
 SELECT 
     date,
@@ -551,6 +578,7 @@ FROM public.counter_sales
 GROUP BY date
 ORDER BY date DESC;
 
+-- Inventory Valuation View
 CREATE OR REPLACE VIEW public.v_inventory_valuation AS
 SELECT 
     id,
@@ -565,6 +593,7 @@ SELECT
 FROM public.products
 ORDER BY name ASC;
 
+-- Top Outstanding Due Customers
 CREATE OR REPLACE VIEW public.v_top_due_customers AS
 SELECT 
     id,
@@ -584,6 +613,7 @@ ORDER BY total_due DESC;
 -- 14. SEED INITIAL DATA (DEFAULTS)
 -- ============================================================================
 
+-- Default Roles
 INSERT INTO public.roles (name, description, color_badge, is_default, allowed_menus, actions)
 VALUES 
 (
@@ -612,10 +642,12 @@ VALUES
 )
 ON CONFLICT (name) DO NOTHING;
 
+-- Default Cash Account
 INSERT INTO public.banks (name, balance)
 VALUES ('Cash', 0.00)
 ON CONFLICT (name) DO NOTHING;
 
+-- Default Transaction Categories
 INSERT INTO public.categories (name, type, icon)
 VALUES 
     ('Previous Cash', 'income', 'Wallet'),
@@ -632,6 +664,7 @@ VALUES
     ('Courier', 'expense', 'Truck')
 ON CONFLICT (name, type) DO NOTHING;
 
+-- Default Attendance Settings
 INSERT INTO public.attendance_settings (
     late_threshold, 
     lunch_duration_limit, 
@@ -644,6 +677,7 @@ INSERT INTO public.attendance_settings (
 VALUES ('10:00:00', 60, '11:30:00', 20.00, true, true, 0)
 ON CONFLICT DO NOTHING;
 
+-- Default Company Branding
 INSERT INTO public.company_settings (company_name, tagline, phone, email, address, currency, currency_symbol)
 VALUES ('Modern Pro', 'Automated POS & Accounting System', '+880 1700-000000', 'contact@company.com', 'Dhaka, Bangladesh', 'BDT', '৳')
 ON CONFLICT DO NOTHING;

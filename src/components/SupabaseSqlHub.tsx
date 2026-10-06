@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { 
   Database, 
   Copy, 
@@ -14,659 +14,40 @@ import {
   ChevronUp, 
   FileCode,
   CheckCircle2,
-  TableProperties
+  TableProperties,
+  AlertCircle,
+  Play,
+  RefreshCw,
+  UploadCloud,
+  HardDrive,
+  Key,
+  Globe,
+  Radio,
+  CheckCircle
 } from "lucide-react";
 import { cn } from "@/src/lib/utils";
-
-// Full SQL Schema text for direct copy and download
-export const SUPABASE_SQL_SCHEMA = `-- ============================================================================
--- SUPABASE POSTGRESQL PRODUCTION DATABASE SCHEMA
--- Application: Modern Pro (Retail & Wholesale Accounting, POS, Inventory, HR)
--- Compatibility: Supabase PostgreSQL (Supports Supabase Auth, Storage & RLS)
--- ============================================================================
-
--- 0. ENABLE REQUIRED EXTENSIONS
-CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
-CREATE EXTENSION IF NOT EXISTS "pgcrypto";
-
--- ============================================================================
--- 1. HELPER FUNCTIONS & TRIGGERS
--- ============================================================================
-
--- Generic Updated_At Trigger Function
-CREATE OR REPLACE FUNCTION public.handle_updated_at()
-RETURNS TRIGGER AS $$
-BEGIN
-    NEW.updated_at = NOW();
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-
--- Super Admin / Role Helper Function
-CREATE OR REPLACE FUNCTION public.is_admin()
-RETURNS BOOLEAN AS $$
-BEGIN
-    RETURN EXISTS (
-        SELECT 1 FROM public.profiles
-        WHERE id = auth.uid() AND (role = 'admin' OR role = 'superadmin')
-    );
-END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
-
--- ============================================================================
--- 2. ROLES & PERMISSIONS ARCHITECTURE
--- ============================================================================
-
-CREATE TABLE IF NOT EXISTS public.roles (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    name TEXT NOT NULL UNIQUE,
-    allowed_menus JSONB NOT NULL DEFAULT '[]'::jsonb,
-    actions JSONB NOT NULL DEFAULT '{}'::jsonb,
-    color_badge TEXT DEFAULT 'indigo',
-    description TEXT,
-    is_default BOOLEAN DEFAULT false,
-    created_at TIMESTAMPTZ DEFAULT NOW(),
-    updated_at TIMESTAMPTZ DEFAULT NOW()
-);
-
-CREATE TRIGGER set_roles_updated_at
-BEFORE UPDATE ON public.roles
-FOR EACH ROW EXECUTE FUNCTION public.handle_updated_at();
-
--- ============================================================================
--- 3. USER PROFILES (Integrated with Supabase Auth)
--- ============================================================================
-
-CREATE TABLE IF NOT EXISTS public.profiles (
-    id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
-    email TEXT NOT NULL,
-    display_name TEXT NOT NULL,
-    role TEXT NOT NULL DEFAULT 'sales',
-    role_id UUID REFERENCES public.roles(id) ON DELETE SET NULL,
-    designation TEXT,
-    department TEXT,
-    mobile TEXT,
-    photo_url TEXT,
-    bio TEXT,
-    username TEXT UNIQUE,
-    status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'inactive')),
-    created_at TIMESTAMPTZ DEFAULT NOW(),
-    updated_at TIMESTAMPTZ DEFAULT NOW()
-);
-
-CREATE TRIGGER set_profiles_updated_at
-BEFORE UPDATE ON public.profiles
-FOR EACH ROW EXECUTE FUNCTION public.handle_updated_at();
-
-CREATE OR REPLACE FUNCTION public.handle_new_user()
-RETURNS TRIGGER AS $$
-BEGIN
-    INSERT INTO public.profiles (id, email, display_name, role, status)
-    VALUES (
-        NEW.id,
-        COALESCE(NEW.email, ''),
-        COALESCE(NEW.raw_user_meta_data->>'displayName', NEW.raw_user_meta_data->>'full_name', split_part(COALESCE(NEW.email, 'User'), '@', 1)),
-        COALESCE(NEW.raw_user_meta_data->>'role', 'sales'),
-        'active'
-    )
-    ON CONFLICT (id) DO NOTHING;
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
-
-DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
-CREATE TRIGGER on_auth_user_created
-AFTER INSERT ON auth.users
-FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
-
--- ============================================================================
--- 4. DEPARTMENTS & HR
--- ============================================================================
-
-CREATE TABLE IF NOT EXISTS public.departments (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    name TEXT NOT NULL UNIQUE,
-    created_at TIMESTAMPTZ DEFAULT NOW()
-);
-
-CREATE TABLE IF NOT EXISTS public.employees (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    employee_id_code TEXT UNIQUE,
-    name TEXT NOT NULL,
-    role TEXT NOT NULL,
-    salary NUMERIC(12, 2) NOT NULL DEFAULT 0.00,
-    department TEXT,
-    phone TEXT,
-    email TEXT,
-    joined_date DATE DEFAULT CURRENT_DATE,
-    status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'inactive')),
-    photo TEXT,
-    nid_front_photo TEXT,
-    nid_back_photo TEXT,
-    birth_certificate_photo TEXT,
-    documents JSONB DEFAULT '[]'::jsonb,
-    created_at TIMESTAMPTZ DEFAULT NOW(),
-    updated_at TIMESTAMPTZ DEFAULT NOW()
-);
-
-CREATE TRIGGER set_employees_updated_at
-BEFORE UPDATE ON public.employees
-FOR EACH ROW EXECUTE FUNCTION public.handle_updated_at();
-
-CREATE TABLE IF NOT EXISTS public.attendance_settings (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    late_threshold TIME DEFAULT '10:00:00',
-    lunch_duration_limit INTEGER DEFAULT 60,
-    half_day_threshold TIME DEFAULT '11:30:00',
-    breakfast_allowance_amount NUMERIC(10, 2) DEFAULT 20.00,
-    deduct_breakfast_on_late BOOLEAN DEFAULT true,
-    deduct_breakfast_on_absent BOOLEAN DEFAULT true,
-    grace_period_minutes INTEGER DEFAULT 0,
-    updated_by TEXT,
-    updated_at TIMESTAMPTZ DEFAULT NOW()
-);
-
-CREATE TABLE IF NOT EXISTS public.attendance (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    date DATE NOT NULL,
-    employee_id UUID NOT NULL REFERENCES public.employees(id) ON DELETE CASCADE,
-    status TEXT NOT NULL CHECK (status IN ('present', 'absent', 'late', 'half-day', 'leave', 'holiday')),
-    check_in TIME,
-    lunch_out TIME,
-    lunch_in TIME,
-    check_out TIME,
-    late_minutes INTEGER DEFAULT 0,
-    breakfast_allowance NUMERIC(10, 2) DEFAULT 0.00,
-    is_breakfast_eligible BOOLEAN DEFAULT false,
-    breakfast_deducted BOOLEAN DEFAULT false,
-    notes TEXT,
-    created_at TIMESTAMPTZ DEFAULT NOW(),
-    UNIQUE (date, employee_id)
-);
-
--- ============================================================================
--- 5. FINANCIAL ACCOUNTS, CATEGORIES & TRANSACTIONS
--- ============================================================================
-
-CREATE TABLE IF NOT EXISTS public.categories (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    name TEXT NOT NULL,
-    type TEXT NOT NULL CHECK (type IN ('income', 'expense')),
-    icon TEXT,
-    created_at TIMESTAMPTZ DEFAULT NOW(),
-    UNIQUE (name, type)
-);
-
-CREATE TABLE IF NOT EXISTS public.banks (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    name TEXT NOT NULL UNIQUE,
-    balance NUMERIC(14, 2) NOT NULL DEFAULT 0.00,
-    last_updated TIMESTAMPTZ DEFAULT NOW(),
-    created_at TIMESTAMPTZ DEFAULT NOW()
-);
-
-CREATE TABLE IF NOT EXISTS public.transactions (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    date TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    type TEXT NOT NULL CHECK (type IN ('income', 'expense')),
-    category TEXT NOT NULL,
-    sub_category TEXT,
-    amount NUMERIC(14, 2) NOT NULL CHECK (amount >= 0),
-    payment_method TEXT NOT NULL DEFAULT 'Cash',
-    notes TEXT,
-    created_by TEXT NOT NULL,
-    employee_id UUID REFERENCES public.employees(id) ON DELETE SET NULL,
-    supplier_id UUID,
-    created_at TIMESTAMPTZ DEFAULT NOW()
-);
-
--- ============================================================================
--- 6. SUPPLIERS & PURCHASES
--- ============================================================================
-
-CREATE TABLE IF NOT EXISTS public.suppliers (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    code TEXT NOT NULL UNIQUE,
-    name TEXT NOT NULL,
-    mobile TEXT,
-    phone TEXT,
-    email TEXT,
-    address TEXT,
-    country TEXT DEFAULT 'Bangladesh',
-    opening_balance NUMERIC(14, 2) DEFAULT 0.00,
-    advance_amount NUMERIC(14, 2) DEFAULT 0.00,
-    total_amount NUMERIC(14, 2) DEFAULT 0.00,
-    purchase_due NUMERIC(14, 2) DEFAULT 0.00,
-    status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'inactive')),
-    created_at TIMESTAMPTZ DEFAULT NOW(),
-    updated_at TIMESTAMPTZ DEFAULT NOW()
-);
-
-CREATE TRIGGER set_suppliers_updated_at
-BEFORE UPDATE ON public.suppliers
-FOR EACH ROW EXECUTE FUNCTION public.handle_updated_at();
-
-ALTER TABLE public.transactions 
-DROP CONSTRAINT IF EXISTS fk_transactions_supplier,
-ADD CONSTRAINT fk_transactions_supplier FOREIGN KEY (supplier_id) REFERENCES public.suppliers(id) ON DELETE SET NULL;
-
-CREATE TABLE IF NOT EXISTS public.supplier_transactions (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    supplier_id UUID NOT NULL REFERENCES public.suppliers(id) ON DELETE CASCADE,
-    date DATE NOT NULL DEFAULT CURRENT_DATE,
-    type TEXT NOT NULL CHECK (type IN ('purchase', 'return', 'payment')),
-    ref_no TEXT NOT NULL,
-    total_amount NUMERIC(14, 2) NOT NULL DEFAULT 0.00,
-    paid_amount NUMERIC(14, 2) DEFAULT 0.00,
-    due_amount NUMERIC(14, 2) DEFAULT 0.00,
-    less_amount NUMERIC(14, 2) DEFAULT 0.00,
-    payment_method TEXT DEFAULT 'Cash',
-    notes TEXT,
-    created_at TIMESTAMPTZ DEFAULT NOW()
-);
-
-CREATE TABLE IF NOT EXISTS public.purchases (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    supplier_id UUID REFERENCES public.suppliers(id) ON DELETE SET NULL,
-    supplier_name TEXT NOT NULL,
-    date DATE NOT NULL DEFAULT CURRENT_DATE,
-    ref_no TEXT NOT NULL,
-    total_amount NUMERIC(14, 2) NOT NULL DEFAULT 0.00,
-    paid_amount NUMERIC(14, 2) DEFAULT 0.00,
-    due_amount NUMERIC(14, 2) DEFAULT 0.00,
-    written_return NUMERIC(14, 2) DEFAULT 0.00,
-    payment_method TEXT NOT NULL DEFAULT 'Cash',
-    notes TEXT,
-    invoice_photo TEXT,
-    items JSONB DEFAULT '[]'::jsonb,
-    created_at TIMESTAMPTZ DEFAULT NOW()
-);
-
--- ============================================================================
--- 7. INVENTORY & STOCK LEDGER
--- ============================================================================
-
-CREATE TABLE IF NOT EXISTS public.products (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    name TEXT NOT NULL,
-    category TEXT NOT NULL,
-    sub_category TEXT,
-    unit TEXT NOT NULL DEFAULT 'Piece',
-    stock NUMERIC(12, 2) NOT NULL DEFAULT 0.00,
-    min_stock NUMERIC(12, 2) DEFAULT 5.00,
-    last_purchase_price NUMERIC(12, 2) NOT NULL DEFAULT 0.00,
-    total_purchase_value NUMERIC(14, 2) NOT NULL DEFAULT 0.00,
-    created_at TIMESTAMPTZ DEFAULT NOW(),
-    updated_at TIMESTAMPTZ DEFAULT NOW()
-);
-
-CREATE TRIGGER set_products_updated_at
-BEFORE UPDATE ON public.products
-FOR EACH ROW EXECUTE FUNCTION public.handle_updated_at();
-
-CREATE TABLE IF NOT EXISTS public.stock_ledger (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    product_id UUID NOT NULL REFERENCES public.products(id) ON DELETE CASCADE,
-    product_name TEXT NOT NULL,
-    date DATE NOT NULL DEFAULT CURRENT_DATE,
-    type TEXT NOT NULL CHECK (type IN ('purchase', 'sale', 'return', 'adjustment')),
-    ref_no TEXT NOT NULL,
-    quantity NUMERIC(12, 2) NOT NULL,
-    unit TEXT NOT NULL,
-    unit_price NUMERIC(12, 2) NOT NULL DEFAULT 0.00,
-    total_amount NUMERIC(14, 2) NOT NULL DEFAULT 0.00,
-    supplier_id UUID REFERENCES public.suppliers(id) ON DELETE SET NULL,
-    supplier_name TEXT,
-    notes TEXT,
-    created_at TIMESTAMPTZ DEFAULT NOW()
-);
-
--- ============================================================================
--- 8. COUNTER SALES, CUSTOMERS & DUE LEDGER
--- ============================================================================
-
-CREATE TABLE IF NOT EXISTS public.customers (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    name TEXT NOT NULL,
-    phone TEXT,
-    address TEXT,
-    total_purchases NUMERIC(14, 2) DEFAULT 0.00,
-    total_paid NUMERIC(14, 2) DEFAULT 0.00,
-    total_due NUMERIC(14, 2) DEFAULT 0.00,
-    total_discount NUMERIC(14, 2) DEFAULT 0.00,
-    total_purchases_count INTEGER DEFAULT 0,
-    total_due_count INTEGER DEFAULT 0,
-    total_payments_count INTEGER DEFAULT 0,
-    last_transaction_date TIMESTAMPTZ,
-    created_at TIMESTAMPTZ DEFAULT NOW(),
-    updated_at TIMESTAMPTZ DEFAULT NOW()
-);
-
-CREATE TRIGGER set_customers_updated_at
-BEFORE UPDATE ON public.customers
-FOR EACH ROW EXECUTE FUNCTION public.handle_updated_at();
-
-CREATE TABLE IF NOT EXISTS public.counter_sales (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    sale_id TEXT NOT NULL UNIQUE,
-    customer_id UUID REFERENCES public.customers(id) ON DELETE SET NULL,
-    daily_serial INTEGER,
-    date_time TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    date DATE NOT NULL DEFAULT CURRENT_DATE,
-    time TIME NOT NULL DEFAULT CURRENT_TIME,
-    slips JSONB NOT NULL DEFAULT '[]'::jsonb,
-    total_slips_amount NUMERIC(14, 2) NOT NULL DEFAULT 0.00,
-    discount_type TEXT CHECK (discount_type IN ('amount', 'percent')),
-    discount_percent NUMERIC(5, 2) DEFAULT 0.00,
-    discount_amount NUMERIC(14, 2) DEFAULT 0.00,
-    net_payable NUMERIC(14, 2) NOT NULL DEFAULT 0.00,
-    received_amount NUMERIC(14, 2) NOT NULL DEFAULT 0.00,
-    change_amount NUMERIC(14, 2) DEFAULT 0.00,
-    due_amount NUMERIC(14, 2) DEFAULT 0.00,
-    is_balanced BOOLEAN NOT NULL DEFAULT true,
-    balance_status TEXT NOT NULL DEFAULT 'equal' CHECK (balance_status IN ('equal', 'short', 'excess')),
-    payment_method TEXT NOT NULL DEFAULT 'Cash',
-    customer_name TEXT,
-    customer_phone TEXT,
-    customer_address TEXT,
-    notes TEXT,
-    created_by TEXT NOT NULL,
-    transaction_id TEXT,
-    created_at TIMESTAMPTZ DEFAULT NOW()
-);
-
-CREATE TABLE IF NOT EXISTS public.customer_payments (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    receipt_no TEXT UNIQUE,
-    customer_id UUID NOT NULL REFERENCES public.customers(id) ON DELETE CASCADE,
-    customer_name TEXT NOT NULL,
-    customer_phone TEXT,
-    customer_address TEXT,
-    date DATE NOT NULL DEFAULT CURRENT_DATE,
-    time TIME DEFAULT CURRENT_TIME,
-    amount NUMERIC(14, 2) NOT NULL CHECK (amount > 0),
-    previous_due NUMERIC(14, 2) DEFAULT 0.00,
-    remaining_due NUMERIC(14, 2) DEFAULT 0.00,
-    payment_method TEXT NOT NULL DEFAULT 'Cash',
-    notes TEXT,
-    received_by TEXT NOT NULL,
-    transaction_id TEXT,
-    created_at TIMESTAMPTZ DEFAULT NOW()
-);
-
--- ============================================================================
--- 9. COMPANY PREFERENCES & BRANDING
--- ============================================================================
-
-CREATE TABLE IF NOT EXISTS public.company_settings (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    company_name TEXT DEFAULT 'Modern Pro',
-    tagline TEXT DEFAULT 'Automated POS & Accounting System',
-    logo_url TEXT,
-    phone TEXT DEFAULT '+880 1700-000000',
-    email TEXT DEFAULT 'contact@company.com',
-    address TEXT DEFAULT 'Dhaka, Bangladesh',
-    currency TEXT DEFAULT 'BDT',
-    currency_symbol TEXT DEFAULT '৳',
-    updated_at TIMESTAMPTZ DEFAULT NOW()
-);
-
--- ============================================================================
--- 10. INDEXING FOR HIGH PERFORMANCE
--- ============================================================================
-
-CREATE INDEX IF NOT EXISTS idx_transactions_date ON public.transactions(date DESC);
-CREATE INDEX IF NOT EXISTS idx_transactions_type ON public.transactions(type);
-CREATE INDEX IF NOT EXISTS idx_transactions_category ON public.transactions(category);
-CREATE INDEX IF NOT EXISTS idx_transactions_created_by ON public.transactions(created_by);
-CREATE INDEX IF NOT EXISTS idx_transactions_supplier ON public.transactions(supplier_id);
-CREATE INDEX IF NOT EXISTS idx_transactions_employee ON public.transactions(employee_id);
-
-CREATE INDEX IF NOT EXISTS idx_counter_sales_date ON public.counter_sales(date DESC);
-CREATE INDEX IF NOT EXISTS idx_counter_sales_sale_id ON public.counter_sales(sale_id);
-CREATE INDEX IF NOT EXISTS idx_counter_sales_customer ON public.counter_sales(customer_id);
-CREATE INDEX IF NOT EXISTS idx_counter_sales_created_by ON public.counter_sales(created_by);
-
-CREATE INDEX IF NOT EXISTS idx_customer_payments_customer ON public.customer_payments(customer_id);
-CREATE INDEX IF NOT EXISTS idx_customer_payments_date ON public.customer_payments(date DESC);
-
-CREATE INDEX IF NOT EXISTS idx_attendance_date_emp ON public.attendance(date, employee_id);
-CREATE INDEX IF NOT EXISTS idx_stock_ledger_prod ON public.stock_ledger(product_id, date DESC);
-CREATE INDEX IF NOT EXISTS idx_supplier_tx_sup ON public.supplier_transactions(supplier_id, date DESC);
-CREATE INDEX IF NOT EXISTS idx_purchases_supplier ON public.purchases(supplier_id, date DESC);
-
--- ============================================================================
--- 11. AUTOMATED BUSINESS LOGIC (TRIGGERS & PROCEDURES)
--- ============================================================================
-
-CREATE OR REPLACE FUNCTION public.sync_customer_on_counter_sale()
-RETURNS TRIGGER AS $$
-BEGIN
-    IF NEW.customer_id IS NOT NULL THEN
-        UPDATE public.customers
-        SET total_purchases = COALESCE(total_purchases, 0) + NEW.net_payable,
-            total_paid = COALESCE(total_paid, 0) + NEW.received_amount,
-            total_due = COALESCE(total_due, 0) + NEW.due_amount,
-            total_discount = COALESCE(total_discount, 0) + NEW.discount_amount,
-            total_purchases_count = COALESCE(total_purchases_count, 0) + 1,
-            total_due_count = CASE WHEN NEW.due_amount > 0 THEN COALESCE(total_due_count, 0) + 1 ELSE total_due_count END,
-            last_transaction_date = NEW.date_time
-        WHERE id = NEW.customer_id;
-    END IF;
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-
-DROP TRIGGER IF EXISTS trg_counter_sale_customer_sync ON public.counter_sales;
-CREATE TRIGGER trg_counter_sale_customer_sync
-AFTER INSERT ON public.counter_sales
-FOR EACH ROW EXECUTE FUNCTION public.sync_customer_on_counter_sale();
-
-CREATE OR REPLACE FUNCTION public.sync_customer_on_payment()
-RETURNS TRIGGER AS $$
-BEGIN
-    UPDATE public.customers
-    SET total_paid = COALESCE(total_paid, 0) + NEW.amount,
-        total_due = GREATEST(0, COALESCE(total_due, 0) - NEW.amount),
-        total_payments_count = COALESCE(total_payments_count, 0) + 1,
-        last_transaction_date = NOW()
-    WHERE id = NEW.customer_id;
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-
-DROP TRIGGER IF EXISTS trg_customer_payment_sync ON public.customer_payments;
-CREATE TRIGGER trg_customer_payment_sync
-AFTER INSERT ON public.customer_payments
-FOR EACH ROW EXECUTE FUNCTION public.sync_customer_on_payment();
-
-CREATE OR REPLACE FUNCTION public.sync_bank_on_transaction()
-RETURNS TRIGGER AS $$
-BEGIN
-    IF TG_OP = 'INSERT' THEN
-        IF NEW.type = 'income' THEN
-            UPDATE public.banks SET balance = balance + NEW.amount, last_updated = NOW() WHERE name = NEW.payment_method;
-        ELSIF NEW.type = 'expense' THEN
-            UPDATE public.banks SET balance = balance - NEW.amount, last_updated = NOW() WHERE name = NEW.payment_method;
-        END IF;
-    ELSIF TG_OP = 'DELETE' THEN
-        IF OLD.type = 'income' THEN
-            UPDATE public.banks SET balance = balance - OLD.amount, last_updated = NOW() WHERE name = OLD.payment_method;
-        ELSIF OLD.type = 'expense' THEN
-            UPDATE public.banks SET balance = balance + OLD.amount, last_updated = NOW() WHERE name = OLD.payment_method;
-        END IF;
-    END IF;
-    RETURN NULL;
-END;
-$$ LANGUAGE plpgsql;
-
-DROP TRIGGER IF EXISTS trg_transaction_bank_sync ON public.transactions;
-CREATE TRIGGER trg_transaction_bank_sync
-AFTER INSERT OR DELETE ON public.transactions
-FOR EACH ROW EXECUTE FUNCTION public.sync_bank_on_transaction();
-
--- ============================================================================
--- 12. ROW LEVEL SECURITY (RLS) POLICIES
--- ============================================================================
-
-ALTER TABLE public.roles ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.departments ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.employees ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.attendance_settings ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.attendance ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.categories ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.banks ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.transactions ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.suppliers ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.supplier_transactions ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.purchases ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.products ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.stock_ledger ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.customers ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.counter_sales ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.customer_payments ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.company_settings ENABLE ROW LEVEL SECURITY;
-
-CREATE POLICY "Authenticated users can manage roles" ON public.roles FOR ALL TO authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "Authenticated users can manage profiles" ON public.profiles FOR ALL TO authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "Authenticated users can manage departments" ON public.departments FOR ALL TO authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "Authenticated users can manage employees" ON public.employees FOR ALL TO authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "Authenticated users can manage attendance_settings" ON public.attendance_settings FOR ALL TO authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "Authenticated users can manage attendance" ON public.attendance FOR ALL TO authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "Authenticated users can manage categories" ON public.categories FOR ALL TO authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "Authenticated users can manage banks" ON public.banks FOR ALL TO authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "Authenticated users can manage transactions" ON public.transactions FOR ALL TO authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "Authenticated users can manage suppliers" ON public.suppliers FOR ALL TO authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "Authenticated users can manage supplier_transactions" ON public.supplier_transactions FOR ALL TO authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "Authenticated users can manage purchases" ON public.purchases FOR ALL TO authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "Authenticated users can manage products" ON public.products FOR ALL TO authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "Authenticated users can manage stock_ledger" ON public.stock_ledger FOR ALL TO authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "Authenticated users can manage customers" ON public.customers FOR ALL TO authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "Authenticated users can manage counter_sales" ON public.counter_sales FOR ALL TO authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "Authenticated users can manage customer_payments" ON public.customer_payments FOR ALL TO authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "Authenticated users can manage company_settings" ON public.company_settings FOR ALL TO authenticated USING (true) WITH CHECK (true);
-
-CREATE POLICY "Public read company settings" ON public.company_settings FOR SELECT TO anon USING (true);
-
--- ============================================================================
--- 13. BUSINESS ANALYTICS & REPORTING VIEWS
--- ============================================================================
-
-CREATE OR REPLACE VIEW public.v_daily_sales_summary AS
-SELECT 
-    date,
-    COUNT(id) AS total_orders,
-    SUM(jsonb_array_length(slips)) AS total_slips_count,
-    SUM(total_slips_amount) AS gross_sales,
-    SUM(discount_amount) AS total_discounts,
-    SUM(net_payable) AS net_sales,
-    SUM(received_amount) AS total_cash_received,
-    SUM(due_amount) AS total_due_given
-FROM public.counter_sales
-GROUP BY date
-ORDER BY date DESC;
-
-CREATE OR REPLACE VIEW public.v_inventory_valuation AS
-SELECT 
-    id,
-    name,
-    category,
-    unit,
-    stock,
-    min_stock,
-    last_purchase_price,
-    (stock * last_purchase_price) AS current_asset_value,
-    CASE WHEN stock <= min_stock THEN true ELSE false END AS is_low_stock_warning
-FROM public.products
-ORDER BY name ASC;
-
-CREATE OR REPLACE VIEW public.v_top_due_customers AS
-SELECT 
-    id,
-    name,
-    phone,
-    address,
-    total_purchases,
-    total_paid,
-    total_due,
-    total_discount,
-    last_transaction_date
-FROM public.customers
-WHERE total_due > 0
-ORDER BY total_due DESC;
-
--- ============================================================================
--- 14. SEED INITIAL DATA (DEFAULTS)
--- ============================================================================
-
-INSERT INTO public.roles (name, description, color_badge, is_default, allowed_menus, actions)
-VALUES 
-(
-    'admin', 
-    'Full administrator access across all registers, ledgers, and settings', 
-    'rose', 
-    true, 
-    '["dashboard", "counter-sale", "sales-list", "customer-ledger", "transactions", "new-sale", "purchase", "suppliers", "inventory", "employees", "attendance", "salary-entry", "salary-sheet", "reports", "users", "settings"]'::jsonb,
-    '{"dashboard": {"view": true, "financials": true}, "counter-sale": {"view": true, "create": true, "edit": true, "delete": true, "export": true, "financials": true}, "transactions": {"view": true, "create": true, "edit": true, "delete": true, "export": true, "financials": true}}'::jsonb
-),
-(
-    'accountant', 
-    'Financial access for transactions, salary sheets, reports, and accounts', 
-    'indigo', 
-    false, 
-    '["dashboard", "transactions", "customer-ledger", "suppliers", "salary-entry", "salary-sheet", "reports"]'::jsonb,
-    '{"dashboard": {"view": true, "financials": true}, "transactions": {"view": true, "create": true, "edit": true, "delete": false, "export": true, "financials": true}}'::jsonb
-),
-(
-    'sales', 
-    'Counter sales, slip entries, customer dues, and inventory lookup', 
-    'emerald', 
-    false, 
-    '["counter-sale", "sales-list", "customer-ledger", "inventory"]'::jsonb,
-    '{"counter-sale": {"view": true, "create": true, "edit": false, "delete": false, "export": true, "financials": false}}'::jsonb
-)
-ON CONFLICT (name) DO NOTHING;
-
-INSERT INTO public.banks (name, balance)
-VALUES ('Cash', 0.00)
-ON CONFLICT (name) DO NOTHING;
-
-INSERT INTO public.categories (name, type, icon)
-VALUES 
-    ('Previous Cash', 'income', 'Wallet'),
-    ('Opening Balance', 'income', 'Landmark'),
-    ('Retail Sales', 'income', 'ShoppingCart'),
-    ('Wholesale Sales', 'income', 'Package'),
-    ('Counter Sale', 'income', 'Receipt'),
-    ('Customer Due Payment', 'income', 'CheckCircle2'),
-    ('Rent', 'expense', 'Building'),
-    ('Electricity', 'expense', 'Zap'),
-    ('Staff Salary', 'expense', 'Users'),
-    ('Employee Advance', 'expense', 'UserCheck'),
-    ('Food', 'expense', 'Coffee'),
-    ('Courier', 'expense', 'Truck')
-ON CONFLICT (name, type) DO NOTHING;
-
-INSERT INTO public.attendance_settings (
-    late_threshold, 
-    lunch_duration_limit, 
-    half_day_threshold, 
-    breakfast_allowance_amount, 
-    deduct_breakfast_on_late, 
-    deduct_breakfast_on_absent, 
-    grace_period_minutes
-)
-VALUES ('10:00:00', 60, '11:30:00', 20.00, true, true, 0)
-ON CONFLICT DO NOTHING;
-
-INSERT INTO public.company_settings (company_name, tagline, phone, email, address, currency, currency_symbol)
-VALUES ('Modern Pro', 'Automated POS & Accounting System', '+880 1700-000000', 'contact@company.com', 'Dhaka, Bangladesh', 'BDT', '৳')
-ON CONFLICT DO NOTHING;`;
-
-const TABLES_METADATA = [
-  { name: "roles", desc: "Custom role architect with modular actions (view, create, edit, delete, financials)", icon: "Shield" },
-  { name: "profiles", desc: "User profiles synced with Supabase Auth auth.users via automated trigger", icon: "Users" },
+import { 
+  getStoredSupabaseUrl, 
+  getStoredSupabaseAnonKey, 
+  saveSupabaseCredentials, 
+  isSupabaseConfigured,
+  testSupabaseConnection,
+  getActiveDatabaseMode,
+  setActiveDatabaseMode
+} from "@/src/lib/supabase";
+import { 
+  fetchAllFirestoreData, 
+  pushDataDirectlyToSupabase, 
+  downloadFullDataSql,
+  FullExportData 
+} from "@/src/lib/supabaseMigration";
+import rawSupabaseSql from "/supabase.sql?raw";
+
+export const SUPABASE_SQL_SCHEMA = rawSupabaseSql;
+
+export const TABLES_METADATA = [
+  { name: "roles", desc: "Custom role architect with granular module permissions & actions", icon: "ShieldCheck" },
+  { name: "profiles", desc: "User accounts, roles, designations, and Supabase Auth identity sync", icon: "Users" },
   { name: "departments", desc: "Corporate departments and branches registry", icon: "Layers" },
   { name: "employees", desc: "Staff registry with compensation, NID/photo attachments, and roles", icon: "Users" },
   { name: "attendance_settings", desc: "Configurable business rules for late-cuts and breakfast allowances", icon: "Settings" },
@@ -682,13 +63,130 @@ const TABLES_METADATA = [
   { name: "customers", desc: "Counter retail and wholesale customers with live balance due tracking", icon: "UserCheck" },
   { name: "counter_sales", desc: "Rapid slip-based counter sales with discount engine, cash, and credit balance", icon: "Receipt" },
   { name: "customer_payments", desc: "Payment receipt vouchers for customer credit due recovery", icon: "CheckCircle2" },
+  { name: "activity_notifications", desc: "Super admin real-time activity notifications and complete audit trail", icon: "Bell" },
   { name: "company_settings", desc: "Brand identity, logos, system title, and currency configuration", icon: "Briefcase" }
 ];
 
 export default function SupabaseSqlHub() {
   const [copied, setCopied] = useState(false);
-  const [showCode, setShowCode] = useState(false);
-  const [activeTab, setActiveTab] = useState<"overview" | "code" | "guide">("overview");
+  const [activeTab, setActiveTab] = useState<"migration" | "overview" | "guide" | "code">("migration");
+
+  // Credentials form state
+  const [url, setUrl] = useState(() => getStoredSupabaseUrl());
+  const [anonKey, setAnonKey] = useState(() => getStoredSupabaseAnonKey());
+  const [testingConnection, setTestingConnection] = useState(false);
+  const [connectionResult, setConnectionResult] = useState<{ success: boolean; message: string } | null>(null);
+  const [activeMode, setActiveMode] = useState<"supabase" | "firebase">(() => getActiveDatabaseMode());
+
+  // Migration state
+  const [isMigrating, setIsMigrating] = useState(false);
+  const [migrationProgress, setMigrationProgress] = useState(0);
+  const [migrationStatusText, setMigrationStatusText] = useState("");
+  const [migrationSummary, setMigrationSummary] = useState<Record<string, number> | null>(null);
+  const [migrationError, setMigrationError] = useState<string | null>(null);
+  const [isFetchingDataCount, setIsFetchingDataCount] = useState(false);
+  const [dataStats, setDataStats] = useState<Record<string, number>>({});
+
+  useEffect(() => {
+    // Load initial counts of existing data
+    fetchExistingDataCounts();
+  }, []);
+
+  const fetchExistingDataCounts = async () => {
+    setIsFetchingDataCount(true);
+    try {
+      const data = await fetchAllFirestoreData();
+      setDataStats({
+        counterSales: data.counterSales.length,
+        customers: data.customers.length,
+        customerPayments: data.customerPayments.length,
+        transactions: data.transactions.length,
+        banks: data.banks.length,
+        products: data.products.length,
+        suppliers: data.suppliers.length,
+        employees: data.employees.length,
+        categories: data.categories.length,
+        departments: data.departments.length,
+        roles: data.roles.length,
+        activityNotifications: data.activityNotifications.length,
+      });
+    } catch (e) {
+      console.warn("Could not fetch data counts:", e);
+    } finally {
+      setIsFetchingDataCount(false);
+    }
+  };
+
+  const handleSaveCredentials = () => {
+    if (!url.trim() || !anonKey.trim()) {
+      alert("Please provide both Supabase Project URL and Anon API Key.");
+      return;
+    }
+    saveSupabaseCredentials(url, anonKey);
+    setActiveDatabaseMode("supabase");
+    setActiveMode("supabase");
+    setConnectionResult({
+      success: true,
+      message: "Credentials saved! Supabase is now set as the primary database."
+    });
+  };
+
+  const handleTestConnection = async () => {
+    setTestingConnection(true);
+    setConnectionResult(null);
+    try {
+      // Save temporarily first so getSupabase() uses the current inputs
+      saveSupabaseCredentials(url, anonKey);
+      const res = await testSupabaseConnection();
+      setConnectionResult(res);
+      if (res.success) {
+        setActiveDatabaseMode("supabase");
+        setActiveMode("supabase");
+      }
+    } catch (err: any) {
+      setConnectionResult({
+        success: false,
+        message: err.message || "Connection failed. Please check Project URL and API Key."
+      });
+    } finally {
+      setTestingConnection(false);
+    }
+  };
+
+  const handleRunMigration = async () => {
+    if (!isSupabaseConfigured()) {
+      alert("Please enter and save your Supabase Project URL and Anon Key before migrating data.");
+      return;
+    }
+
+    setIsMigrating(true);
+    setMigrationError(null);
+    setMigrationSummary(null);
+    setMigrationProgress(5);
+    setMigrationStatusText("Reading all live records from system storage...");
+
+    try {
+      const allData = await fetchAllFirestoreData();
+      setMigrationProgress(15);
+      setMigrationStatusText("Beginning bulk push to Supabase PostgreSQL...");
+
+      const result = await pushDataDirectlyToSupabase(allData, (step, percent) => {
+        setMigrationStatusText(step);
+        setMigrationProgress(percent);
+      });
+
+      setMigrationSummary(result.summary);
+      setMigrationStatusText("Complete! All system records have been saved in Supabase.");
+      setActiveDatabaseMode("supabase");
+      setActiveMode("supabase");
+      fetchExistingDataCounts();
+    } catch (err: any) {
+      console.error("Migration error:", err);
+      setMigrationError(err.message || "An error occurred during data migration to Supabase.");
+    } finally {
+      setIsMigrating(false);
+    }
+  };
 
   const handleCopy = async () => {
     try {
@@ -702,145 +200,154 @@ export default function SupabaseSqlHub() {
 
   const handleDownload = () => {
     const blob = new Blob([SUPABASE_SQL_SCHEMA], { type: "text/plain;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
+    const urlBlob = URL.createObjectURL(blob);
     const link = document.createElement("a");
-    link.href = url;
+    link.href = urlBlob;
     link.download = `supabase-schema-${new Date().toISOString().split("T")[0]}.sql`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
-    URL.revokeObjectURL(url);
+    URL.revokeObjectURL(urlBlob);
   };
+
+  const totalRecordsCount = Object.values(dataStats).reduce<number>((a, b) => Number(a || 0) + Number(b || 0), 0);
 
   return (
     <section className="space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-600 shadow-xs">
-            <Database className="w-5 h-5" />
+      {/* Top Header Card */}
+      <div className="bg-gradient-to-r from-slate-900 via-slate-800 to-emerald-950 text-white rounded-3xl p-6 sm:p-8 shadow-xl border border-emerald-900/40 relative overflow-hidden">
+        <div className="absolute right-0 top-0 w-96 h-96 bg-emerald-500/10 rounded-full blur-3xl pointer-events-none -mr-20 -mt-20"></div>
+
+        <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-6">
+          <div className="space-y-2">
+            <div className="flex items-center gap-3">
+              <div className="w-12 h-12 rounded-2xl bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center text-emerald-400 shadow-inner">
+                <Database className="w-6 h-6" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <h3 className="text-xl font-black tracking-tight text-white">
+                    Supabase PostgreSQL Database Engine
+                  </h3>
+                  <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                    Primary Engine
+                  </span>
+                </div>
+                <p className="text-xs text-slate-300 font-medium mt-0.5">
+                  সিস্টেমের মূল ডাটাবেজ হিসেবে Supabase যুক্ত করুন এবং পূর্বের সকল ডেটা এক ক্লিকে সেভ করুন।
+                </p>
+              </div>
+            </div>
           </div>
-          <div>
-            <h3 className="text-lg font-black text-slate-900 flex items-center gap-2">
-              Supabase PostgreSQL Schema Hub
-              <span className="px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-emerald-100 text-emerald-700">
-                Production Ready
-              </span>
-            </h3>
-            <p className="text-xs text-slate-500 font-medium">
-              Complete PostgreSQL database definition, RLS security policies, triggers, and analytical views for Supabase.
-            </p>
+
+          <div className="flex items-center gap-3 flex-wrap">
+            <button
+              onClick={handleCopy}
+              className={cn(
+                "px-4 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider flex items-center gap-2 transition-all cursor-pointer shadow-md",
+                copied 
+                  ? "bg-emerald-500 text-white" 
+                  : "bg-white/10 hover:bg-white/20 text-white border border-white/10"
+              )}
+            >
+              {copied ? <Check className="w-4 h-4 text-emerald-300" /> : <Copy className="w-4 h-4" />}
+              {copied ? "SQL Copied!" : "Copy SQL Schema"}
+            </button>
+
+            <button
+              onClick={handleDownload}
+              className="px-4 py-2.5 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black rounded-xl text-xs uppercase tracking-wider flex items-center gap-2 transition-all cursor-pointer shadow-lg shadow-emerald-500/20"
+            >
+              <Download className="w-4 h-4" />
+              Download .sql
+            </button>
           </div>
         </div>
 
-        <div className="flex items-center gap-2 shrink-0">
-          <button
-            onClick={handleCopy}
-            className={cn(
-              "px-4 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider flex items-center gap-2 transition-all cursor-pointer shadow-xs",
-              copied 
-                ? "bg-emerald-600 text-white shadow-emerald-200" 
-                : "bg-slate-900 hover:bg-slate-800 text-white"
-            )}
-          >
-            {copied ? (
-              <>
-                <Check className="w-4 h-4" />
-                Copied to Clipboard!
-              </>
-            ) : (
-              <>
-                <Copy className="w-4 h-4" />
-                Copy Full SQL
-              </>
-            )}
-          </button>
-
-          <button
-            onClick={handleDownload}
-            className="px-4 py-2.5 bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 hover:border-slate-300 rounded-xl text-xs font-black uppercase tracking-wider flex items-center gap-2 transition-all cursor-pointer shadow-xs"
-          >
-            <Download className="w-4 h-4" />
-            Download .sql
-          </button>
-        </div>
-      </div>
-
-      {/* Feature Highlights Grid */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <div className="p-4 bg-white rounded-2xl border border-slate-100 shadow-xs space-y-1">
-          <div className="flex items-center gap-2 text-slate-400 text-xs font-bold uppercase tracking-wider">
-            <TableProperties className="w-4 h-4 text-emerald-500" />
-            18 Relational Tables
+        {/* Database Status Ribbon */}
+        <div className="mt-6 pt-6 border-t border-slate-700/60 grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <div className="flex items-center gap-3 bg-white/5 p-3 rounded-2xl border border-white/5">
+            <Radio className={cn("w-5 h-5", isSupabaseConfigured() ? "text-emerald-400" : "text-amber-400")} />
+            <div>
+              <p className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Active Database Mode</p>
+              <p className="text-xs font-black text-white">
+                {isSupabaseConfigured() ? "Supabase (PostgreSQL)" : "Configuration Pending"}
+              </p>
+            </div>
           </div>
-          <p className="text-xl font-black text-slate-900">PostgreSQL Schema</p>
-          <p className="text-[11px] text-slate-500 font-medium">Full ERP, POS, HR & Ledgers</p>
-        </div>
 
-        <div className="p-4 bg-white rounded-2xl border border-slate-100 shadow-xs space-y-1">
-          <div className="flex items-center gap-2 text-slate-400 text-xs font-bold uppercase tracking-wider">
-            <ShieldCheck className="w-4 h-4 text-indigo-500" />
-            Row Level Security (RLS)
+          <div className="flex items-center gap-3 bg-white/5 p-3 rounded-2xl border border-white/5">
+            <HardDrive className="w-5 h-5 text-indigo-400" />
+            <div>
+              <p className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Existing System Records</p>
+              <p className="text-xs font-black text-white">
+                {isFetchingDataCount ? "Counting..." : `${totalRecordsCount} Records Identified`}
+              </p>
+            </div>
           </div>
-          <p className="text-xl font-black text-slate-900">18 Policies Configured</p>
-          <p className="text-[11px] text-slate-500 font-medium">Supabase Auth token validation</p>
-        </div>
 
-        <div className="p-4 bg-white rounded-2xl border border-slate-100 shadow-xs space-y-1">
-          <div className="flex items-center gap-2 text-slate-400 text-xs font-bold uppercase tracking-wider">
-            <Zap className="w-4 h-4 text-amber-500" />
-            Automated Triggers
+          <div className="flex items-center gap-3 bg-white/5 p-3 rounded-2xl border border-white/5">
+            <ShieldCheck className="w-5 h-5 text-emerald-400" />
+            <div>
+              <p className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Table Architecture</p>
+              <p className="text-xs font-black text-white">18 Tables + Triggers + RLS</p>
+            </div>
           </div>
-          <p className="text-xl font-black text-slate-900">Live Balances & Timestamps</p>
-          <p className="text-[11px] text-slate-500 font-medium">Auto customer dues & bank balances</p>
-        </div>
-
-        <div className="p-4 bg-white rounded-2xl border border-slate-100 shadow-xs space-y-1">
-          <div className="flex items-center gap-2 text-slate-400 text-xs font-bold uppercase tracking-wider">
-            <FileCode className="w-4 h-4 text-blue-500" />
-            Analytical Views
-          </div>
-          <p className="text-xl font-black text-slate-900">Instant Reports</p>
-          <p className="text-[11px] text-slate-500 font-medium">Daily sales, inventory & due ranking</p>
         </div>
       </div>
 
-      {/* Main Container */}
+      {/* Main Tabbed Container */}
       <div className="bg-white rounded-3xl border border-slate-200/80 shadow-sm overflow-hidden">
         {/* Navigation Tabs */}
-        <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4 bg-slate-50/50">
-          <div className="flex items-center gap-2">
+        <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4 bg-slate-50/50 flex-wrap gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            <button
+              onClick={() => setActiveTab("migration")}
+              className={cn(
+                "px-3.5 py-1.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all cursor-pointer flex items-center gap-1.5",
+                activeTab === "migration" 
+                  ? "bg-slate-900 text-white shadow-xs" 
+                  : "text-slate-600 hover:text-slate-900 hover:bg-slate-100"
+              )}
+            >
+              <UploadCloud className="w-3.5 h-3.5" />
+              1-Click Data Migration
+            </button>
             <button
               onClick={() => setActiveTab("overview")}
               className={cn(
-                "px-3.5 py-1.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all cursor-pointer",
+                "px-3.5 py-1.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all cursor-pointer flex items-center gap-1.5",
                 activeTab === "overview" 
                   ? "bg-slate-900 text-white shadow-xs" 
                   : "text-slate-600 hover:text-slate-900 hover:bg-slate-100"
               )}
             >
-              Tables & Schema
+              <TableProperties className="w-3.5 h-3.5" />
+              Tables & Schema ({TABLES_METADATA.length})
             </button>
             <button
               onClick={() => setActiveTab("guide")}
               className={cn(
-                "px-3.5 py-1.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all cursor-pointer",
+                "px-3.5 py-1.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all cursor-pointer flex items-center gap-1.5",
                 activeTab === "guide" 
                   ? "bg-slate-900 text-white shadow-xs" 
                   : "text-slate-600 hover:text-slate-900 hover:bg-slate-100"
               )}
             >
-              Setup Guide
+              <BookOpen className="w-3.5 h-3.5" />
+              Supabase 3-Step Guide
             </button>
             <button
               onClick={() => setActiveTab("code")}
               className={cn(
-                "px-3.5 py-1.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all cursor-pointer",
+                "px-3.5 py-1.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all cursor-pointer flex items-center gap-1.5",
                 activeTab === "code" 
                   ? "bg-slate-900 text-white shadow-xs" 
                   : "text-slate-600 hover:text-slate-900 hover:bg-slate-100"
               )}
             >
-              SQL Script Viewer
+              <Terminal className="w-3.5 h-3.5" />
+              SQL Script Code
             </button>
           </div>
 
@@ -849,7 +356,241 @@ export default function SupabaseSqlHub() {
           </div>
         </div>
 
-        {/* Tab 1: Tables & Schema Overview */}
+        {/* Tab 1: Migration & Connection Hub */}
+        {activeTab === "migration" && (
+          <div className="p-6 md:p-8 space-y-8">
+            {/* Supabase Connection Setup Box */}
+            <div className="bg-slate-50/80 rounded-2xl border border-slate-200/80 p-6 space-y-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Key className="w-5 h-5 text-emerald-600" />
+                  <h4 className="text-sm font-black text-slate-900">
+                    Supabase Project Credentials (প্রজেক্ট সংযোগ)
+                  </h4>
+                </div>
+                <a 
+                  href="https://supabase.com/dashboard" 
+                  target="_blank" 
+                  rel="noreferrer" 
+                  className="text-xs font-bold text-emerald-600 hover:text-emerald-700 flex items-center gap-1"
+                >
+                  Open Supabase Dashboard <ExternalLink className="w-3 h-3" />
+                </a>
+              </div>
+              <p className="text-xs text-slate-500 font-medium">
+                আপনার Supabase প্রজেক্টের <strong>Project Settings → API</strong> থেকে Project URL ও anon public key এখানে প্রদান করুন।
+              </p>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
+                    <Globe className="w-3.5 h-3.5 text-slate-400" />
+                    Supabase Project URL
+                  </label>
+                  <input
+                    type="text"
+                    value={url}
+                    onChange={(e) => setUrl(e.target.value)}
+                    placeholder="https://xyzprojectid.supabase.co"
+                    className="w-full px-3.5 py-2.5 bg-white border border-slate-200 rounded-xl text-xs font-mono text-slate-800 focus:outline-hidden focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
+                    <Key className="w-3.5 h-3.5 text-slate-400" />
+                    Anon Public API Key
+                  </label>
+                  <input
+                    type="password"
+                    value={anonKey}
+                    onChange={(e) => setAnonKey(e.target.value)}
+                    placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+                    className="w-full px-3.5 py-2.5 bg-white border border-slate-200 rounded-xl text-xs font-mono text-slate-800 focus:outline-hidden focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
+                  />
+                </div>
+              </div>
+
+              {connectionResult && (
+                <div className={cn(
+                  "p-3.5 rounded-xl border text-xs font-medium flex items-center gap-2.5",
+                  connectionResult.success 
+                    ? "bg-emerald-50 border-emerald-200 text-emerald-800" 
+                    : "bg-rose-50 border-rose-200 text-rose-800"
+                )}>
+                  {connectionResult.success ? (
+                    <CheckCircle className="w-4 h-4 text-emerald-600 shrink-0" />
+                  ) : (
+                    <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                  )}
+                  <span>{connectionResult.message}</span>
+                </div>
+              )}
+
+              <div className="flex items-center gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={handleSaveCredentials}
+                  className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white font-bold rounded-xl text-xs transition-colors cursor-pointer shadow-xs"
+                >
+                  Save Credentials
+                </button>
+                <button
+                  type="button"
+                  onClick={handleTestConnection}
+                  disabled={testingConnection || !url.trim() || !anonKey.trim()}
+                  className="px-4 py-2 bg-white hover:bg-slate-100 text-slate-700 border border-slate-200 font-bold rounded-xl text-xs transition-colors cursor-pointer flex items-center gap-2"
+                >
+                  {testingConnection ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5 text-emerald-600" />}
+                  Test Connection Live
+                </button>
+              </div>
+            </div>
+
+            {/* Live Data Summary & 1-Click Migration Card */}
+            <div className="bg-gradient-to-br from-emerald-500/5 via-slate-50 to-indigo-500/5 rounded-3xl border border-emerald-200/60 p-6 md:p-8 space-y-6">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                <div>
+                  <h4 className="text-base font-black text-slate-900 flex items-center gap-2">
+                    <UploadCloud className="w-5 h-5 text-emerald-600" />
+                    সব ডেটা Supabase-এ সেভ / ট্রান্সফার করুন (1-Click Full Migration)
+                  </h4>
+                  <p className="text-xs text-slate-500 font-medium mt-1">
+                    বর্তমান সিস্টেমে বিদ্যমান সকল বিক্রয়, ক্রেতা খাতা, ট্রানজেকশন, প্রোডাক্ট, ব্যাংক ও কর্মচারী ডেটা সরাসরি Supabase PostgreSQL-এ আপলোড ও সেভ হবে।
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={downloadFullDataSql}
+                    className="px-3.5 py-2 bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 text-xs font-bold rounded-xl flex items-center gap-1.5 transition-colors cursor-pointer"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    Download Data .sql
+                  </button>
+                  <button
+                    onClick={handleRunMigration}
+                    disabled={isMigrating}
+                    className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-black rounded-xl text-xs uppercase tracking-wider flex items-center gap-2 transition-all cursor-pointer shadow-lg shadow-emerald-600/20 disabled:opacity-50"
+                  >
+                    {isMigrating ? <RefreshCw className="w-4 h-4 animate-spin" /> : <UploadCloud className="w-4 h-4" />}
+                    {isMigrating ? "Migrating Data..." : "Start Migration Now"}
+                  </button>
+                </div>
+              </div>
+
+              {/* Progress Bar if migrating */}
+              {isMigrating && (
+                <div className="bg-white p-5 rounded-2xl border border-emerald-200 space-y-2.5 shadow-sm">
+                  <div className="flex items-center justify-between text-xs font-bold text-slate-700">
+                    <span className="flex items-center gap-2 text-emerald-700">
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                      {migrationStatusText}
+                    </span>
+                    <span>{migrationProgress}%</span>
+                  </div>
+                  <div className="w-full bg-slate-100 rounded-full h-2.5 overflow-hidden">
+                    <div 
+                      className="bg-emerald-500 h-2.5 rounded-full transition-all duration-300"
+                      style={{ width: `${migrationProgress}%` }}
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* Migration Success Summary */}
+              {migrationSummary && (
+                <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-5 space-y-3">
+                  <div className="flex items-center gap-2 text-emerald-800 font-black text-sm">
+                    <CheckCircle className="w-5 h-5 text-emerald-600" />
+                    মাইগ্রেশন সফলভাবে সম্পন্ন হয়েছে! সকল ডেটা Supabase এ সংরক্ষিত হয়েছে।
+                  </div>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-6 gap-2.5 pt-1">
+                    {Object.entries(migrationSummary).map(([table, count]) => (
+                      <div key={table} className="bg-white/80 p-2.5 rounded-xl border border-emerald-100 text-center">
+                        <span className="text-[10px] font-bold text-slate-500 uppercase">{table}</span>
+                        <p className="text-base font-black text-emerald-900">{count}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Migration Error */}
+              {migrationError && (
+                <div className="bg-rose-50 border border-rose-200 rounded-2xl p-5 text-xs text-rose-800 flex items-start gap-3">
+                  <AlertCircle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
+                  <div className="space-y-1">
+                    <p className="font-bold">Migration Notice:</p>
+                    <p>{migrationError}</p>
+                    <p className="text-slate-600 pt-1">
+                      টিপস: প্রথমে Supabase SQL Editor-এ <code className="bg-white px-1.5 py-0.5 rounded font-mono font-bold text-slate-800">supabase.sql</code> চালিয়ে টেবিলগুলো তৈরি করে নিন, তারপর মাইগ্রেশন চালান।
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* Identified Data Inventory Grid */}
+              <div className="space-y-2">
+                <p className="text-xs font-bold text-slate-700 uppercase tracking-wider">
+                  বর্তমান সিস্টেমে সনাক্তকৃত ডেটা তালিকা ({totalRecordsCount} মোট রেকর্ড):
+                </p>
+                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
+                  <div className="bg-white p-3.5 rounded-xl border border-slate-100 text-center shadow-2xs">
+                    <span className="text-[10px] font-bold text-slate-400 uppercase">Counter Sales</span>
+                    <p className="text-base font-black text-slate-900">{dataStats.counterSales ?? 0}</p>
+                  </div>
+                  <div className="bg-white p-3.5 rounded-xl border border-slate-100 text-center shadow-2xs">
+                    <span className="text-[10px] font-bold text-slate-400 uppercase">Customers</span>
+                    <p className="text-base font-black text-slate-900">{dataStats.customers ?? 0}</p>
+                  </div>
+                  <div className="bg-white p-3.5 rounded-xl border border-slate-100 text-center shadow-2xs">
+                    <span className="text-[10px] font-bold text-slate-400 uppercase">Customer Due Pays</span>
+                    <p className="text-base font-black text-slate-900">{dataStats.customerPayments ?? 0}</p>
+                  </div>
+                  <div className="bg-white p-3.5 rounded-xl border border-slate-100 text-center shadow-2xs">
+                    <span className="text-[10px] font-bold text-slate-400 uppercase">Transactions</span>
+                    <p className="text-base font-black text-slate-900">{dataStats.transactions ?? 0}</p>
+                  </div>
+                  <div className="bg-white p-3.5 rounded-xl border border-slate-100 text-center shadow-2xs">
+                    <span className="text-[10px] font-bold text-slate-400 uppercase">Banks & Accounts</span>
+                    <p className="text-base font-black text-slate-900">{dataStats.banks ?? 0}</p>
+                  </div>
+                  <div className="bg-white p-3.5 rounded-xl border border-slate-100 text-center shadow-2xs">
+                    <span className="text-[10px] font-bold text-slate-400 uppercase">Products</span>
+                    <p className="text-base font-black text-slate-900">{dataStats.products ?? 0}</p>
+                  </div>
+                  <div className="bg-white p-3.5 rounded-xl border border-slate-100 text-center shadow-2xs">
+                    <span className="text-[10px] font-bold text-slate-400 uppercase">Suppliers</span>
+                    <p className="text-base font-black text-slate-900">{dataStats.suppliers ?? 0}</p>
+                  </div>
+                  <div className="bg-white p-3.5 rounded-xl border border-slate-100 text-center shadow-2xs">
+                    <span className="text-[10px] font-bold text-slate-400 uppercase">Employees</span>
+                    <p className="text-base font-black text-slate-900">{dataStats.employees ?? 0}</p>
+                  </div>
+                  <div className="bg-white p-3.5 rounded-xl border border-slate-100 text-center shadow-2xs">
+                    <span className="text-[10px] font-bold text-slate-400 uppercase">Categories</span>
+                    <p className="text-base font-black text-slate-900">{dataStats.categories ?? 0}</p>
+                  </div>
+                  <div className="bg-white p-3.5 rounded-xl border border-slate-100 text-center shadow-2xs">
+                    <span className="text-[10px] font-bold text-slate-400 uppercase">Notifications</span>
+                    <p className="text-base font-black text-slate-900">{dataStats.activityNotifications ?? 0}</p>
+                  </div>
+                  <div className="bg-white p-3.5 rounded-xl border border-slate-100 text-center shadow-2xs">
+                    <span className="text-[10px] font-bold text-slate-400 uppercase">Roles</span>
+                    <p className="text-base font-black text-slate-900">{dataStats.roles ?? 0}</p>
+                  </div>
+                  <div className="bg-white p-3.5 rounded-xl border border-slate-100 text-center shadow-2xs">
+                    <span className="text-[10px] font-bold text-slate-400 uppercase">Departments</span>
+                    <p className="text-base font-black text-slate-900">{dataStats.departments ?? 0}</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Tab 2: Tables & Schema Overview */}
         {activeTab === "overview" && (
           <div className="p-6 md:p-8 space-y-6">
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -877,7 +618,7 @@ export default function SupabaseSqlHub() {
           </div>
         )}
 
-        {/* Tab 2: Step-by-Step Setup Guide */}
+        {/* Tab 3: Step-by-Step Setup Guide */}
         {activeTab === "guide" && (
           <div className="p-6 md:p-8 space-y-6">
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -926,7 +667,7 @@ export default function SupabaseSqlHub() {
           </div>
         )}
 
-        {/* Tab 3: SQL Code Viewer */}
+        {/* Tab 4: SQL Code Viewer */}
         {activeTab === "code" && (
           <div className="p-6 md:p-8 space-y-4">
             <div className="flex items-center justify-between">

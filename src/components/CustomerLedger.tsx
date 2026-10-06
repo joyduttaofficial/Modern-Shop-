@@ -66,7 +66,7 @@ export default function CustomerLedger({
   const { language, t, formatDate, formatNumber } = useLanguage();
 
   // Company Branding parameters
-  const [companyName, setCompanyName] = useState("Modern Pro");
+  const [companyName, setCompanyName] = useState("Modern Cloth Store");
   const [companyPhone, setCompanyPhone] = useState("+880 1234 567890");
   const [companyAddress, setCompanyAddress] = useState("Dhaka, Bangladesh");
 
@@ -74,7 +74,7 @@ export default function CustomerLedger({
     const unsub = onSnapshot(doc(db, "settings", "company"), (docSnap) => {
       if (docSnap.exists()) {
         const data = docSnap.data();
-        setCompanyName(data.companyName || "Modern Pro");
+        setCompanyName(data.companyName || "Modern Cloth Store");
         setCompanyPhone(data.companyPhone || "+880 1234 567890");
         setCompanyAddress(data.companyAddress || "Dhaka, Bangladesh");
       }

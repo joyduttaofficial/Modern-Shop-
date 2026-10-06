@@ -4,8 +4,24 @@ import { ActivityAction, ActivityNotification } from "../types";
 import { saveActivityNotificationToSupabase } from "./supabaseDb";
 import { isSupabaseConfigured } from "./supabase";
 
-// In-memory debounce cache to prevent duplicate view logging within a short window
-const recentViewLogs: Record<string, number> = {};
+// In-memory debounce cache to prevent duplicate activity logging within a window
+const recentActionCache: Record<string, number> = {};
+
+/**
+ * Checks if a user is the Super Admin.
+ * Super Admin activity requires NO notification creation.
+ */
+export function isSuperAdminUser(userRole?: string, userEmail?: string): boolean {
+  if (!userRole && !userEmail) return false;
+  const role = (userRole || "").toLowerCase().trim();
+  const email = (userEmail || "").toLowerCase().trim();
+  return (
+    role === "admin" ||
+    role === "superadmin" ||
+    role === "super_admin" ||
+    email === "joydutta398878@gmail.com"
+  );
+}
 
 export interface LogActivityParams {
   userId?: string;
@@ -22,8 +38,11 @@ export interface LogActivityParams {
 }
 
 /**
- * Logs user activity (create, edit, delete, view) directly to Firestore `activityNotifications`
- * so Super Admins receive real-time alerts.
+ * Logs user activity directly for Super Admin review.
+ * RULES:
+ * 1. When Super Admin is using the system, NO notifications are generated.
+ * 2. When other users (non-admin) use the system, a single consolidated notification
+ *    is recorded which can be checked later by the Super Admin in the notification center.
  */
 export async function logUserActivity(params: LogActivityParams): Promise<string | null> {
   try {
@@ -41,16 +60,25 @@ export async function logUserActivity(params: LogActivityParams): Promise<string
       metadata = {}
     } = params;
 
-    // Prevent spamming view logs for the same menu within 30 seconds by the same user
-    if (action === "view") {
-      const viewKey = `${userId}_${menuId}`;
-      const now = Date.now();
-      const lastLogged = recentViewLogs[viewKey] || 0;
-      if (now - lastLogged < 30000) {
-        return null;
-      }
-      recentViewLogs[viewKey] = now;
+    // RULE 1: Super Admin actions do NOT need any notifications
+    if (isSuperAdminUser(userRole, userEmail)) {
+      return null;
     }
+
+    // RULE 2: Passive page views or menu switches do not generate notifications
+    if (action === "view") {
+      return null;
+    }
+
+    // RULE 3: Debounce & deduplicate actions from the same non-admin user within 15 seconds
+    // to ensure a single clean notification is recorded instead of multiple duplicate alerts
+    const debounceKey = `${userId}_${action}_${menuId}`;
+    const now = Date.now();
+    const lastLogged = recentActionCache[debounceKey] || 0;
+    if (now - lastLogged < 15000) {
+      return null;
+    }
+    recentActionCache[debounceKey] = now;
 
     const newNotification: Omit<ActivityNotification, "id"> = {
       userId,

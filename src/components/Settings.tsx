@@ -10,6 +10,7 @@ import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
 import { clearAllOfflineData } from "@/src/lib/indexedDbFallback";
 import SupabaseSqlHub from "./SupabaseSqlHub";
+import AppLogo, { defaultStoreLogo } from "./AppLogo";
 
 export default function Settings({ user, role }: { user: User; role: UserRole }) {
   const [categories, setCategories] = useState<Category[]>([]);
@@ -115,8 +116,8 @@ export default function Settings({ user, role }: { user: User; role: UserRole })
   const [isSavingBank, setIsSavingBank] = useState(false);
 
   // Company Branding States
-  const [companyName, setCompanyName] = useState("Modern Pro");
-  const [companyTagline, setCompanyTagline] = useState("Automated POS");
+  const [companyName, setCompanyName] = useState("Modern Cloth Store");
+  const [companyTagline, setCompanyTagline] = useState("Since : 1983 - POS & Inventory");
   const [companyLogoUrl, setCompanyLogoUrl] = useState("");
   const [companyPhone, setCompanyPhone] = useState("+880 1234 567890");
   const [companyEmail, setCompanyEmail] = useState("info@modernmanager.com");
@@ -593,8 +594,8 @@ export default function Settings({ user, role }: { user: User; role: UserRole })
     const unsubCompanySettings = onSnapshot(doc(db, "settings", "company"), (docSnap) => {
       if (docSnap.exists()) {
         const data = docSnap.data();
-        setCompanyName(data.companyName || "Modern Pro");
-        setCompanyTagline(data.companyTagline || "Automated POS");
+        setCompanyName(data.companyName || "Modern Cloth Store");
+        setCompanyTagline(data.companyTagline || "Since : 1983 - POS & Inventory");
         setCompanyLogoUrl(data.companyLogoUrl || "");
         setCompanyPhone(data.companyPhone || "+880 1234 567890");
         setCompanyEmail(data.companyEmail || "info@modernmanager.com");
@@ -949,21 +950,7 @@ export default function Settings({ user, role }: { user: User; role: UserRole })
                 
                 {/* Brand Preview layout resembling header-bar logo */}
                 <div className="flex items-center gap-4 bg-white p-4 rounded-xl border border-gray-100 shadow-xs mb-4">
-                  {companyLogoUrl ? (
-                    <img 
-                      src={companyLogoUrl} 
-                      alt="Brand Custom Logo" 
-                      className="w-11 h-11 rounded-xl object-contain border border-gray-100 shrink-0 bg-white" 
-                      referrerPolicy="no-referrer"
-                      onError={(e) => {
-                        (e.target as HTMLImageElement).src = `https://api.dicebear.com/7.x/identicon/svg?seed=${encodeURIComponent(companyName)}`;
-                      }}
-                    />
-                  ) : (
-                    <div className="w-11 h-11 bg-slate-950 rounded-xl flex items-center justify-center shadow-md">
-                      <LayoutGrid className="w-6 h-6 text-white" />
-                    </div>
-                  )}
+                  <AppLogo src={companyLogoUrl} size="lg" rounded="xl" />
                   <div className="truncate">
                     <span className="text-base font-black tracking-tight text-slate-900 block leading-tight">{companyName}</span>
                     <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mt-0.5 block truncate">{companyTagline}</span>

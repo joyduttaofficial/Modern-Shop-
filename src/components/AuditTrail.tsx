@@ -24,7 +24,8 @@ import { db } from "../lib/firebase";
 import { ActivityAction, ActivityNotification, UserRole } from "../types";
 import { 
   deleteActivityNotification, 
-  clearAllActivityNotifications 
+  clearAllActivityNotifications,
+  isSuperAdminUser 
 } from "../lib/activityLogger";
 import { cn } from "../lib/utils";
 import { format, isToday, isWithinInterval, subDays, startOfDay, endOfDay } from "date-fns";
@@ -81,8 +82,11 @@ export default function AuditTrail({
     new Set(notifications.map(n => n.menuLabel).filter(Boolean))
   );
 
-  // Filtered dataset
+  // Filtered dataset (strictly showing other users' activities)
   const filteredLogs = notifications.filter(n => {
+    if (isSuperAdminUser(n.userRole, n.userEmail)) {
+      return false;
+    }
     if (selectedAction !== "all" && n.action !== selectedAction) {
       return false;
     }

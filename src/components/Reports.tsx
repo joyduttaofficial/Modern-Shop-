@@ -334,8 +334,8 @@ export default function Reports({ user, role }: { user: User; role: UserRole }) 
   };
 
   // Dynamic company settings context
-  const [companyName, setCompanyName] = useState("Modern Pro");
-  const [companyTagline, setCompanyTagline] = useState("Automated POS");
+  const [companyName, setCompanyName] = useState("Modern Cloth Store");
+  const [companyTagline, setCompanyTagline] = useState("Since : 1983 - POS & Inventory");
   const [companyLogoUrl, setCompanyLogoUrl] = useState("");
   const [companyPhone, setCompanyPhone] = useState("+880 1234 567890");
   const [companyEmail, setCompanyEmail] = useState("info@modernmanager.com");
@@ -345,8 +345,8 @@ export default function Reports({ user, role }: { user: User; role: UserRole }) 
     const unsubBranding = onSnapshot(doc(db, "settings", "company"), (docSnap) => {
       if (docSnap.exists()) {
         const data = docSnap.data();
-        setCompanyName(data.companyName || "Modern Pro");
-        setCompanyTagline(data.companyTagline || "Automated POS");
+        setCompanyName(data.companyName || "Modern Cloth Store");
+        setCompanyTagline(data.companyTagline || "Since : 1983 - POS & Inventory");
         setCompanyLogoUrl(data.companyLogoUrl || "");
         setCompanyPhone(data.companyPhone || "+880 1234 567890");
         setCompanyEmail(data.companyEmail || "info@modernmanager.com");

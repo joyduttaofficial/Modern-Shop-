@@ -27,8 +27,8 @@ export default function Suppliers({
   const [transactions, setTransactions] = useState<SupplierTransaction[]>([]);
 
   // Corporate identity parameters
-  const [companyName, setCompanyName] = useState("Modern Pro");
-  const [companyTagline, setCompanyTagline] = useState("Automated POS");
+  const [companyName, setCompanyName] = useState("Modern Cloth Store");
+  const [companyTagline, setCompanyTagline] = useState("Since : 1983 - POS & Inventory");
   const [companyLogoUrl, setCompanyLogoUrl] = useState("");
   const [companyPhone, setCompanyPhone] = useState("+880 1234 567890");
   const [companyEmail, setCompanyEmail] = useState("info@modernmanager.com");
@@ -38,8 +38,8 @@ export default function Suppliers({
     const unsubBranding = onSnapshot(doc(db, "settings", "company"), (docSnap) => {
       if (docSnap.exists()) {
         const data = docSnap.data();
-        setCompanyName(data.companyName || "Modern Pro");
-        setCompanyTagline(data.companyTagline || "Automated POS");
+        setCompanyName(data.companyName || "Modern Cloth Store");
+        setCompanyTagline(data.companyTagline || "Since : 1983 - POS & Inventory");
         setCompanyLogoUrl(data.companyLogoUrl || "");
         setCompanyPhone(data.companyPhone || "+880 1234 567890");
         setCompanyEmail(data.companyEmail || "info@modernmanager.com");
@@ -2803,13 +2803,15 @@ export default function Suppliers({
                               className="w-16 h-16 rounded-2xl object-contain border border-slate-200 p-1.5 shadow-xs bg-white shrink-0" 
                               referrerPolicy="no-referrer"
                               onError={(e) => {
-                                (e.target as HTMLImageElement).src = `https://api.dicebear.com/7.x/identicon/svg?seed=${encodeURIComponent(companyName)}`;
+                                (e.target as HTMLImageElement).src = "/logo.png";
                               }}
                             />
                           ) : (
-                            <div className="w-16 h-16 bg-slate-900 rounded-2xl flex items-center justify-center shadow-lg shrink-0">
-                              <Receipt className="w-9 h-9 text-indigo-400" />
-                            </div>
+                            <img 
+                              src="/logo.png" 
+                              alt="Logo" 
+                              className="w-16 h-16 rounded-2xl object-contain border border-slate-200 p-1.5 shadow-xs bg-white shrink-0" 
+                            />
                           )}
                           <div className="text-left">
                             <h1 className="text-2xl font-black tracking-tight text-slate-900 uppercase leading-none">{companyName}</h1>

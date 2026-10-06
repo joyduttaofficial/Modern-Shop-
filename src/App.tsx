@@ -44,7 +44,8 @@ import { onAuthStateChanged, signOut, User as FirebaseUser } from "firebase/auth
 import { doc, getDoc, setDoc, onSnapshot, collection, query, where, getDocs, deleteDoc } from "firebase/firestore";
 import { UserProfile, UserRole, RolePermission, Transaction } from "@/src/types";
 import { useLanguage } from "./contexts/LanguageContext";
-import defaultLogo from "./assets/images/modern_pro_logo_1780829028289.png";
+import defaultLogo from "./assets/images/modern_cloth_store_logo.png";
+import AppLogo from "./components/AppLogo";
 import {
   saveTransactionsToIndexedDB,
   getTransactionsFromIndexedDB,
@@ -76,7 +77,7 @@ import Inventory from "./components/Inventory";
 import CustomerLedger from "./components/CustomerLedger";
 import AdminNotificationCenter from "./components/AdminNotificationCenter";
 import AuditTrail from "./components/AuditTrail";
-import { logUserActivity } from "@/src/lib/activityLogger";
+import { logUserActivity, isSuperAdminUser } from "@/src/lib/activityLogger";
 import { isSupabaseConfigured } from "@/src/lib/supabase";
 
 function QuotaExceededOverlay({ onDismiss, databaseId, projectId }: { onDismiss: () => void; databaseId: string; projectId: string }) {
@@ -517,16 +518,16 @@ export default function App() {
   };
 
   // Dynamic Company Branding & Profile States
-  const [companyName, setCompanyName] = useState("Modern Pro");
-  const [companyTagline, setCompanyTagline] = useState("Automated POS");
+  const [companyName, setCompanyName] = useState("Modern Cloth Store");
+  const [companyTagline, setCompanyTagline] = useState("Since : 1983 - POS & Inventory");
   const [companyLogoUrl, setCompanyLogoUrl] = useState("");
 
   useEffect(() => {
     const unsubBranding = onSnapshot(doc(db, "settings", "company"), (docSnap) => {
       if (docSnap.exists()) {
         const data = docSnap.data();
-        setCompanyName(data.companyName || "Modern Pro");
-        setCompanyTagline(data.companyTagline || "Automated POS");
+        setCompanyName(data.companyName || "Modern Cloth Store");
+        setCompanyTagline(data.companyTagline || "Since : 1983 - POS & Inventory");
         setCompanyLogoUrl(data.companyLogoUrl || "");
       }
     }, (error) => {
@@ -666,58 +667,29 @@ export default function App() {
     };
   }, []);
 
-  // Real-time automatic activity log for menu viewing
+  // User session activity log for other users (non-super-admin only, single notification to check later)
   useEffect(() => {
     if (!profile || !user) return;
-    
-    const viewLabels: Record<string, string> = {
-      dashboard: "ড্যাশবোর্ড (Dashboard)",
-      counterSale: "কাউন্টার সেল (Counter Sale)",
-      counterSalesLedger: "কাউন্টার সেল লেজার",
-      customerLedger: "কাস্টমার লেজার (Customer Ledger)",
-      transactions: "ট্রানজেকশন (Transactions)",
-      newSale: "কর্মী বিক্রয় (Staff Daily Sales)",
-      salesList: "কর্মী বিক্রয় লেজার (Sales Ledger)",
-      inventory: "ইনভেন্টরি হাব (Inventory)",
-      newSupplier: "নতুন সরবরাহকারী",
-      suppliersList: "সরবরাহকারী লেজার",
-      suppliers: "সরবরাহকারী লেজার",
-      newPurchase: "নতুন ক্রয় (New Purchase)",
-      purchaseList: "ক্রয় তালিকা (Purchase List)",
-      paySupplierDue: "সরবরাহকারী বকেয়া পরিশোধ",
-      newEmployee: "নতুন কর্মচারী যুক্ত",
-      employeesList: "কর্মচারী তালিকা",
-      employees: "কর্মচারী ব্যবস্থাপনা",
-      salaryEntry: "বেতন প্রদান (Salary Entry)",
-      salarySheet: "বেতন শিট (Salary Sheet)",
-      addAttendance: "দৈনিক উপস্থিতি (Attendance)",
-      breakfastBoard: "নাস্তা ও লেট চার্ট বোর্ড",
-      attendanceList: "উপস্থিতি খাতা",
-      attendance: "উপস্থিতি ব্যবস্থাপনা",
-      reports: "রিপোর্ট ও পিডিএফ (Reports)",
-      settings: "সেটিংস (Settings)",
-      newUser: "নতুন ইউজার রেজিস্ট্রেশন",
-      usersList: "ইউজার তালিকা (Users List)",
-      rolesList: "রোল পারমিশন তালিকা",
-      profileView: "প্রোফাইল ভিউ",
-      auditTrail: "সুপার এডমিন অডিট ট্রেইল"
-    };
+    // Super Admin never generates notifications
+    if (isSuperAdminUser(profile.role, user.email || undefined)) return;
 
-    const label = viewLabels[activeView] || activeView;
-
-    logUserActivity({
-      userId: user.uid,
-      userName: profile.displayName || user.displayName || user.email?.split("@")[0] || "User",
-      userEmail: user.email || "",
-      userRole: profile.role,
-      userPhoto: profile.photoURL || user.photoURL || undefined,
-      menuId: activeView,
-      menuLabel: label,
-      action: "view",
-      title: `${label} মেনু পরিদর্শন করেছেন`,
-      note: `ইউজার ${profile.displayName || user.email} সফলভাবে ${label} পেজ ওপেন ও ভিউ করেছেন।`
-    });
-  }, [activeView, profile, user]);
+    const sessionKey = `user_active_session_${user.uid}_${new Date().toDateString()}`;
+    if (!sessionStorage.getItem(sessionKey)) {
+      sessionStorage.setItem(sessionKey, "true");
+      logUserActivity({
+        userId: user.uid,
+        userName: profile.displayName || user.displayName || user.email?.split("@")[0] || "User",
+        userEmail: user.email || "",
+        userRole: profile.role,
+        userPhoto: profile.photoURL || user.photoURL || undefined,
+        menuId: "session",
+        menuLabel: "সিস্টেম ব্যবহার (User Active)",
+        action: "create",
+        title: `${profile.displayName || user.email?.split("@")[0]} সিস্টেমে কাজ শুরু করেছেন`,
+        note: `ইউজার (${profile.role}) সফলভাবে সিস্টেমে প্রবেশ করে কাজ শুরু করেছেন।`
+      });
+    }
+  }, [profile, user]);
 
   const navItems = [
     { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
@@ -882,24 +854,7 @@ export default function App() {
       {/* Mobile Header */}
       <div className="lg:hidden fixed top-0 left-0 right-0 h-16 bg-white/95 backdrop-blur border-b border-slate-100 z-50 flex items-center justify-between px-4 print:hidden">
         <div className="flex items-center gap-2">
-          {companyLogoUrl ? (
-            <img 
-              src={companyLogoUrl} 
-              alt="Logo" 
-              className="w-8 h-8 rounded-lg object-contain border border-slate-100 shadow-xs bg-white shrink-0" 
-              referrerPolicy="no-referrer"
-              onError={(e) => {
-                (e.target as HTMLImageElement).src = defaultLogo;
-              }}
-            />
-          ) : (
-            <img 
-              src={defaultLogo} 
-              alt="Logo" 
-              className="w-8 h-8 rounded-lg object-contain border border-slate-100 shadow-xs bg-white shrink-0" 
-              referrerPolicy="no-referrer"
-            />
-          )}
+          <AppLogo src={companyLogoUrl} size="sm" rounded="lg" />
           <span className="font-extrabold tracking-tight text-slate-900 text-base">{companyName}</span>
         </div>
         <div className="flex items-center gap-2">
@@ -958,24 +913,7 @@ export default function App() {
         <div className="h-full flex flex-col p-5 overflow-y-auto [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:bg-slate-100 [&::-webkit-scrollbar-track]:transparent">
           {/* Menu top logo */}
           <div className="flex items-center gap-3 mb-8 px-2">
-            {companyLogoUrl ? (
-              <img 
-                src={companyLogoUrl} 
-                alt="Logo" 
-                className="w-10 h-10 rounded-xl object-contain border border-slate-100 shadow-md bg-white shrink-0" 
-                referrerPolicy="no-referrer"
-                onError={(e) => {
-                  (e.target as HTMLImageElement).src = defaultLogo;
-                }}
-              />
-            ) : (
-              <img 
-                src={defaultLogo} 
-                alt="Logo" 
-                className="w-10 h-10 rounded-xl object-contain border border-slate-100 shadow-md bg-white shrink-0" 
-                referrerPolicy="no-referrer"
-              />
-            )}
+            <AppLogo src={companyLogoUrl} size="md" rounded="xl" />
             <div className="truncate">
               <span className="text-lg font-black tracking-tight text-slate-900 block leading-none truncate">{companyName}</span>
               <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mt-0.5 block truncate">{companyTagline}</span>

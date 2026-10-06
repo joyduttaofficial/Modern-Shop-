@@ -32,7 +32,7 @@ export default function NewSale({
   const [employees, setEmployees] = useState<Employee[]>([]);
   
   // Marketing & white-labeled branding parameters
-  const [companyName, setCompanyName] = useState("Modern Pro");
+  const [companyName, setCompanyName] = useState("Modern Cloth Store");
   const [companyPoweredBy, setCompanyPoweredBy] = useState("Powered by ModernManager");
   const [showPoweredBy, setShowPoweredBy] = useState(true);
   const [companyPhone, setCompanyPhone] = useState("+880 1234 567890");
@@ -43,7 +43,7 @@ export default function NewSale({
     const unsub = onSnapshot(doc(db, "settings", "company"), (docSnap) => {
       if (docSnap.exists()) {
         const data = docSnap.data();
-        setCompanyName(data.companyName || "Modern Pro");
+        setCompanyName(data.companyName || "Modern Cloth Store");
         setCompanyPoweredBy(data.companyPoweredBy || "Powered by ModernManager");
         setShowPoweredBy(data.showPoweredBy ?? true);
         setCompanyPhone(data.companyPhone || "+880 1234 567890");

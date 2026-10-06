@@ -30,7 +30,8 @@ import {
   markAllNotificationsAsRead, 
   deleteActivityNotification, 
   clearAllActivityNotifications,
-  playNotificationChime 
+  playNotificationChime,
+  isSuperAdminUser 
 } from "../lib/activityLogger";
 import { cn } from "../lib/utils";
 import { formatDistanceToNow, format } from "date-fns";
@@ -53,9 +54,9 @@ export default function AdminNotificationCenter({
   const [soundEnabled, setSoundEnabled] = useState<boolean>(() => {
     if (typeof window !== "undefined") {
       const saved = localStorage.getItem("admin_notification_sound");
-      return saved !== null ? saved === "true" : true;
+      return saved !== null ? saved === "true" : false;
     }
-    return true;
+    return false;
   });
 
   // Recent toast notification state for immediate alert popup
@@ -94,13 +95,15 @@ export default function AdminNotificationCenter({
           ...doc.data()
         } as ActivityNotification));
 
-        // Detect newly arrived notification for toast alert
+        // Detect newly arrived notification for toast alert (only from non-admin users)
         if (!isInitialMount.current && items.length > 0) {
           const newest = items[0];
-          // Check if this newest notification arrived recently (last 10 seconds)
+          // Check if this newest notification arrived recently (last 15 seconds) and is NOT from Super Admin
           const notifTime = new Date(newest.timestamp).getTime();
           const now = Date.now();
-          if (now - notifTime < 15000 && (!newest.readBy || !newest.readBy.includes(currentUserId))) {
+          const isFromOtherUser = !isSuperAdminUser(newest.userRole, newest.userEmail);
+
+          if (isFromOtherUser && now - notifTime < 15000 && (!newest.readBy || !newest.readBy.includes(currentUserId))) {
             setLatestToast(newest);
             if (soundEnabled) {
               playNotificationChime();
@@ -135,13 +138,18 @@ export default function AdminNotificationCenter({
     });
   };
 
-  // Calculate unread count
-  const unreadCount = notifications.filter(
+  // Only consider notifications created by other users (exclude Super Admin self-actions)
+  const otherUsersNotifications = notifications.filter(
+    n => !isSuperAdminUser(n.userRole, n.userEmail)
+  );
+
+  // Calculate unread count strictly for other users' actions
+  const unreadCount = otherUsersNotifications.filter(
     n => !n.readBy || !n.readBy.includes(currentUserId)
   ).length;
 
   // Filtered list
-  const filteredNotifications = notifications.filter(n => {
+  const filteredNotifications = otherUsersNotifications.filter(n => {
     if (activeFilter !== "all" && n.action !== activeFilter) {
       return false;
     }
@@ -327,7 +335,7 @@ export default function AdminNotificationCenter({
                 </div>
                 <div>
                   <h3 className="text-sm font-black text-slate-900 dark:text-white flex items-center gap-1.5">
-                    সুপার এডমিন নোটিফিকেশন
+                    অন্যান্য ইউজারদের অ্যাক্টিভিটি
                     {unreadCount > 0 && (
                       <span className="px-1.5 py-0.2 rounded-full text-[10px] font-black bg-rose-500 text-white">
                         {unreadCount} নতুন
@@ -335,7 +343,7 @@ export default function AdminNotificationCenter({
                     )}
                   </h3>
                   <p className="text-[11px] text-slate-500 dark:text-slate-400 font-medium">
-                    সিস্টেমের যেকোনো ইউজারের তৈরি, এডিট, ভিউ ও ডিলিট লাইভ নোটিফিকেশন
+                    অন্যান্য ইউজাররা ব্যবহার করলে নোটিফিকেশন এখানে জমা থাকে (পরে চেক করার জন্য)
                   </p>
                 </div>
               </div>

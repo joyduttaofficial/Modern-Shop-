@@ -287,7 +287,7 @@ export function generateSupabaseInsertSql(data: FullExportData): string {
     lines.push(`-- 12. COMPANY SETTINGS`);
     lines.push(
       `INSERT INTO public.company_settings (company_name, tagline, logo_url, phone, email, address, currency, currency_symbol) ` +
-      `VALUES (${sqlEscape(cs.companyName || 'Modern Pro')}, ${sqlEscape(cs.companyTagline || 'Automated POS')}, ${sqlEscape(cs.companyLogoUrl || null)}, ${sqlEscape(cs.companyPhone || '+880 1700-000000')}, ${sqlEscape(cs.companyEmail || 'contact@company.com')}, ${sqlEscape(cs.companyAddress || 'Dhaka, Bangladesh')}, 'BDT', '৳');`
+      `VALUES (${sqlEscape(cs.companyName || 'Modern Cloth Store')}, ${sqlEscape(cs.companyTagline || 'Since : 1983 - POS & Inventory')}, ${sqlEscape(cs.companyLogoUrl || null)}, ${sqlEscape(cs.companyPhone || '+880 1700-000000')}, ${sqlEscape(cs.companyEmail || 'contact@company.com')}, ${sqlEscape(cs.companyAddress || 'Dhaka, Bangladesh')}, 'BDT', '৳');`
     );
     lines.push(``);
   }
@@ -571,8 +571,8 @@ export async function pushDataDirectlyToSupabase(
     if (data.companySettings) {
       const cs = data.companySettings;
       const { error } = await supabase.from("company_settings").upsert({
-        company_name: cs.companyName || "Modern Pro",
-        tagline: cs.companyTagline || "Automated POS",
+        company_name: cs.companyName || "Modern Cloth Store",
+        tagline: cs.companyTagline || "Since : 1983 - POS & Inventory",
         logo_url: cs.companyLogoUrl || null,
         phone: cs.companyPhone || "+880 1700-000000",
         email: cs.companyEmail || "contact@company.com",

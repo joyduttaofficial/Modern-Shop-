@@ -17,7 +17,9 @@ const LanguageContext = createContext<LanguageContextType | undefined>(undefined
 // A deep dictionary mapping the full system strings from English to Bangla
 const dictionary: Record<string, string> = {
   // Navigation & Menus
-  "Modern Pro": "মডার্ন প্রো",
+  "Modern Cloth Store": "মডার্ন ক্লথ স্টোর",
+  "Modern Pro": "মডার্ন ক্লথ স্টোর",
+  "Since : 1983 - POS & Inventory": "১৯৮৩ থেকে বিশ্বস্ত - পস ও ইনভেন্টরি",
   "Automated POS": "স্বয়ংক্রিয় পস",
   "Dashboard": "ড্যাশবোর্ড",
   "Transactions": "লেনদেন",

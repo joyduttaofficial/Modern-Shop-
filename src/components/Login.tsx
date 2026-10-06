@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import defaultLogo from "../assets/images/modern_pro_logo_1780829028289.png";
+import defaultLogo from "../assets/images/modern_cloth_store_logo.png";
 import { auth, db, OperationType, handleFirestoreError } from "@/src/lib/firebase";
 import { onSnapshot, doc } from "firebase/firestore";
 import { 
@@ -33,8 +33,8 @@ export default function Login() {
   const [successMessage, setSuccessMessage] = useState("");
 
   // Branding states
-  const [companyName, setCompanyName] = useState("Modern Pro");
-  const [companyTagline, setCompanyTagline] = useState("Automated POS");
+  const [companyName, setCompanyName] = useState("Modern Cloth Store");
+  const [companyTagline, setCompanyTagline] = useState("Since : 1983 - POS & Accounting");
   const [companyLogoUrl, setCompanyLogoUrl] = useState("");
   const [companyPoweredBy, setCompanyPoweredBy] = useState("Powered by ModernManager");
   const [showPoweredBy, setShowPoweredBy] = useState(true);
@@ -43,8 +43,8 @@ export default function Login() {
     const unsub = onSnapshot(doc(db, "settings", "company"), (docSnap) => {
       if (docSnap.exists()) {
         const data = docSnap.data();
-        setCompanyName(data.companyName || "Modern Pro");
-        setCompanyTagline(data.companyTagline || "Automated POS");
+        setCompanyName(data.companyName || "Modern Cloth Store");
+        setCompanyTagline(data.companyTagline || "Since : 1983 - POS & Accounting");
         setCompanyLogoUrl(data.companyLogoUrl || "");
         setCompanyPoweredBy(data.companyPoweredBy || "Powered by ModernManager");
         setShowPoweredBy(data.showPoweredBy ?? true);

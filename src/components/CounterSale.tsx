@@ -80,7 +80,8 @@ export default function CounterSaleView({
   const { language, t, formatDate, formatNumber } = useLanguage();
 
   // Branding parameters
-  const [companyName, setCompanyName] = useState("Modern Pro");
+  const [companyName, setCompanyName] = useState("Modern Cloth Store");
+  const [companyLogoUrl, setCompanyLogoUrl] = useState("");
   const [companyPhone, setCompanyPhone] = useState("+880 1234 567890");
   const [companyAddress, setCompanyAddress] = useState("Dhaka, Bangladesh");
 
@@ -88,7 +89,8 @@ export default function CounterSaleView({
     const unsub = onSnapshot(doc(db, "settings", "company"), (docSnap) => {
       if (docSnap.exists()) {
         const data = docSnap.data();
-        setCompanyName(data.companyName || "Modern Pro");
+        setCompanyName(data.companyName || "Modern Cloth Store");
+        setCompanyLogoUrl(data.companyLogoUrl || "");
         setCompanyPhone(data.companyPhone || "+880 1234 567890");
         setCompanyAddress(data.companyAddress || "Dhaka, Bangladesh");
       }

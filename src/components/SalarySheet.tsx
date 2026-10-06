@@ -43,8 +43,8 @@ export default function SalarySheet({ user, role }: { user: User; role: UserRole
   const [loading, setLoading] = useState(true);
 
   // Company info state for printing/branding
-  const [companyName, setCompanyName] = useState("Modern Pro");
-  const [companyTagline, setCompanyTagline] = useState("Automated POS");
+  const [companyName, setCompanyName] = useState("Modern Cloth Store");
+  const [companyTagline, setCompanyTagline] = useState("Since : 1983 - POS & Inventory");
   const [companyLogoUrl, setCompanyLogoUrl] = useState("");
   const [companyPhone, setCompanyPhone] = useState("+880 1234 567890");
   const [companyEmail, setCompanyEmail] = useState("info@modernmanager.com");
@@ -63,8 +63,8 @@ export default function SalarySheet({ user, role }: { user: User; role: UserRole
     const unsubCompany = onSnapshot(doc(db, "settings", "company"), (docSnap) => {
       if (docSnap.exists()) {
         const data = docSnap.data();
-        setCompanyName(data.companyName || "Modern Pro");
-        setCompanyTagline(data.companyTagline || "Automated POS");
+        setCompanyName(data.companyName || "Modern Cloth Store");
+        setCompanyTagline(data.companyTagline || "Since : 1983 - POS & Inventory");
         setCompanyLogoUrl(data.companyLogoUrl || "");
         setCompanyPhone(data.companyPhone || "+880 1234 567890");
         setCompanyEmail(data.companyEmail || "info@modernmanager.com");
@@ -366,9 +366,7 @@ export default function SalarySheet({ user, role }: { user: User; role: UserRole
               {companyLogoUrl ? (
                 <img src={companyLogoUrl} alt="Logo" className="w-12 h-12 object-contain rounded-lg" referrerPolicy="no-referrer" />
               ) : (
-                <div className="w-12 h-12 bg-slate-900 text-white rounded-lg flex items-center justify-center font-black text-xl">
-                  {companyName ? companyName.charAt(0).toUpperCase() : "M"}
-                </div>
+                <img src="/logo.png" alt="Logo" className="w-12 h-12 object-contain rounded-lg border border-slate-100 p-0.5 bg-white" />
               )}
               <div>
                 <h1 className="text-2xl font-black text-slate-950 leading-none tracking-tight">{companyName.toUpperCase()}</h1>

@@ -102,7 +102,7 @@ export default function AttendancePage({
   const [selectedDeptFilter, setSelectedDeptFilter] = useState("all");
   const [boardLayout, setBoardLayout] = useState<"cards" | "table">("cards");
   const [companyInfo, setCompanyInfo] = useState<{ name: string; address: string; phone: string }>({
-    name: "Modern Pro",
+    name: "Modern Cloth Store",
     address: "Dhaka, Bangladesh",
     phone: "+880 1234 567890"
   });
@@ -163,7 +163,7 @@ export default function AttendancePage({
       if (docSnap.exists()) {
         const d = docSnap.data();
         setCompanyInfo({
-          name: d.companyName || "Modern Pro",
+          name: d.companyName || "Modern Cloth Store",
           address: d.companyAddress || "Dhaka, Bangladesh",
           phone: d.companyPhone || "+880 1234 567890"
         });

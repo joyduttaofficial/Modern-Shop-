@@ -19,13 +19,14 @@ import {
   CheckCircle2,
   FileSpreadsheet
 } from "lucide-react";
+import { collection, onSnapshot, query, orderBy, limit } from "firebase/firestore";
+import { db } from "../lib/firebase";
 import { ActivityAction, ActivityNotification, UserRole } from "../types";
 import { 
   deleteActivityNotification, 
   clearAllActivityNotifications,
   isSuperAdminUser 
 } from "../lib/activityLogger";
-import { subscribeToSupabaseTable } from "../lib/supabaseDb";
 import { cn } from "../lib/utils";
 import { format, isToday, isWithinInterval, subDays, startOfDay, endOfDay } from "date-fns";
 import { jsPDF } from "jspdf";
@@ -51,13 +52,26 @@ export default function AuditTrail({
 
   useEffect(() => {
     setLoading(true);
-    const unsubscribe = subscribeToSupabaseTable<ActivityNotification>(
-      "activity_notifications",
-      (items) => {
+    const q = query(
+      collection(db, "activityNotifications"),
+      orderBy("timestamp", "desc"),
+      limit(250)
+    );
+
+    const unsubscribe = onSnapshot(
+      q,
+      (snapshot) => {
+        const items = snapshot.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data()
+        } as ActivityNotification));
         setNotifications(items);
         setLoading(false);
       },
-      { limit: 500, orderBy: "timestamp", orderDir: "desc", pollIntervalMs: 5000 }
+      (err) => {
+        console.warn("AuditTrail load error:", err);
+        setLoading(false);
+      }
     );
 
     return () => unsubscribe();

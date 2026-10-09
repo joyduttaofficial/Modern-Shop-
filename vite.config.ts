@@ -12,10 +12,6 @@ export default defineConfig(() => {
     resolve: {
       alias: {
         '@': path.resolve(__dirname, '.'),
-        'firebase/app': path.resolve(__dirname, 'src/lib/firebaseCompat.ts'),
-        'firebase/auth': path.resolve(__dirname, 'src/lib/firebaseCompat.ts'),
-        'firebase/firestore': path.resolve(__dirname, 'src/lib/firebaseCompat.ts'),
-        'firebase': path.resolve(__dirname, 'src/lib/firebaseCompat.ts'),
       },
     },
     server: {

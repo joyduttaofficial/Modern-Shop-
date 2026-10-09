@@ -1,27 +1,12 @@
 import React, { useState, useEffect } from "react";
-import { 
-  User, 
-  collection, 
-  onSnapshot, 
-  doc, 
-  setDoc, 
-  deleteDoc, 
-  query, 
-  orderBy, 
-  getDocs, 
-  db, 
-  OperationType, 
-  handleFirestoreError,
-  initializeApp,
-  deleteApp,
-  getAuth,
-  createUserWithEmailAndPassword,
-  updateProfile,
-  signOut,
-  firebaseConfig
-} from "@/src/lib/firebaseCompat";
+import { User } from "firebase/auth";
+import { collection, onSnapshot, doc, setDoc, deleteDoc, query, orderBy, getDocs } from "firebase/firestore";
+import { db, OperationType, handleFirestoreError } from "@/src/lib/firebase";
 import { UserProfile, RolePermission } from "@/src/types";
 import { cn } from "@/src/lib/utils";
+import { initializeApp, deleteApp } from "firebase/app";
+import { getAuth, createUserWithEmailAndPassword, updateProfile, signOut } from "firebase/auth";
+import firebaseConfig from "@/firebase-applet-config.json";
 import { 
   Users, Plus, Trash2, Shield, UserCheck, X, Search, Check, Pencil, 
   Mail, Phone, Briefcase, ChevronRight, UserCircle, ShieldAlert, BadgeCheck,

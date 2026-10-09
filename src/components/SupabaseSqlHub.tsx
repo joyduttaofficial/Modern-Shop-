@@ -76,7 +76,7 @@ export default function SupabaseSqlHub() {
   const [anonKey, setAnonKey] = useState(() => getStoredSupabaseAnonKey());
   const [testingConnection, setTestingConnection] = useState(false);
   const [connectionResult, setConnectionResult] = useState<{ success: boolean; message: string } | null>(null);
-  const [activeMode, setActiveMode] = useState<"supabase">("supabase");
+  const [activeMode, setActiveMode] = useState<"supabase" | "firebase">(() => getActiveDatabaseMode());
 
   // Migration state
   const [isMigrating, setIsMigrating] = useState(false);

@@ -22,8 +22,6 @@ import {
   Download,
   FileSpreadsheet
 } from "lucide-react";
-import { collection, onSnapshot, query, orderBy, limit } from "firebase/firestore";
-import { db } from "../lib/firebase";
 import { ActivityAction, ActivityNotification, UserRole } from "../types";
 import { 
   markNotificationAsRead, 
@@ -33,6 +31,7 @@ import {
   playNotificationChime,
   isSuperAdminUser 
 } from "../lib/activityLogger";
+import { subscribeToSupabaseTable } from "../lib/supabaseDb";
 import { cn } from "../lib/utils";
 import { formatDistanceToNow, format } from "date-fns";
 
@@ -79,53 +78,62 @@ export default function AdminNotificationCenter({
     };
   }, [isOpen]);
 
-  // Real-time Firestore subscription to activityNotifications
+  // Real-time Supabase subscription to activity_notifications
   useEffect(() => {
-    const notifQuery = query(
-      collection(db, "activityNotifications"),
-      orderBy("timestamp", "desc"),
-      limit(100)
-    );
+    const handleItems = (items: ActivityNotification[]) => {
+      // Detect newly arrived notification for toast alert (only from other users)
+      if (!isInitialMount.current && items.length > 0) {
+        const newest = items[0];
+        const notifTime = new Date(newest.timestamp).getTime();
+        const now = Date.now();
+        const isFromOtherUser = !isSuperAdminUser(newest.userRole, newest.userEmail);
 
-    const unsubscribe = onSnapshot(
-      notifQuery,
-      (snapshot) => {
-        const items: ActivityNotification[] = snapshot.docs.map(doc => ({
-          id: doc.id,
-          ...doc.data()
-        } as ActivityNotification));
-
-        // Detect newly arrived notification for toast alert (only from non-admin users)
-        if (!isInitialMount.current && items.length > 0) {
-          const newest = items[0];
-          // Check if this newest notification arrived recently (last 15 seconds) and is NOT from Super Admin
-          const notifTime = new Date(newest.timestamp).getTime();
-          const now = Date.now();
-          const isFromOtherUser = !isSuperAdminUser(newest.userRole, newest.userEmail);
-
-          if (isFromOtherUser && now - notifTime < 15000 && (!newest.readBy || !newest.readBy.includes(currentUserId))) {
-            setLatestToast(newest);
-            if (soundEnabled) {
-              playNotificationChime();
-            }
-            // Auto hide toast after 6 seconds
-            const timer = setTimeout(() => {
-              setLatestToast(prev => (prev?.id === newest.id ? null : prev));
-            }, 6000);
-            return () => clearTimeout(timer);
+        if (isFromOtherUser && now - notifTime < 25000 && (!newest.readBy || !newest.readBy.includes(currentUserId))) {
+          setLatestToast(newest);
+          if (soundEnabled) {
+            playNotificationChime();
           }
-        } else {
-          isInitialMount.current = false;
+          // Auto hide toast after 6 seconds
+          const timer = setTimeout(() => {
+            setLatestToast(prev => (prev?.id === newest.id ? null : prev));
+          }, 6000);
+          return () => clearTimeout(timer);
         }
-
-        setNotifications(items);
-      },
-      (error) => {
-        console.warn("activityNotifications subscription error:", error);
+      } else {
+        isInitialMount.current = false;
       }
+
+      setNotifications(items);
+    };
+
+    const unsubscribe = subscribeToSupabaseTable<ActivityNotification>(
+      "activity_notifications",
+      handleItems,
+      { limit: 100, orderBy: "timestamp", orderDir: "desc", pollIntervalMs: 5000 }
     );
 
-    return () => unsubscribe();
+    const handleLocalCreated = (e: Event) => {
+      const custom = e as CustomEvent;
+      if (custom.detail) {
+        const item = custom.detail as ActivityNotification;
+        if (!isSuperAdminUser(item.userRole, item.userEmail)) {
+          setNotifications(prev => [item, ...prev.filter(p => p.id !== item.id)]);
+          setLatestToast(item);
+          if (soundEnabled) playNotificationChime();
+        }
+      }
+    };
+
+    if (typeof window !== "undefined") {
+      window.addEventListener("activity-notification-created", handleLocalCreated);
+    }
+
+    return () => {
+      unsubscribe();
+      if (typeof window !== "undefined") {
+        window.removeEventListener("activity-notification-created", handleLocalCreated);
+      }
+    };
   }, [currentUserId, soundEnabled]);
 
   // Toggle sound setting
@@ -296,8 +304,8 @@ export default function AdminNotificationCenter({
                 <p className="text-xs text-slate-600 dark:text-slate-300 font-medium line-clamp-2">
                   {latestToast.note || latestToast.title}
                 </p>
-                <p className="text-[10px] font-mono text-slate-400">
-                  এখনই সংঘটিত হয়েছে
+                <p className="text-[10px] font-mono text-emerald-600 dark:text-emerald-400 font-bold">
+                  ✓ সেন্টারে সংরক্ষিত • পরে চেক করতে পারবেন
                 </p>
               </div>
             </div>

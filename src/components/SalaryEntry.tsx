@@ -85,7 +85,7 @@ export default function SalaryEntry({ user, role }: { user: User; role: UserRole
     // Snap salary and advance transactions to show already paid amounts this month
     const unsubTx = onSnapshot(collection(db, "transactions"), (snap) => {
       const allTx = snap.docs.map(d => ({ id: d.id, ...d.data() } as Transaction));
-      const payTx = allTx.filter(t => t.category === "Staff Salary" || t.category === "Employee Advance");
+      const payTx = allTx.filter(t => t.category === "Staff Salary" || t.category === "Employee Advance" || t.category === "Employee Advance Received");
       setTransactions(payTx);
     }, (error) => handleFirestoreError(error, OperationType.LIST, "transactions"));
 
@@ -101,6 +101,7 @@ export default function SalaryEntry({ user, role }: { user: User; role: UserRole
     return transactions
       .filter(tx => {
         if (tx.employeeId !== empId) return false;
+        if (tx.category === "Employee Advance Received") return false;
         try {
           const txMonth = format(new Date(tx.date), "yyyy-MM");
           return txMonth === selectedMonthStr;
@@ -109,6 +110,15 @@ export default function SalaryEntry({ user, role }: { user: User; role: UserRole
         }
       })
       .reduce((sum, tx) => sum + (Number(tx.amount) || 0), 0);
+  };
+
+  // Calculate employee overall advance balance (অন্যান্য অগ্রিম বকেয়া)
+  const getEmployeeAdvanceBalance = (emp: Employee) => {
+    const initialAdvance = Number(emp.otherAdvanceAmount) || 0;
+    const empTxs = transactions.filter(t => t.employeeId === emp.id);
+    const advGiven = empTxs.filter(t => t.category === "Employee Advance").reduce((sum, t) => sum + (Number(t.amount) || 0), 0);
+    const advReceived = empTxs.filter(t => t.category === "Employee Advance Received").reduce((sum, t) => sum + (Number(t.amount) || 0), 0);
+    return Math.max(0, initialAdvance + advGiven - advReceived);
   };
 
   const handleInputChange = (empId: string, field: keyof RowState, value: string) => {
@@ -423,6 +433,7 @@ export default function SalaryEntry({ user, role }: { user: User; role: UserRole
                   const currentInput = sheetData[emp.id!]?.amount || "";
                   const inputVal = parseFloat(currentInput) || 0;
                   const afterPaymentRemaining = baseSalary - (alreadyPaid + inputVal);
+                  const advBalance = getEmployeeAdvanceBalance(emp);
 
                   // Extract employee photo
                   const docImg = emp.documents?.find(d => d.type?.startsWith("image/") || d.name?.match(/\.(jpg|jpeg|png|webp|gif)$/i));
@@ -466,9 +477,16 @@ export default function SalaryEntry({ user, role }: { user: User; role: UserRole
                                 </span>
                               )}
                             </div>
-                            <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mt-0.5">
-                              {emp.role} {emp.department ? `• ${emp.department}` : ""}
-                            </p>
+                            <div className="flex items-center gap-1.5 flex-wrap mt-0.5">
+                              <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">
+                                {emp.role} {emp.department ? `• ${emp.department}` : ""}
+                              </p>
+                              {advBalance > 0 && (
+                                <span className="text-[9px] font-black text-amber-700 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded-md">
+                                  অগ্রিম বকেয়া: {formatCurrency(advBalance)}
+                                </span>
+                              )}
+                            </div>
                           </div>
                         </div>
                       </td>

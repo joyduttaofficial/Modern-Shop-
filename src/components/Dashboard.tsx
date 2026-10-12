@@ -273,6 +273,8 @@ export default function Dashboard({
   const [stats, setStats] = useState({
     // Today metrics
     todaySales: 0,
+    todayDailyProfit: 0,
+    todayPurchaseCost: 0,
     todayWholesale: 0,
     todayBankDeposit: 0,
     todayBankWithdraw: 0,
@@ -453,6 +455,7 @@ export default function Dashboard({
     setUserNetCash(netCash);
 
     let todaySales = 0;
+    let todayPurchaseCost = 0;
     let todayWholesale = 0;
     let todayBankDeposit = 0;
     let todayBankWithdraw = 0;
@@ -547,6 +550,18 @@ export default function Dashboard({
           if (isDepositDeduction) todayDepositVal += tx.amount;
 
           if (isSale) todaySales += tx.amount;
+
+          const isPurchase = tx.type === "expense" && (
+            tx.category === "Purchases" || 
+            tx.category === "Purchase" || 
+            tx.category === "Supplier Purchase" || 
+            tx.category === "Supplier Due Payment" || 
+            tx.category === "Supplier Payment" || 
+            tx.category.toLowerCase().includes("purchase") ||
+            (tx.notes && (tx.notes.toLowerCase().includes("purchase") || tx.notes.includes("ক্রয়")))
+          );
+          if (isPurchase) todayPurchaseCost += tx.amount;
+
           if (isWholesale) todayWholesale += tx.amount;
           if (isDeposit) todayBankDeposit += tx.amount;
           if (isWithdrawal) todayBankWithdraw += tx.amount;
@@ -778,8 +793,13 @@ export default function Dashboard({
         }
       });
 
+      const effectiveTodayPurchaseCost = todayPurchaseCost > 0 ? todayPurchaseCost : todayPurchase;
+      const todayDailyProfit = todaySales - effectiveTodayPurchaseCost;
+
       setStats({
         todaySales,
+        todayDailyProfit,
+        todayPurchaseCost: effectiveTodayPurchaseCost,
         todayWholesale,
         todayBankDeposit,
         todayBankWithdraw,
@@ -1500,7 +1520,15 @@ export default function Dashboard({
           <span className="w-1.5 h-6 bg-rose-600 rounded-full animate-pulse" />
           <h3 className="text-base font-black text-slate-800 uppercase tracking-tight">{t("Today's Shop Ledger Snapshot")}</h3>
         </div>
-        <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-2.5 sm:gap-4">
+        <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-2.5 sm:gap-4">
+          <StatCard 
+            title="Daily Profit" 
+            value={stats.todayDailyProfit} 
+            icon={DollarSign} 
+            color={stats.todayDailyProfit >= 0 ? "emerald" : "rose"} 
+            description={`বিক্রয়: ৳${stats.todaySales.toLocaleString()} - ক্রয় খরচ: ৳${(stats.todayPurchaseCost || stats.todayPurchase).toLocaleString()}`}
+            scope="Daily Profit"
+          />
           <StatCard 
             title="Today Staff Sales (Net)" 
             value={staffSalesStats.todayStaffNet} 

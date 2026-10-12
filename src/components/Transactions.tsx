@@ -847,6 +847,7 @@ export default function Transactions({
     "Counter Sales",
     "Wholesale Sales",
     "Customer Receipt",
+    "Employee Advance Received",
     "Service Charge",
     "Previous Cash",
     "Other Income"
@@ -859,6 +860,7 @@ export default function Transactions({
     "Transport & Delivery",
     "Office Supplies",
     "Staff Salary",
+    "Employee Advance",
     "Supplier Due Payment",
     "Repairs & Maintenance",
     "Other"
@@ -1117,6 +1119,24 @@ export default function Transactions({
                   ))}
                 </div>
               </div>
+
+              {/* Employee selector for Advance Received */}
+              {(subCategory === "Employee Advance Received" || category === "Employee Advance Received") && (
+                <div className="space-y-1 p-3.5 bg-emerald-50/50 border border-emerald-200 rounded-2xl animate-in fade-in">
+                  <label className="text-[10px] font-black text-emerald-800 uppercase tracking-widest">Select Employee (কর্মচারী নির্বাচন করুন)</label>
+                  <select
+                    required
+                    value={employeeId}
+                    onChange={(e) => setEmployeeId(e.target.value)}
+                    className="w-full px-4 py-2 bg-white border border-slate-200 rounded-xl font-semibold text-xs outline-none text-slate-800 cursor-pointer"
+                  >
+                    <option value="">Select registered employee...</option>
+                    {employees.map(emp => (
+                      <option key={emp.id} value={emp.id}>{emp.name} ({emp.role || "Staff"})</option>
+                    ))}
+                  </select>
+                </div>
+              )}
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 {/* Reference / SubCategory */}

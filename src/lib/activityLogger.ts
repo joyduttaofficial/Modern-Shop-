@@ -1,7 +1,11 @@
-import { collection, addDoc, updateDoc, doc, deleteDoc, getDocs, writeBatch } from "firebase/firestore";
-import { db } from "./firebase";
+import { collection, addDoc, updateDoc, doc, deleteDoc, writeBatch, db } from "./firebaseCompat";
 import { ActivityAction, ActivityNotification } from "../types";
-import { saveActivityNotificationToSupabase } from "./supabaseDb";
+import { 
+  saveActivityNotificationToSupabase, 
+  deleteActivityNotificationFromSupabase,
+  markNotificationReadInSupabase,
+  clearAllNotificationsInSupabase 
+} from "./supabaseDb";
 import { isSupabaseConfigured } from "./supabase";
 
 // In-memory debounce cache to prevent duplicate activity logging within a window
@@ -19,7 +23,8 @@ export function isSuperAdminUser(userRole?: string, userEmail?: string): boolean
     role === "admin" ||
     role === "superadmin" ||
     role === "super_admin" ||
-    email === "joydutta398878@gmail.com"
+    email === "joydutta398878@gmail.com" ||
+    email === "modern@admin.com"
   );
 }
 
@@ -42,7 +47,7 @@ export interface LogActivityParams {
  * RULES:
  * 1. When Super Admin is using the system, NO notifications are generated.
  * 2. When other users (non-admin) use the system, a single consolidated notification
- *    is recorded which can be checked later by the Super Admin in the notification center.
+ *    is recorded in Supabase which can be checked later by the Super Admin in the notification center.
  */
 export async function logUserActivity(params: LogActivityParams): Promise<string | null> {
   try {
@@ -70,12 +75,12 @@ export async function logUserActivity(params: LogActivityParams): Promise<string
       return null;
     }
 
-    // RULE 3: Debounce & deduplicate actions from the same non-admin user within 15 seconds
+    // RULE 3: Debounce & deduplicate actions from the same non-admin user within 20 seconds
     // to ensure a single clean notification is recorded instead of multiple duplicate alerts
     const debounceKey = `${userId}_${action}_${menuId}`;
     const now = Date.now();
     const lastLogged = recentActionCache[debounceKey] || 0;
-    if (now - lastLogged < 15000) {
+    if (now - lastLogged < 20000) {
       return null;
     }
     recentActionCache[debounceKey] = now;
@@ -97,38 +102,37 @@ export async function logUserActivity(params: LogActivityParams): Promise<string
       createdAt: new Date().toISOString()
     };
 
-    // If Supabase is configured, write directly to Supabase activity_notifications
-    if (isSupabaseConfigured()) {
-      saveActivityNotificationToSupabase(newNotification).catch(err => {
-        console.warn("Could not save activity notification to Supabase:", err);
-      });
-    }
+    let docId = "sb-" + Date.now();
 
-    // Clean any undefined fields before sending to Firestore
-    const cleanedData: Record<string, any> = {};
-    for (const [key, value] of Object.entries(newNotification)) {
-      if (value !== undefined) {
-        cleanedData[key] = value;
-      }
-    }
-
-    let docId = "local-" + Date.now();
+    // 1. Write directly to Supabase activity_notifications
     try {
-      const docRef = await addDoc(collection(db, "activityNotifications"), cleanedData);
-      docId = docRef.id;
-    } catch (fsErr) {
-      // Ignore Firestore quota/network errors so application never crashes
-      console.warn("Firestore notification sync restricted:", fsErr);
+      const sbResult = await saveActivityNotificationToSupabase(newNotification);
+      if (sbResult.id) {
+        docId = sbResult.id;
+      }
+    } catch (err) {
+      console.warn("Could not save activity notification to Supabase:", err);
     }
 
-    // Dispatch custom browser event for instant local reactive updates
+    // 2. Dispatch custom browser event for instant local reactive updates
     if (typeof window !== "undefined") {
       window.dispatchEvent(
         new CustomEvent("activity-notification-created", {
-          detail: { id: docId, ...cleanedData }
+          detail: { id: docId, ...newNotification }
         })
       );
     }
+
+    // 3. Fallback write to Firestore if available (ignore quota errors)
+    try {
+      const cleanedData: Record<string, any> = {};
+      for (const [key, value] of Object.entries(newNotification)) {
+        if (value !== undefined) {
+          cleanedData[key] = value;
+        }
+      }
+      addDoc(collection(db, "activityNotifications"), cleanedData).catch(() => {});
+    } catch {}
 
     return docId;
   } catch (error) {
@@ -169,23 +173,37 @@ export function playNotificationChime() {
 }
 
 /**
- * Mark a single notification as read by the admin user
+ * Mark a single notification as read by the admin user (in Supabase & Firestore)
  */
 export async function markNotificationAsRead(notificationId: string, adminUserId: string) {
+  try {
+    await markNotificationReadInSupabase(notificationId, adminUserId);
+  } catch (e) {
+    console.warn("Error marking notification as read in Supabase:", e);
+  }
+
   try {
     const notifRef = doc(db, "activityNotifications", notificationId);
     await updateDoc(notifRef, {
       readBy: [adminUserId]
     });
-  } catch (e) {
-    console.warn("Error marking notification as read:", e);
-  }
+  } catch {}
 }
 
 /**
  * Mark all visible unread notifications as read by admin
  */
 export async function markAllNotificationsAsRead(notifications: ActivityNotification[], adminUserId: string) {
+  try {
+    for (const n of notifications) {
+      if (n.id) {
+        await markNotificationReadInSupabase(n.id, adminUserId);
+      }
+    }
+  } catch (e) {
+    console.warn("Error marking all notifications as read in Supabase:", e);
+  }
+
   try {
     const unreadList = notifications.filter(n => !n.readBy || !n.readBy.includes(adminUserId));
     if (unreadList.length === 0) return;
@@ -201,9 +219,7 @@ export async function markAllNotificationsAsRead(notifications: ActivityNotifica
       }
     });
     await batch.commit();
-  } catch (e) {
-    console.warn("Error marking all notifications as read:", e);
-  }
+  } catch {}
 }
 
 /**
@@ -211,16 +227,26 @@ export async function markAllNotificationsAsRead(notifications: ActivityNotifica
  */
 export async function deleteActivityNotification(notificationId: string) {
   try {
-    await deleteDoc(doc(db, "activityNotifications", notificationId));
+    await deleteActivityNotificationFromSupabase(notificationId);
   } catch (e) {
-    console.warn("Error deleting notification:", e);
+    console.warn("Error deleting notification from Supabase:", e);
   }
+
+  try {
+    await deleteDoc(doc(db, "activityNotifications", notificationId));
+  } catch {}
 }
 
 /**
  * Clear/delete all notifications (Admin only)
  */
 export async function clearAllActivityNotifications(notifications: ActivityNotification[]) {
+  try {
+    await clearAllNotificationsInSupabase();
+  } catch (e) {
+    console.warn("Error clearing notifications from Supabase:", e);
+  }
+
   try {
     const batch = writeBatch(db);
     notifications.forEach(n => {
@@ -229,7 +255,5 @@ export async function clearAllActivityNotifications(notifications: ActivityNotif
       }
     });
     await batch.commit();
-  } catch (e) {
-    console.warn("Error clearing notifications:", e);
-  }
+  } catch {}
 }

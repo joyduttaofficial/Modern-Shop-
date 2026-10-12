@@ -39,9 +39,7 @@ import {
   ArrowUpDown
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
-import { auth, db, OperationType, handleFirestoreError } from "@/src/lib/firebase";
-import { onAuthStateChanged, signOut, User as FirebaseUser } from "firebase/auth";
-import { doc, getDoc, setDoc, onSnapshot, collection, query, where, getDocs, deleteDoc } from "firebase/firestore";
+import { auth, db, OperationType, handleFirestoreError, onAuthStateChanged, signOut, User as FirebaseUser, doc, getDoc, setDoc, onSnapshot, collection, query, where, getDocs, deleteDoc } from "@/src/lib/firebaseCompat";
 import { UserProfile, UserRole, RolePermission, Transaction } from "@/src/types";
 import { useLanguage } from "./contexts/LanguageContext";
 import defaultLogo from "./assets/images/modern_cloth_store_logo.png";
@@ -79,84 +77,13 @@ import AdminNotificationCenter from "./components/AdminNotificationCenter";
 import AuditTrail from "./components/AuditTrail";
 import { logUserActivity, isSuperAdminUser } from "@/src/lib/activityLogger";
 import { isSupabaseConfigured } from "@/src/lib/supabase";
+import { 
+  fetchCompanySettingsFromSupabase, 
+  subscribeToSupabaseTable, 
+  fetchRolesFromSupabase 
+} from "@/src/lib/supabaseDb";
 
-function QuotaExceededOverlay({ onDismiss, databaseId, projectId }: { onDismiss: () => void; databaseId: string; projectId: string }) {
-  const upgradeUrl = `https://console.firebase.google.com/project/${projectId}/firestore/databases/${databaseId}/data?openUpgradeDialog=true`;
-  const pricingUrl = "https://firebase.google.com/pricing#cloud-firestore";
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs min-h-screen">
-      <motion.div 
-        initial={{ opacity: 0, scale: 0.95, y: 20 }}
-        animate={{ opacity: 1, scale: 1, y: 0 }}
-        className="bg-white dark:bg-zinc-900 max-w-lg w-full rounded-2xl border border-amber-200 dark:border-amber-900/40 shadow-2xl p-6 sm:p-8 space-y-6 relative"
-      >
-        <div className="flex items-center gap-3">
-          <div className="w-12 h-12 bg-amber-50 dark:bg-amber-900/20 rounded-xl flex items-center justify-center text-amber-500 shrink-0 border border-amber-100 dark:border-amber-900/30">
-            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-6 h-6">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
-            </svg>
-          </div>
-          <div>
-            <h2 className="text-xl font-bold text-slate-900 dark:text-neutral-100 tracking-tight">
-              Firestore Quota Limit Exceeded
-            </h2>
-            <p className="text-xs text-slate-400 font-mono mt-0.5 uppercase tracking-wider font-semibold">
-              spark plan free tier exhausted
-            </p>
-          </div>
-        </div>
-
-        <div className="space-y-4 text-slate-650 dark:text-neutral-300 text-sm leading-relaxed">
-          <p>
-            The standard Firebase Spark plan has reached its free limit of <strong>daily read units</strong> for this project.
-          </p>
-          <div className="p-4 bg-slate-50 dark:bg-zinc-950 rounded-xl border border-slate-100 dark:border-zinc-800 space-y-2">
-            <p className="font-medium text-slate-805 dark:text-neutral-200 text-xs text-amber-600 dark:text-amber-500 uppercase tracking-widest leading-none">
-              Status & Resolution:
-            </p>
-            <p className="text-xs text-slate-600 dark:text-neutral-400">
-              Firestore read operations are temporarily restricted. Standard daily free tier quotas will automatically reset tomorrow. To instantly restore database connectivity, please enable billing or upgrade the project in the Firebase Console.
-            </p>
-          </div>
-          <p className="text-xs text-slate-500">
-            Detailed quota information is available under the <strong>Spark plan</strong> column in the <strong>Enterprise edition</strong> section of official Firebase Documentation.
-          </p>
-        </div>
-
-        <div className="flex flex-col gap-2 pt-2">
-          <a
-            href={upgradeUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="w-full py-3 bg-slate-950 dark:bg-[#d4af37] dark:text-black hover:bg-slate-850 text-white font-bold text-sm tracking-wider uppercase rounded-xl transition-all flex items-center justify-center gap-2 shadow-lg shadow-slate-950/10 cursor-pointer text-center"
-          >
-            <span>Upgrade & Enable Billing</span>
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
-              <path fillRule="evenodd" d="M5.22 14.78a.75.75 0 001.06 0l7.22-7.22v5.69a.75.75 0 001.5 0v-7.5a.75.75 0 00-.75-.75h-7.5a.75.75 0 000 1.5h5.69l-7.22 7.22a.75.75 0 000 1.06z" clipRule="evenodd" />
-            </svg>
-          </a>
-
-          <a
-            href={pricingUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="w-full py-2.5 bg-slate-50 dark:bg-zinc-850 hover:bg-slate-100 dark:hover:bg-zinc-850 text-slate-705 dark:text-neutral-200 font-bold text-xs tracking-wider uppercase rounded-xl transition-all flex items-center justify-center gap-2 border border-slate-200 dark:border-zinc-700 cursor-pointer text-center"
-          >
-            View Firebase Pricing Tiers
-          </a>
-
-          <button
-            onClick={onDismiss}
-            className="w-full py-2.5 hover:bg-slate-50 dark:hover:bg-zinc-800/40 text-slate-500 hover:text-slate-800 dark:hover:text-neutral-300 font-semibold text-xs tracking-wider uppercase rounded-xl transition-all cursor-pointer text-center"
-          >
-            Dismiss & Attempt with Cached Data
-          </button>
-        </div>
-      </motion.div>
-    </div>
-  );
-}
+// Super Admin Live Activity Notifications Center
 
 type View = "dashboard" | "transactions" | "customerLedger" | "counterSale" | "counterSalesLedger" | "newSale" | "salesList" | "newEmployee" | "employeesList" | "employees" | "salaryEntry" | "salarySheet" | "addAttendance" | "breakfastBoard" | "attendanceList" | "attendance" | "reports" | "settings" | "newSupplier" | "suppliersList" | "suppliers" | "newPurchase" | "purchaseList" | "paySupplierDue" | "newUser" | "usersList" | "rolesList" | "profileView" | "inventory" | "auditTrail";
 
@@ -264,75 +191,6 @@ export default function App() {
       localStorage.setItem("darkMode", "false");
     }
   }, [darkMode]);
-
-  const [quotaExceeded, setQuotaExceeded] = useState(() => {
-    if (typeof window !== "undefined") {
-      return !!(window as any).__firestore_quota_exceeded__;
-    }
-    return false;
-  });
-
-  useEffect(() => {
-    const checkErrorForQuota = (errStr: string) => {
-      if (
-        errStr.toLowerCase().includes("quota exceeded") ||
-        errStr.toLowerCase().includes("quota limit exceeded") ||
-        errStr.toLowerCase().includes("free daily read units") ||
-        errStr.toLowerCase().includes("exceeded free quota") ||
-        errStr.toLowerCase().includes("unavailable") ||
-        errStr.toLowerCase().includes("could not reach cloud firestore backend")
-      ) {
-        if (typeof window !== "undefined") {
-          (window as any).__firestore_quota_exceeded__ = true;
-        }
-        setQuotaExceeded(true);
-      }
-    };
-
-    const handleError = (event: ErrorEvent) => {
-      const msg = event.message || (event.error && event.error.message) || "";
-      checkErrorForQuota(msg);
-    };
-
-    const handleRejection = (event: PromiseRejectionEvent) => {
-      const reason = event.reason;
-      const msg = reason instanceof Error ? reason.message : String(reason);
-      checkErrorForQuota(msg);
-    };
-
-    const handleCustomEvent = () => {
-      setQuotaExceeded(true);
-    };
-
-    window.addEventListener("error", handleError);
-    window.addEventListener("unhandledrejection", handleRejection);
-    window.addEventListener("firestore-quota-exceeded", handleCustomEvent);
-
-    // Patch console.error to track errors caught and logged by firebase code
-    const originalConsoleError = console.error;
-    console.error = function (...args) {
-      originalConsoleError.apply(console, args);
-      const strArgs = args.map(arg => {
-        try {
-          return typeof arg === "object" ? JSON.stringify(arg) : String(arg);
-        } catch {
-          return String(arg);
-        }
-      }).join(" ");
-      checkErrorForQuota(strArgs);
-    };
-
-    if (typeof window !== "undefined" && (window as any).__firestore_quota_exceeded__) {
-      setQuotaExceeded(true);
-    }
-
-    return () => {
-      window.removeEventListener("error", handleError);
-      window.removeEventListener("unhandledrejection", handleRejection);
-      window.removeEventListener("firestore-quota-exceeded", handleCustomEvent);
-      console.error = originalConsoleError;
-    };
-  }, []);
 
   const [expandedMenus, setExpandedMenus] = useState<Record<string, boolean>>({});
   const [user, setUser] = useState<FirebaseUser | null>(null);
@@ -523,32 +381,36 @@ export default function App() {
   const [companyLogoUrl, setCompanyLogoUrl] = useState("");
 
   useEffect(() => {
-    const unsubBranding = onSnapshot(doc(db, "settings", "company"), (docSnap) => {
-      if (docSnap.exists()) {
-        const data = docSnap.data();
+    // 1. Initial fetch from Supabase
+    fetchCompanySettingsFromSupabase().then(data => {
+      if (data) {
         setCompanyName(data.companyName || "Modern Cloth Store");
         setCompanyTagline(data.companyTagline || "Since : 1983 - POS & Inventory");
         setCompanyLogoUrl(data.companyLogoUrl || "");
       }
-    }, (error) => {
-      handleFirestoreError(error, OperationType.GET, "settings/company");
+    }).catch(() => {});
+
+    // 2. Real-time subscription to Supabase company_settings
+    const unsubBranding = subscribeToSupabaseTable("company_settings", (rows: any[]) => {
+      if (rows && rows.length > 0) {
+        const data = rows[0];
+        setCompanyName(data.companyName || data.company_name || "Modern Cloth Store");
+        setCompanyTagline(data.tagline || data.companyTagline || "Since : 1983 - POS & Inventory");
+        setCompanyLogoUrl(data.logoUrl || data.logo_url || "");
+      }
     });
     return () => unsubBranding();
   }, []);
 
-  // Load custom roles
+  // Load custom roles from Supabase
   useEffect(() => {
     if (!user) {
       setCustomRoles([]);
       return;
     }
-    const unsubRoles = onSnapshot(collection(db, "roles"), (snap) => {
-      const parsedRoles: RolePermission[] = [];
-      snap.forEach((doc) => {
-        parsedRoles.push({ id: doc.id, ...doc.data() } as RolePermission);
-      });
+    const unsubRoles = subscribeToSupabaseTable<RolePermission>("roles", (parsedRoles) => {
       setCustomRoles(parsedRoles);
-    }, (err) => console.error("Roles fetch error", err));
+    });
     return () => unsubRoles();
   }, [user]);
 
@@ -649,7 +511,17 @@ export default function App() {
             });
           }
         } catch (err) {
-          console.error("Error loading user profile:", err);
+          console.warn("Error loading user profile from Firestore, using offline fallback:", err);
+          const isModernAdmin = u.email?.toLowerCase() === "modern@admin.com" || u.email?.toLowerCase() === "joydutta398878@gmail.com";
+          setProfile({
+            uid: u.uid,
+            email: u.email || "",
+            displayName: isModernAdmin ? "Main Administrator" : (u.displayName || "User"),
+            role: isModernAdmin ? "admin" : "sales",
+            createdAt: new Date().toISOString(),
+            status: "active",
+            photoURL: u.photoURL || `https://api.dicebear.com/7.x/adventurer/svg?seed=${encodeURIComponent(isModernAdmin ? "Main Administrator" : "User")}`
+          });
         } finally {
           setLoading(false);
         }
@@ -810,21 +682,11 @@ export default function App() {
 
   const handleLogout = () => signOut(auth);
 
-  if (loading && !quotaExceeded) {
+  if (loading) {
     return (
       <div className="flex items-center justify-center h-screen bg-[#F5F5F4]">
         <div className="animate-spin rounded-full h-12 w-12 border-slate-900 border-b-2"></div>
       </div>
-    );
-  }
-
-  if (quotaExceeded) {
-    return (
-      <QuotaExceededOverlay 
-        onDismiss={() => setQuotaExceeded(false)} 
-        databaseId="ai-studio-254e2cd5-7d37-444e-878d-72afd87a600f"
-        projectId="studio-1767695098-65e9f"
-      />
     );
   }
 

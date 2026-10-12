@@ -12,8 +12,8 @@ import {
   setDoc, 
   deleteDoc, 
   getDocs,
-  Firestore 
-} from "firebase/firestore";
+  FirestoreMock as Firestore 
+} from "./firebaseCompat";
 
 const DB_NAME = "modern_pos_offline_db";
 const DB_VERSION = 1;

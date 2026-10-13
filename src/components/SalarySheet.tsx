@@ -85,10 +85,17 @@ export default function SalarySheet({ user, role }: { user: User; role: UserRole
       setEmployees(emps);
     }, (error) => handleFirestoreError(error, OperationType.LIST, "employees"));
 
-    // Snap transactions focused on Staff Salary and Employee Advance
+    // Snap transactions focused on Staff Salary, Advance, Other Advance, and Advance Received
     const unsubTx = onSnapshot(collection(db, "transactions"), (snap) => {
       const allTx = snap.docs.map(d => ({ id: d.id, ...d.data() } as Transaction));
-      const payTx = allTx.filter(t => t.category === "Staff Salary" || t.category === "Employee Advance");
+      const payTx = allTx.filter(t => 
+        t.category === "Staff Salary" || 
+        t.category === "Employee Advance" ||
+        t.category === "Other Advance" ||
+        t.category === "Employee Other Advance" ||
+        t.category === "Employee Advance Received" ||
+        t.subCategory === "Employee Advance Received"
+      );
       setTransactions(payTx);
       setLoading(false);
     }, (error) => handleFirestoreError(error, OperationType.LIST, "transactions"));
@@ -113,8 +120,9 @@ export default function SalarySheet({ user, role }: { user: User; role: UserRole
       if (tx.paymentMethod && tx.paymentMethod !== "Cash") {
         const bank = banks.find(b => b.name === tx.paymentMethod);
         if (bank?.id) {
+          const isIncome = tx.type === "income" || tx.category === "Employee Advance Received" || tx.subCategory === "Employee Advance Received";
           batch.update(doc(db, "banks", bank.id), {
-            balance: increment(tx.amount), // Revert subtraction
+            balance: increment(isIncome ? -tx.amount : tx.amount), // Revert
             lastUpdated: new Date().toISOString()
           });
         }
@@ -159,16 +167,22 @@ export default function SalarySheet({ user, role }: { user: User; role: UserRole
       .filter(tx => tx.category === "Staff Salary")
       .reduce((sum, tx) => sum + tx.amount, 0);
     const advanceGiven = empTxs
-      .filter(tx => tx.category === "Employee Advance")
+      .filter(tx => tx.category === "Employee Advance" || tx.category === "Other Advance" || tx.category === "Employee Other Advance")
       .reduce((sum, tx) => sum + tx.amount, 0);
+    const advanceReceived = empTxs
+      .filter(tx => tx.category === "Employee Advance Received" || tx.subCategory === "Employee Advance Received" || tx.type === "income")
+      .reduce((sum, tx) => sum + tx.amount, 0);
+    const baseOtherAdvance = emp.otherAdvance || 0;
+    const totalAdvanceDisbursed = advanceGiven + baseOtherAdvance;
+    const netAdvance = Math.max(0, totalAdvanceDisbursed - advanceReceived);
     const totalPaid = salaryPaid + advanceGiven;
-    const remainingDue = Math.max(0, (emp.salary || 0) - totalPaid);
+    const remainingDue = Math.max(0, (emp.salary || 0) - salaryPaid);
     
     // Status
     let status: "unpaid" | "partial" | "paid" = "unpaid";
-    if (totalPaid >= emp.salary && emp.salary > 0) {
+    if (salaryPaid >= emp.salary && emp.salary > 0) {
       status = "paid";
-    } else if (totalPaid > 0) {
+    } else if (salaryPaid > 0 || advanceGiven > 0) {
       status = "partial";
     }
 
@@ -176,6 +190,9 @@ export default function SalarySheet({ user, role }: { user: User; role: UserRole
       ...emp,
       salaryPaid,
       advanceGiven,
+      advanceReceived,
+      baseOtherAdvance,
+      netAdvance,
       totalPaid,
       remainingDue,
       status
@@ -196,10 +213,13 @@ export default function SalarySheet({ user, role }: { user: User; role: UserRole
     .filter(tx => tx.category === "Staff Salary")
     .reduce((sum, tx) => sum + tx.amount, 0);
   const totalDisbursedAdvance = monthTransactions
-    .filter(tx => tx.category === "Employee Advance")
+    .filter(tx => tx.category === "Employee Advance" || tx.category === "Other Advance" || tx.category === "Employee Other Advance")
     .reduce((sum, tx) => sum + tx.amount, 0);
-  const netDisbursement = totalPaidSalary + totalDisbursedAdvance;
-  const totalRemainingPayrollDue = Math.max(0, totalBasePayroll - netDisbursement);
+  const totalReceivedAdvance = monthTransactions
+    .filter(tx => tx.category === "Employee Advance Received" || tx.subCategory === "Employee Advance Received" || tx.type === "income")
+    .reduce((sum, tx) => sum + tx.amount, 0);
+  const netDisbursement = totalPaidSalary + totalDisbursedAdvance - totalReceivedAdvance;
+  const totalRemainingPayrollDue = Math.max(0, totalBasePayroll - totalPaidSalary);
 
   // Render Month labels
   const monthLabelStr = format(start, "MMMM yyyy");
@@ -566,6 +586,20 @@ export default function SalarySheet({ user, role }: { user: User; role: UserRole
                           <div>
                             <p className="font-bold text-gray-900 text-sm leading-none mb-1">{emp.name}</p>
                             <p className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">{emp.role} {emp.department ? `• ${emp.department}` : ""}</p>
+                            {(emp.baseOtherAdvance > 0 || emp.advanceReceived > 0) && (
+                              <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+                                {emp.baseOtherAdvance > 0 && (
+                                  <span className="text-[9px] font-bold text-amber-700 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded">
+                                    অন্যান্য অগ্রিম: {isSuperAdmin ? formatCurrency(emp.baseOtherAdvance) : "***"}
+                                  </span>
+                                )}
+                                {emp.advanceReceived > 0 && (
+                                  <span className="text-[9px] font-bold text-teal-700 bg-teal-50 border border-teal-200 px-1.5 py-0.5 rounded">
+                                    রিসিভ: {isSuperAdmin ? formatCurrency(emp.advanceReceived) : "***"}
+                                  </span>
+                                )}
+                              </div>
+                            )}
                           </div>
                         </div>
                       </td>
@@ -575,9 +609,16 @@ export default function SalarySheet({ user, role }: { user: User; role: UserRole
                         </span>
                       </td>
                       <td className="px-6 py-4">
-                        <span className="font-mono font-bold text-emerald-600 text-sm">
-                          {isSuperAdmin ? formatCurrency(emp.totalPaid) : "***"}
-                        </span>
+                        <div className="flex flex-col">
+                          <span className="font-mono font-bold text-emerald-600 text-sm">
+                            {isSuperAdmin ? formatCurrency(emp.totalPaid) : "***"}
+                          </span>
+                          {emp.advanceGiven > 0 && (
+                            <span className="text-[10px] text-slate-400 font-medium">
+                              (বেতন: {isSuperAdmin ? formatCurrency(emp.salaryPaid) : "***"} + অগ্রিম: {isSuperAdmin ? formatCurrency(emp.advanceGiven) : "***"})
+                            </span>
+                          )}
+                        </div>
                       </td>
                       <td className="px-6 py-4">
                         <span className={cn(

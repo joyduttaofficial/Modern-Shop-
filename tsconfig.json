@@ -18,6 +18,18 @@
     "paths": {
       "@/*": [
         "./*"
+      ],
+      "firebase/app": [
+        "./src/lib/firebaseCompat.ts"
+      ],
+      "firebase/auth": [
+        "./src/lib/firebaseCompat.ts"
+      ],
+      "firebase/firestore": [
+        "./src/lib/firebaseCompat.ts"
+      ],
+      "firebase": [
+        "./src/lib/firebaseCompat.ts"
       ]
     },
     "allowImportingTsExtensions": true,

@@ -28,6 +28,8 @@ const dictionary: Record<string, string> = {
   "Invoices & Sales": "ইনভয়েস ও বিক্রয়",
   "New Sale": "নতুন বিক্রয়",
   "Counter Sale": "কাউন্টার সেল",
+  "Daily Profit": "দৈনিক লাভ",
+  "Today Daily Profit": "আজকের লাভ",
   "Counter Sale Entry": "কাউন্টার সেল এন্ট্রি",
   "Counter Sale (স্লিপ সেল)": "কাউন্টার সেল (স্লিপ সেল)",
   "Counter Sales Ledger": "কাউন্টার সেলস রেজিস্টার",

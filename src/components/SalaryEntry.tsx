@@ -85,7 +85,14 @@ export default function SalaryEntry({ user, role }: { user: User; role: UserRole
     // Snap salary and advance transactions to show already paid amounts this month
     const unsubTx = onSnapshot(collection(db, "transactions"), (snap) => {
       const allTx = snap.docs.map(d => ({ id: d.id, ...d.data() } as Transaction));
-      const payTx = allTx.filter(t => t.category === "Staff Salary" || t.category === "Employee Advance");
+      const payTx = allTx.filter(t => 
+        t.category === "Staff Salary" || 
+        t.category === "Employee Advance" ||
+        t.category === "Other Advance" ||
+        t.category === "Employee Other Advance" ||
+        t.category === "Employee Advance Received" ||
+        t.subCategory === "Employee Advance Received"
+      );
       setTransactions(payTx);
     }, (error) => handleFirestoreError(error, OperationType.LIST, "transactions"));
 
@@ -108,7 +115,12 @@ export default function SalaryEntry({ user, role }: { user: User; role: UserRole
           return false;
         }
       })
-      .reduce((sum, tx) => sum + (Number(tx.amount) || 0), 0);
+      .reduce((sum, tx) => {
+        if (tx.type === "income" || tx.category === "Employee Advance Received" || tx.subCategory === "Employee Advance Received") {
+          return sum - (Number(tx.amount) || 0);
+        }
+        return sum + (Number(tx.amount) || 0);
+      }, 0);
   };
 
   const handleInputChange = (empId: string, field: keyof RowState, value: string) => {
@@ -469,6 +481,12 @@ export default function SalaryEntry({ user, role }: { user: User; role: UserRole
                             <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mt-0.5">
                               {emp.role} {emp.department ? `• ${emp.department}` : ""}
                             </p>
+                            {(emp.otherAdvance && emp.otherAdvance > 0) ? (
+                              <div className="mt-1 flex items-center gap-1 text-[10px] font-bold text-amber-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-md w-fit">
+                                <Coins className="w-3 h-3 text-amber-600 shrink-0" />
+                                <span>অন্যান্য অগ্রিম: {isSuperAdmin ? formatCurrency(emp.otherAdvance) : "***"}</span>
+                              </div>
+                            ) : null}
                           </div>
                         </div>
                       </td>

@@ -1,5 +1,4 @@
-import { collection, getDocs, doc, getDoc } from "firebase/firestore";
-import { db } from "./firebase";
+import { collection, getDocs, doc, getDoc, db } from "./firebaseCompat";
 import { getSupabase } from "./supabase";
 import { getTransactionsFromIndexedDB } from "./indexedDbFallback";
 

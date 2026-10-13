@@ -4,7 +4,7 @@ import { collection, onSnapshot, addDoc, deleteDoc, doc, query, orderBy, where, 
 import { db, OperationType, handleFirestoreError, updateDoc } from "@/src/lib/firebase";
 import { Employee, Transaction, UserRole, Bank } from "@/src/types";
 import { cn, formatCurrency, compressImage } from "@/src/lib/utils";
-import { Users, Plus, Trash2, UserPlus, CreditCard, History, Wallet, UserCircle, Landmark, X, FileText, FilePlus, Image, Eye, Pencil, ExternalLink, Download, ShieldCheck, Printer, FileDown, Loader2, CheckCircle2, AlertCircle, Coins, Lock, Crown } from "lucide-react";
+import { Users, Plus, Trash2, UserPlus, CreditCard, History, Wallet, UserCircle, Landmark, X, FileText, FilePlus, Image, Eye, Pencil, ExternalLink, Download, ShieldCheck, Printer, FileDown, Loader2, CheckCircle2, AlertCircle, Coins, Lock, Crown, ArrowDownLeft, ArrowUpRight } from "lucide-react";
 import { format, startOfYear, endOfYear } from "date-fns";
 import { increment, setDoc } from "firebase/firestore";
 import { motion, AnimatePresence } from "motion/react";
@@ -40,6 +40,7 @@ export default function Employees({
   const [name, setName] = useState("");
   const [empRole, setEmpRole] = useState("");
   const [salary, setSalary] = useState("");
+  const [otherAdvance, setOtherAdvance] = useState("");
   const [status, setStatus] = useState<"active" | "inactive">("active");
   const [department, setDepartment] = useState("Sales");
   const [employeeDocuments, setEmployeeDocuments] = useState<{ name: string; type: string; data: string }[]>([]);
@@ -121,8 +122,13 @@ export default function Employees({
   // Dynamic Branding
   const [companyName, setCompanyName] = useState("Modern Cloth Store");
 
-  // Quick Pay State
-  const [quickPay, setQuickPay] = useState<{ empId: string; type: "Staff Salary" | "Employee Advance" } | null>(null);
+  // Quick Pay & Advance Modal State (Disburse Salary, Disburse Other Advance, Receive Advance)
+  const [quickPay, setQuickPay] = useState<{ 
+    empId: string; 
+    type: "Staff Salary" | "Employee Advance" | "Other Advance" | "Receive Advance";
+    advanceType?: "other_advance" | "salary_advance" | "general";
+  } | null>(null);
+  const [receiveAdvanceType, setReceiveAdvanceType] = useState<"other_advance" | "salary_advance" | "general">("other_advance");
   const [payAmount, setPayAmount] = useState("");
   const [payMethod, setPayMethod] = useState("Cash");
   const [payNotes, setPayNotes] = useState("");
@@ -217,12 +223,14 @@ export default function Employees({
     let imported = 0;
     try {
       for (const line of lines) {
-        const [name, role, salary] = line.split(",").map(s => s.trim());
+        const parts = line.split(",").map(s => s.trim());
+        const [name, role, salary, otherAdv] = parts;
         if (name && role && salary) {
           await addDoc(collection(db, "employees"), {
             name,
             role,
             salary: isSuperAdmin ? (parseFloat(salary) || 0) : 0,
+            otherAdvance: otherAdv ? (parseFloat(otherAdv) || 0) : 0,
             joinedDate: new Date().toISOString(),
             status: "active"
           });
@@ -243,14 +251,37 @@ export default function Employees({
     setIsPaying(true);
     try {
       const amount = parseFloat(payAmount);
+      if (isNaN(amount) || amount <= 0) {
+        alert("Please enter a valid amount.");
+        setIsPaying(false);
+        return;
+      }
+
       const emp = employees.find(e => e.id === quickPay.empId);
+      const isReceiving = quickPay.type === "Receive Advance";
+      const isOtherAdvance = quickPay.type === "Other Advance";
+
+      const txCategory = isReceiving 
+        ? "Employee Advance Received" 
+        : isOtherAdvance 
+        ? "Other Advance" 
+        : quickPay.type;
+
+      const txType: "income" | "expense" = isReceiving ? "income" : "expense";
+
+      const defaultMemo = isReceiving
+        ? `অগ্রিম ফেরত গ্রহণ (Advance repayment received from ${emp?.name || ""})`
+        : isOtherAdvance
+        ? `অন্যান্য অগ্রিম প্রদান (Disbursed other advance to ${emp?.name || ""})`
+        : `বেতন ও অগ্রিম প্রদান (${emp?.name || ""})`;
+
       const newTx = {
         date: new Date().toISOString(),
-        type: "expense" as const,
-        category: quickPay.type,
+        type: txType,
+        category: txCategory,
         amount: amount,
         paymentMethod: payMethod,
-        notes: payNotes,
+        notes: payNotes.trim() || defaultMemo,
         createdBy: user.uid,
         employeeId: quickPay.empId,
         subCategory: emp?.name || ""
@@ -258,15 +289,34 @@ export default function Employees({
 
       await addDoc(collection(db, "transactions"), newTx);
 
+      // Bank Balance update: Inflow if receiving, outflow if paying
       if (payMethod !== "Cash") {
         const bank = banks.find(b => b.name === payMethod);
         if (bank?.id) {
+          const bankDelta = isReceiving ? amount : -amount;
           await updateDoc(doc(db, "banks", bank.id), {
-            balance: increment(-amount),
+            balance: increment(bankDelta),
             lastUpdated: new Date().toISOString()
           });
         }
       }
+
+      // Log activity for audit
+      logUserActivity({
+        userId: user.uid,
+        userName: user.displayName || user.email?.split("@")[0] || "User",
+        userEmail: user.email || "",
+        userRole: role,
+        menuId: "employees",
+        menuLabel: "কর্মচারী ব্যবস্থাপনা",
+        action: "create",
+        title: isReceiving
+          ? `কর্মচারী থেকে অগ্রিম রিসিভ সম্পন্ন (${emp?.name || ""}) - ৳${amount.toLocaleString()}`
+          : isOtherAdvance
+          ? `কর্মচারীকে অন্যান্য অগ্রিম প্রদান (${emp?.name || ""}) - ৳${amount.toLocaleString()}`
+          : `কর্মচারীর বেতন/অগ্রিম প্রদান (${emp?.name || ""}) - ৳${amount.toLocaleString()}`,
+        note: `কর্মী: ${emp?.name || ""} | পরিমাণ: ৳${amount.toLocaleString()} | ধরন: ${isReceiving ? "রিসিভ (ইনকাম)" : "প্রদান (ব্যয়)"} | মাধ্যম: ${payMethod}${payNotes.trim() ? ` | নোট: ${payNotes.trim()}` : ""}`
+      });
 
       setQuickPay(null);
       setPayAmount("");
@@ -364,6 +414,7 @@ export default function Employees({
         nidBackPhoto,
         birthCertificatePhoto,
         employeeIdCode: employeeIdCode.trim(),
+        otherAdvance: otherAdvance ? (parseFloat(otherAdvance) || 0) : 0,
         joinedDate: editingEmployee?.joinedDate || new Date().toISOString()
       };
 
@@ -386,7 +437,7 @@ export default function Employees({
           menuLabel: "কর্মচারী ব্যবস্থাপনা",
           action: "edit",
           title: `কর্মচারী প্রোফাইল সম্পাদনা করা হয়েছে (${name.trim()})`,
-          note: `নাম: ${name.trim()} | পদবি: ${empRole || "স্টাফ"} | বিভাগ: ${department} | স্ট্যাটাস: ${status} | আইডি: ${employeeIdCode.trim() || "নেই"}`
+          note: `নাম: ${name.trim()} | পদবি: ${empRole || "স্টাফ"} | বিভাগ: ${department} | স্ট্যাটাস: ${status} | অন্যান্য অগ্রিম: ৳${(parseFloat(otherAdvance) || 0).toLocaleString()} | আইডি: ${employeeIdCode.trim() || "নেই"}`
         });
       } else {
         await addDoc(collection(db, "employees"), employeeData);
@@ -399,7 +450,7 @@ export default function Employees({
           menuLabel: "কর্মচারী ব্যবস্থাপনা",
           action: "create",
           title: `নতুন কর্মচারী যুক্ত করা হয়েছে (${name.trim()})`,
-          note: `নাম: ${name.trim()} | পদবি: ${empRole || "স্টাফ"} | বিভাগ: ${department} | স্ট্যাটাস: ${status} | আইডি: ${employeeIdCode.trim() || "নেই"}`
+          note: `নাম: ${name.trim()} | পদবি: ${empRole || "স্টাফ"} | বিভাগ: ${department} | স্ট্যাটাস: ${status} | অন্যান্য অগ্রিম: ৳${(parseFloat(otherAdvance) || 0).toLocaleString()} | আইডি: ${employeeIdCode.trim() || "নেই"}`
         });
       }
       
@@ -426,6 +477,7 @@ export default function Employees({
     setName("");
     setEmpRole("");
     setSalary("");
+    setOtherAdvance("");
     setStatus("active");
     setDepartment("Sales");
     setEmployeeDocuments([]);
@@ -447,6 +499,7 @@ export default function Employees({
     setName(emp.name || "");
     setEmpRole(emp.role || "");
     setSalary((emp.salary ?? 0).toString());
+    setOtherAdvance((emp.otherAdvance ?? 0) > 0 ? (emp.otherAdvance ?? 0).toString() : "");
     setStatus(emp.status || "active");
     setDepartment(emp.department || "Sales");
     setEmployeeDocuments(emp.documents || []);
@@ -484,15 +537,61 @@ export default function Employees({
   };
 
   const getEmployeeStats = (empId: string) => {
+    const emp = employees.find(e => e.id === empId);
     const empTxs = transactions.filter(tx => tx.employeeId === empId);
-    const totalPaid = empTxs
-      .filter(tx => tx.category === "Staff Salary")
+
+    // 1. Basic salary paid
+    const salaryPaid = empTxs
+      .filter(tx => tx.type === "expense" && tx.category === "Staff Salary")
       .reduce((sum, tx) => sum + tx.amount, 0);
-    const totalAdvance = empTxs
-      .filter(tx => tx.category === "Employee Advance")
+
+    // 2. Salary advance given
+    const salaryAdvance = empTxs
+      .filter(tx => tx.type === "expense" && (tx.category === "Employee Advance" || tx.category === "Salary Advance"))
       .reduce((sum, tx) => sum + tx.amount, 0);
+
+    // 3. Other advance given (direct profile initial value + expense transactions)
+    const otherAdvanceTxs = empTxs
+      .filter(tx => tx.type === "expense" && (tx.category === "Other Advance" || tx.category === "Employee Other Advance"))
+      .reduce((sum, tx) => sum + tx.amount, 0);
+    const baseOtherAdvance = Number(emp?.otherAdvance) || 0;
+    const totalOtherAdvance = baseOtherAdvance + otherAdvanceTxs;
+
+    // 4. Advance received back (Income / repayment from employee)
+    const advanceReceived = empTxs
+      .filter(tx => tx.type === "income" && (tx.category === "Employee Advance Received" || tx.category === "Advance Return" || tx.category === "Advance Repayment"))
+      .reduce((sum, tx) => sum + tx.amount, 0);
+
+    // Disbursed advance overall
+    const totalAdvanceDisbursed = salaryAdvance + totalOtherAdvance;
     
-    return { totalPaid, totalAdvance };
+    // Net remaining advance balance
+    const netAdvanceBalance = Math.max(0, totalAdvanceDisbursed - advanceReceived);
+
+    // Total payouts logged
+    const totalPaid = salaryPaid + salaryAdvance + otherAdvanceTxs;
+    
+    // Net disbursed
+    const netDisbursed = Math.max(0, totalPaid - advanceReceived);
+
+    // Main contract salary remaining
+    const remainingSalaryDue = Math.max(0, (emp?.salary || 0) - salaryPaid);
+
+    return { 
+      salaryPaid, 
+      salaryAdvance, 
+      baseOtherAdvance, 
+      otherAdvanceTxs, 
+      totalOtherAdvance, 
+      advanceReceived, 
+      totalAdvanceDisbursed, 
+      netAdvanceBalance, 
+      totalPaid, 
+      netDisbursed, 
+      remainingSalaryDue,
+      // Legacy compatibility
+      totalAdvance: netAdvanceBalance 
+    };
   };
 
   const handlePrintProfile = (emp: Employee) => {
@@ -553,18 +652,26 @@ export default function Employees({
     const financialHtml = 
       `<div class="mb-8">
           <h3 class="text-base font-extrabold text-slate-900 mb-4 border-b border-slate-100 pb-2">Financial Account Statement</h3>
-          <div class="grid grid-cols-3 gap-4">
-            <div class="border border-slate-200 p-4 rounded-xl text-center bg-slate-50">
-              <p class="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Contracted Monthly Salary</p>
-              <p class="text-base font-black text-slate-900 font-mono">${formatCurrJS(emp.salary || 0)}</p>
+          <div class="grid grid-cols-5 gap-3">
+            <div class="border border-slate-200 p-3 rounded-xl text-center bg-slate-50">
+              <p class="text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1">Contracted Salary</p>
+              <p class="text-sm font-black text-slate-900 font-mono">${formatCurrJS(emp.salary || 0)}</p>
             </div>
-            <div class="border border-slate-200 p-4 rounded-xl text-center bg-emerald-50/50">
-              <p class="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Total Paid To Date</p>
-              <p class="text-base font-black text-emerald-700 font-mono">${formatCurrJS(stats.totalPaid)}</p>
+            <div class="border border-slate-200 p-3 rounded-xl text-center bg-emerald-50/50">
+              <p class="text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1">Salary Paid</p>
+              <p class="text-sm font-black text-emerald-700 font-mono">${formatCurrJS(stats.salaryPaid)}</p>
             </div>
-            <div class="border border-slate-200 p-4 rounded-xl text-center bg-amber-50/50">
-              <p class="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Advance Balance Due</p>
-              <p class="text-base font-black text-amber-700 font-mono">${formatCurrJS(stats.totalAdvance)}</p>
+            <div class="border border-slate-200 p-3 rounded-xl text-center bg-amber-50/50">
+              <p class="text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1">Other Advance</p>
+              <p class="text-sm font-black text-amber-700 font-mono">${formatCurrJS(stats.totalOtherAdvance)}</p>
+            </div>
+            <div class="border border-slate-200 p-3 rounded-xl text-center bg-teal-50/50">
+              <p class="text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1">Advance Received</p>
+              <p class="text-sm font-black text-teal-700 font-mono">${formatCurrJS(stats.advanceReceived)}</p>
+            </div>
+            <div class="border border-slate-200 p-3 rounded-xl text-center bg-rose-50/50">
+              <p class="text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1">Net Advance Due</p>
+              <p class="text-sm font-black text-rose-700 font-mono">${formatCurrJS(stats.netAdvanceBalance)}</p>
             </div>
           </div>
         </div>`;
@@ -712,9 +819,11 @@ export default function Employees({
       const stats = getEmployeeStats(emp.id!);
       const joinedStr = emp.joinedDate ? format(new Date(emp.joinedDate), "MMM dd, yyyy") : "N/A";
       const financialCells = 
-        `<td class="px-4 py-3 text-right font-mono font-black text-slate-950">${formatCurrJS(emp.salary || 0)}</td>
-         <td class="px-4 py-3 text-right font-mono text-emerald-700 font-black">${formatCurrJS(stats.totalPaid)}</td>
-         <td class="px-4 py-3 text-right font-mono text-amber-700 font-black">${formatCurrJS(stats.totalAdvance)}</td>`;
+        `<td class="px-3 py-3 text-right font-mono font-black text-slate-950">${formatCurrJS(emp.salary || 0)}</td>
+         <td class="px-3 py-3 text-right font-mono text-emerald-700 font-black">${formatCurrJS(stats.salaryPaid)}</td>
+         <td class="px-3 py-3 text-right font-mono text-amber-700 font-black">${formatCurrJS(stats.totalOtherAdvance)}</td>
+         <td class="px-3 py-3 text-right font-mono text-teal-700 font-black">${formatCurrJS(stats.advanceReceived)}</td>
+         <td class="px-3 py-3 text-right font-mono text-rose-700 font-black">${formatCurrJS(stats.netAdvanceBalance)}</td>`;
 
       return `
         <tr class="border-b border-slate-200 hover:bg-slate-50 transition-colors text-xs font-semibold text-slate-700">
@@ -736,20 +845,26 @@ export default function Employees({
     }).join("");
 
     const grandTotalSalary = employees.reduce((total, emp) => total + (emp.salary || 0), 0);
-    const grandTotalPaid = employees.reduce((total, emp) => total + getEmployeeStats(emp.id!).totalPaid, 0);
-    const grandTotalAdvance = employees.reduce((total, emp) => total + getEmployeeStats(emp.id!).totalAdvance, 0);
+    const grandTotalSalaryPaid = employees.reduce((total, emp) => total + getEmployeeStats(emp.id!).salaryPaid, 0);
+    const grandTotalOtherAdvance = employees.reduce((total, emp) => total + getEmployeeStats(emp.id!).totalOtherAdvance, 0);
+    const grandTotalReceived = employees.reduce((total, emp) => total + getEmployeeStats(emp.id!).advanceReceived, 0);
+    const grandTotalNetAdvance = employees.reduce((total, emp) => total + getEmployeeStats(emp.id!).netAdvanceBalance, 0);
 
     const financialHeaders = 
-      `<th class="px-4 py-3 text-right">Basic Salary</th>
-       <th class="px-4 py-3 text-right">Total Paid</th>
-       <th class="px-4 py-3 text-right">Advance Balance</th>`;
+      `<th class="px-3 py-3 text-right">Basic Salary</th>
+       <th class="px-3 py-3 text-right">Salary Paid</th>
+       <th class="px-3 py-3 text-right">Other Advance</th>
+       <th class="px-3 py-3 text-right">Adv Received</th>
+       <th class="px-3 py-3 text-right">Net Advance</th>`;
 
     const financialTotals = 
       `<tr class="bg-slate-50 border-t-2 border-slate-300 font-extrabold text-xs text-slate-900">
         <td colspan="7" class="px-4 py-4 text-right uppercase tracking-wider font-extrabold text-slate-500">Totals:</td>
-        <td class="px-4 py-4 text-right font-mono font-black text-slate-950">${formatCurrJS(grandTotalSalary)}</td>
-        <td class="px-4 py-4 text-right font-mono font-black text-green-700">${formatCurrJS(grandTotalPaid)}</td>
-        <td class="px-4 py-4 text-right font-mono font-black text-amber-700">${formatCurrJS(grandTotalAdvance)}</td>
+        <td class="px-3 py-4 text-right font-mono font-black text-slate-950">${formatCurrJS(grandTotalSalary)}</td>
+        <td class="px-3 py-4 text-right font-mono font-black text-emerald-700">${formatCurrJS(grandTotalSalaryPaid)}</td>
+        <td class="px-3 py-4 text-right font-mono font-black text-amber-700">${formatCurrJS(grandTotalOtherAdvance)}</td>
+        <td class="px-3 py-4 text-right font-mono font-black text-teal-700">${formatCurrJS(grandTotalReceived)}</td>
+        <td class="px-3 py-4 text-right font-mono font-black text-rose-700">${formatCurrJS(grandTotalNetAdvance)}</td>
         <td></td>
        </tr>`;
 
@@ -998,6 +1113,32 @@ export default function Employees({
                 {isSuperAdmin 
                   ? "কর্মীর মাসিক মূল বেতন (সুপার এডমিন নিয়ন্ত্রণ)" 
                   : "🔒 শুধুমাত্র সুপার এডমিন (SUPER Admin) নতুন কর্মীর বেতন নির্ধারণ করতে পারবেন।"}
+              </p>
+            </div>
+
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between pl-1">
+                <label className="text-xs font-bold text-gray-600 uppercase tracking-widest flex items-center gap-1.5">
+                  <span>Other Advance Amount (অন্যান্য অগ্রিম)</span>
+                  <span className="text-[10px] font-black text-amber-700 bg-amber-100 border border-amber-300 px-2 py-0.5 rounded-full flex items-center gap-1">
+                    <Coins className="w-3 h-3 text-amber-600" /> অগ্রিম
+                  </span>
+                </label>
+              </div>
+              <div className="relative">
+                <span className="absolute left-4 top-1/2 -translate-y-1/2 font-black font-mono text-amber-600 text-lg">৳</span>
+                <input 
+                  type="number"
+                  min="0"
+                  step="any"
+                  placeholder="0.00"
+                  value={otherAdvance}
+                  onChange={e => setOtherAdvance(e.target.value)}
+                  className="w-full pl-9 pr-4 py-4 bg-amber-50/20 border-2 border-amber-300/80 focus:border-amber-600 focus:ring-4 focus:ring-amber-100 rounded-2xl font-black font-mono text-lg text-slate-900 transition-all outline-none"
+                />
+              </div>
+              <p className="text-[11px] text-slate-500 pl-1">
+                কর্মীর পূর্বের বা অন্যান্য অগ্রিম বকেয়া অর্থ (Other advance / opening loan)
               </p>
             </div>
 
@@ -1409,6 +1550,32 @@ export default function Employees({
                   </div>
 
                   <div className="space-y-1.5">
+                    <div className="flex items-center justify-between pl-1">
+                      <label className="text-xs font-bold text-gray-600 uppercase tracking-widest flex items-center gap-1.5">
+                        <span>Other Advance Amount (অন্যান্য অগ্রিম)</span>
+                        <span className="text-[10px] font-black text-amber-700 bg-amber-100 border border-amber-300 px-2 py-0.5 rounded-full flex items-center gap-1">
+                          <Coins className="w-3 h-3 text-amber-600" /> অগ্রিম
+                        </span>
+                      </label>
+                    </div>
+                    <div className="relative">
+                      <span className="absolute left-4 top-1/2 -translate-y-1/2 font-black font-mono text-amber-600 text-lg">৳</span>
+                      <input 
+                        type="number"
+                        min="0"
+                        step="any"
+                        placeholder="0.00"
+                        value={otherAdvance}
+                        onChange={e => setOtherAdvance(e.target.value)}
+                        className="w-full pl-9 pr-4 py-4 bg-amber-50/20 border-2 border-amber-300/80 focus:border-amber-600 focus:ring-4 focus:ring-amber-100 rounded-2xl font-black font-mono text-lg text-slate-900 transition-all outline-none"
+                      />
+                    </div>
+                    <p className="text-[11px] text-slate-500 pl-1">
+                      কর্মীর অন্যান্য অগ্রিম বা পূর্বের বকেয়া অর্থ (Other advance / opening advance loan)
+                    </p>
+                  </div>
+
+                  <div className="space-y-1.5">
                     <label className="text-xs font-bold text-gray-400 uppercase tracking-widest pl-1">Employment Status</label>
                     <select
                       value={status}
@@ -1679,40 +1846,91 @@ export default function Employees({
                     <span className="font-black text-gray-900">{isSuperAdmin ? formatCurrency(emp.salary) : "***"}</span>
                   </div>
                   
-                  {/* Single Unified Section: Paid salary is an advance amount (No separate section needed) */}
-                  <div className="p-4 rounded-2xl bg-gradient-to-br from-emerald-50/70 to-teal-50/40 border border-emerald-100/90 flex flex-col justify-between gap-3 shadow-2xs">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <p className="text-[11px] font-black text-emerald-800 uppercase tracking-wider flex items-center gap-1.5">
-                          <CreditCard className="w-3.5 h-3.5 text-emerald-600" /> 
-                          <span>প্রদত্ত বেতন ও অগ্রিম (Disbursed Salary / Advance)</span>
-                        </p>
-                        <p className="text-[10px] text-slate-500 font-bold mt-0.5">
-                          Paid salary is an advance amount
-                        </p>
-                      </div>
-                      <div className="text-right">
-                        <span className="font-mono font-black text-base sm:text-lg text-emerald-700 block">
-                          {isSuperAdmin ? formatCurrency(stats.totalPaid + stats.totalAdvance) : "***"}
-                        </span>
-                        {emp.salary > 0 && isSuperAdmin && (
-                          <span className="text-[10px] font-bold text-slate-500 block">
-                            বকেয়া: {formatCurrency(Math.max(0, emp.salary - (stats.totalPaid + stats.totalAdvance)))}
-                          </span>
-                        )}
-                      </div>
+                  {/* Advance Summary Grid: Other Advance & Advance Received */}
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="p-3 bg-amber-50/70 border border-amber-200/80 rounded-2xl flex flex-col justify-between">
+                      <span className="text-[10px] font-black text-amber-800 uppercase tracking-tight flex items-center gap-1">
+                        <Coins className="w-3 h-3 text-amber-600" /> অন্যান্য অগ্রিম
+                      </span>
+                      <span className="font-mono font-black text-sm sm:text-base text-amber-900 mt-1">
+                        {isSuperAdmin ? formatCurrency(stats.totalOtherAdvance) : "***"}
+                      </span>
                     </div>
-                    
+                    <div className="p-3 bg-teal-50/70 border border-teal-200/80 rounded-2xl flex flex-col justify-between">
+                      <span className="text-[10px] font-black text-teal-800 uppercase tracking-tight flex items-center gap-1">
+                        <ArrowDownLeft className="w-3 h-3 text-teal-600" /> রিসিভকৃত অগ্রিম
+                      </span>
+                      <span className="font-mono font-black text-sm sm:text-base text-teal-900 mt-1">
+                        {isSuperAdmin ? formatCurrency(stats.advanceReceived) : "***"}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Financial Status Summary */}
+                  <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200/80 space-y-2">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-slate-500 font-bold">মোট প্রদত্ত (বেতন ও অগ্রিম):</span>
+                      <span className="font-mono font-black text-slate-800">
+                        {isSuperAdmin ? formatCurrency(stats.totalPaid) : "***"}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between text-xs pt-1 border-t border-slate-200/50">
+                      <span className="text-rose-700 font-black">বকেয়া মোট অগ্রিম:</span>
+                      <span className="font-mono font-black text-rose-700">
+                        {isSuperAdmin ? formatCurrency(stats.netAdvanceBalance) : "***"}
+                      </span>
+                    </div>
+                    {emp.salary > 0 && isSuperAdmin && (
+                      <div className="flex items-center justify-between text-[11px] pt-1 border-t border-slate-200/50">
+                        <span className="text-slate-500 font-semibold">অবশিষ্ট বেতন:</span>
+                        <span className="font-mono font-bold text-slate-700">
+                          {formatCurrency(stats.remainingSalaryDue)}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                  
+                  {/* Action Buttons: 1. Pay Salary, 2. Disburse Other Advance, 3. Receive Advance Option */}
+                  <div className="space-y-2">
+                    <div className="grid grid-cols-2 gap-2">
+                      <button 
+                        type="button"
+                        onClick={() => { 
+                          setQuickPay({ empId: emp.id!, type: "Staff Salary" }); 
+                          const rem = stats.remainingSalaryDue;
+                          setPayAmount(rem > 0 ? rem.toString() : ""); 
+                        }}
+                        className="py-2.5 px-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-[11px] font-black uppercase tracking-wider flex items-center justify-center gap-1.5 shadow-xs active:scale-98 transition-all cursor-pointer"
+                        title="কর্মীর বেতন বা বেতন বাবদ অগ্রিম প্রদান করুন"
+                      >
+                        <Coins className="w-3.5 h-3.5" /> বেতন প্রদান
+                      </button>
+
+                      <button 
+                        type="button"
+                        onClick={() => { 
+                          setQuickPay({ empId: emp.id!, type: "Other Advance" }); 
+                          setPayAmount(""); 
+                        }}
+                        className="py-2.5 px-3 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-[11px] font-black uppercase tracking-wider flex items-center justify-center gap-1.5 shadow-xs active:scale-98 transition-all cursor-pointer"
+                        title="কর্মীকে অতিরিক্ত বা অন্যান্য কাজের অগ্রিম প্রদান করুন"
+                      >
+                        <Plus className="w-3.5 h-3.5" /> অন্যান্য অগ্রিম
+                      </button>
+                    </div>
+
+                    {/* Prominent Receive Advance Option Button */}
                     <button 
                       type="button"
                       onClick={() => { 
-                        setQuickPay({ empId: emp.id!, type: "Staff Salary" }); 
-                        const rem = Math.max(0, (emp.salary || 0) - (stats.totalPaid + stats.totalAdvance));
-                        setPayAmount(rem > 0 ? rem.toString() : ""); 
+                        setQuickPay({ empId: emp.id!, type: "Receive Advance" }); 
+                        const remAdv = stats.netAdvanceBalance;
+                        setPayAmount(remAdv > 0 ? remAdv.toString() : ""); 
                       }}
-                      className="w-full py-2.5 px-4 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold uppercase tracking-wider flex items-center justify-center gap-2 shadow-sm shadow-emerald-600/20 active:scale-98 transition-all cursor-pointer"
+                      className="w-full py-2.5 px-4 bg-teal-600 hover:bg-teal-700 text-white rounded-xl text-xs font-black uppercase tracking-wider flex items-center justify-center gap-2 shadow-sm shadow-teal-600/20 active:scale-98 transition-all cursor-pointer"
+                      title="কর্মী থেকে পূর্বের অগ্রিম বা অন্যান্য অগ্রিমের অর্থ ফেরত গ্রহণ / রিসিভ করুন"
                     >
-                      <Coins className="w-4 h-4" /> বেতন ও অগ্রিম প্রদান করুন (Disburse Salary / Advance)
+                      <ArrowDownLeft className="w-4 h-4" /> অগ্রিম রিসিভ / ফেরত গ্রহণ (Receive Option)
                     </button>
                   </div>
                   <button 
@@ -2328,25 +2546,61 @@ export default function Employees({
 
       {quickPay && (() => {
         const targetEmp = employees.find(e => e.id === quickPay.empId);
-        const targetStats = targetEmp ? getEmployeeStats(targetEmp.id!) : { totalPaid: 0, totalAdvance: 0 };
-        const totalDisbursed = targetStats.totalPaid + targetStats.totalAdvance;
-        const currentDue = targetEmp ? Math.max(0, (targetEmp.salary || 0) - totalDisbursed) : 0;
+        const targetStats = targetEmp ? getEmployeeStats(targetEmp.id!) : { 
+          salaryPaid: 0, 
+          salaryAdvance: 0, 
+          baseOtherAdvance: 0, 
+          otherAdvanceTxs: 0, 
+          totalOtherAdvance: 0, 
+          advanceReceived: 0, 
+          totalAdvanceDisbursed: 0, 
+          netAdvanceBalance: 0, 
+          totalPaid: 0, 
+          netDisbursed: 0, 
+          remainingSalaryDue: 0, 
+          totalAdvance: 0 
+        };
         const parsedPayAmount = parseFloat(payAmount) || 0;
-        const remainingAfterPay = Math.max(0, currentDue - parsedPayAmount);
+        const isReceiving = quickPay.type === "Receive Advance";
+        const isOtherAdvance = quickPay.type === "Other Advance";
+        const isSalary = quickPay.type === "Staff Salary" || quickPay.type === "Employee Advance";
+
+        const remainingAdvanceAfterReceive = Math.max(0, targetStats.netAdvanceBalance - parsedPayAmount);
+        const newTotalAdvanceAfterOther = targetStats.netAdvanceBalance + parsedPayAmount;
+        const remainingSalaryAfterPay = Math.max(0, targetStats.remainingSalaryDue - parsedPayAmount);
 
         return (
           <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-md z-[80] flex items-center justify-center p-3 sm:p-4 animate-in fade-in duration-200">
             <div className="bg-white w-full max-w-lg rounded-[36px] overflow-hidden shadow-2xl border border-slate-100 flex flex-col max-h-[92vh]">
-              {/* Modal Header */}
-              <div className="p-6 bg-gradient-to-r from-emerald-700 via-teal-700 to-slate-900 text-white flex justify-between items-center shrink-0">
+              {/* Modal Header with Dynamic Theme */}
+              <div className={cn(
+                "p-6 text-white flex justify-between items-center shrink-0 transition-all",
+                isReceiving 
+                  ? "bg-gradient-to-r from-teal-700 via-emerald-700 to-slate-900" 
+                  : isOtherAdvance 
+                  ? "bg-gradient-to-r from-amber-600 via-orange-700 to-slate-900" 
+                  : "bg-gradient-to-r from-emerald-700 via-teal-700 to-slate-900"
+              )}>
                 <div className="flex items-center gap-3">
-                  <div className="w-12 h-12 rounded-2xl bg-white/10 backdrop-blur-md border border-white/20 flex items-center justify-center text-emerald-300 shrink-0">
-                    <Coins className="w-6 h-6" />
+                  <div className="w-12 h-12 rounded-2xl bg-white/10 backdrop-blur-md border border-white/20 flex items-center justify-center text-white shrink-0">
+                    {isReceiving ? (
+                      <ArrowDownLeft className="w-6 h-6 text-teal-300" />
+                    ) : isOtherAdvance ? (
+                      <Plus className="w-6 h-6 text-amber-300" />
+                    ) : (
+                      <Coins className="w-6 h-6 text-emerald-300" />
+                    )}
                   </div>
                   <div>
-                    <h3 className="text-xl font-black tracking-tight">বেতন ও অগ্রিম প্রদান (Salary & Advance)</h3>
-                    <p className="text-xs text-emerald-100/90 font-medium">
-                      প্রাপক: <strong className="text-white underline">{targetEmp?.name}</strong> {targetEmp?.employeeIdCode ? `(${targetEmp.employeeIdCode})` : ""}
+                    <h3 className="text-xl font-black tracking-tight">
+                      {isReceiving 
+                        ? "অগ্রিম অর্থ গ্রহণ / রিসিভ (Receive Advance)" 
+                        : isOtherAdvance 
+                        ? "অন্যান্য অগ্রিম প্রদান (Disburse Other Advance)" 
+                        : "বেতন ও অগ্রিম প্রদান (Salary / Advance)"}
+                    </h3>
+                    <p className="text-xs text-white/80 font-medium">
+                      কর্মী: <strong className="text-white underline">{targetEmp?.name}</strong> {targetEmp?.employeeIdCode ? `(${targetEmp.employeeIdCode})` : ""}
                     </p>
                   </div>
                 </div>
@@ -2358,47 +2612,196 @@ export default function Employees({
                 </button>
               </div>
 
-              {/* Explanatory Banner: Paid salary is an advance amount */}
-              <div className="bg-emerald-50 px-6 py-3 border-b border-emerald-100 flex items-center gap-2 text-emerald-900 text-xs font-semibold shrink-0">
-                <Coins className="w-4 h-4 text-emerald-600 shrink-0" />
-                <span>Paid salary is an advance amount — বেতন প্রদানই মূলত অগ্রিম অর্থ। কোনো আলাদা সেকশন ছাড়াই একক এন্ট্রিতে বেতন ও অগ্রিম সমন্বিত হয়।</span>
+              {/* Mode Switching Tabs directly inside the modal */}
+              <div className="bg-slate-100/80 p-1.5 border-b border-slate-200 grid grid-cols-3 gap-1 shrink-0 text-[11px] font-black">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setQuickPay({ empId: quickPay.empId, type: "Staff Salary" });
+                    setPayAmount(targetStats.remainingSalaryDue > 0 ? targetStats.remainingSalaryDue.toString() : "");
+                  }}
+                  className={cn(
+                    "py-2 px-2 rounded-xl transition-all flex items-center justify-center gap-1 cursor-pointer",
+                    isSalary 
+                      ? "bg-white text-emerald-800 shadow-xs border border-emerald-200" 
+                      : "text-slate-600 hover:text-slate-900"
+                  )}
+                >
+                  <Coins className="w-3.5 h-3.5" />
+                  <span>বেতন প্রদান</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setQuickPay({ empId: quickPay.empId, type: "Other Advance" });
+                    setPayAmount("");
+                  }}
+                  className={cn(
+                    "py-2 px-2 rounded-xl transition-all flex items-center justify-center gap-1 cursor-pointer",
+                    isOtherAdvance 
+                      ? "bg-white text-amber-800 shadow-xs border border-amber-200" 
+                      : "text-slate-600 hover:text-slate-900"
+                  )}
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>অন্যান্য অগ্রিম</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setQuickPay({ empId: quickPay.empId, type: "Receive Advance" });
+                    setPayAmount(targetStats.netAdvanceBalance > 0 ? targetStats.netAdvanceBalance.toString() : "");
+                  }}
+                  className={cn(
+                    "py-2 px-2 rounded-xl transition-all flex items-center justify-center gap-1 cursor-pointer",
+                    isReceiving 
+                      ? "bg-teal-700 text-white shadow-xs font-black" 
+                      : "text-slate-600 hover:text-teal-800"
+                  )}
+                >
+                  <ArrowDownLeft className="w-3.5 h-3.5" />
+                  <span>রিসিভ অপশন</span>
+                </button>
+              </div>
+
+              {/* Explanatory Banner */}
+              <div className={cn(
+                "px-6 py-2.5 border-b flex items-center gap-2 text-xs font-semibold shrink-0",
+                isReceiving 
+                  ? "bg-teal-50 border-teal-100 text-teal-900" 
+                  : isOtherAdvance 
+                  ? "bg-amber-50 border-amber-100 text-amber-900" 
+                  : "bg-emerald-50 border-emerald-100 text-emerald-900"
+              )}>
+                {isReceiving ? (
+                  <>
+                    <ArrowDownLeft className="w-4 h-4 text-teal-600 shrink-0" />
+                    <span>📥 অগ্রিম ফেরত গ্রহণ (Inflow): কর্মী থেকে টাকা রিসিভ করে ক্যাশ ড্রয়ার বা ব্যাংক ব্যালেন্সে জমা করা হবে।</span>
+                  </>
+                ) : isOtherAdvance ? (
+                  <>
+                    <Plus className="w-4 h-4 text-amber-600 shrink-0" />
+                    <span>➕ অন্যান্য অগ্রিম প্রদান (Outflow): কর্মীকে অতিরিক্ত অগ্রিম বা ঋণ প্রদান করা হচ্ছে (ব্যয় ট্রানজেকশন)।</span>
+                  </>
+                ) : (
+                  <>
+                    <Coins className="w-4 h-4 text-emerald-600 shrink-0" />
+                    <span>💳 বেতন ও অগ্রিম প্রদান (Outflow): কর্মীর মাসিক মূল বেতন বা বেতন বাবদ পরিশোধ।</span>
+                  </>
+                )}
               </div>
               
-              <form onSubmit={handleQuickPay} className="p-6 sm:p-8 space-y-6 overflow-y-auto">
+              <form onSubmit={handleQuickPay} className="p-6 sm:p-8 space-y-5 overflow-y-auto">
                 {/* Employee Financial Context Strip */}
-                <div className="grid grid-cols-3 gap-2 p-3 bg-slate-50 rounded-2xl border border-slate-200/70 text-center">
+                <div className="grid grid-cols-4 gap-1.5 p-3 bg-slate-50 rounded-2xl border border-slate-200/70 text-center">
                   <div>
-                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">মাসিক মূল বেতন</span>
-                    <span className="font-mono font-black text-sm text-slate-900">
+                    <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block">মূল বেতন</span>
+                    <span className="font-mono font-black text-xs sm:text-sm text-slate-900">
                       {isSuperAdmin && targetEmp ? formatCurrency(targetEmp.salary || 0) : "***"}
                     </span>
                   </div>
                   <div>
-                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">ইতোমধ্যে প্রদেয়</span>
-                    <span className="font-mono font-black text-sm text-emerald-700">
-                      {isSuperAdmin ? formatCurrency(totalDisbursed) : "***"}
+                    <span className="text-[9px] font-bold text-amber-700 uppercase tracking-wider block">অন্যান্য অগ্রিম</span>
+                    <span className="font-mono font-black text-xs sm:text-sm text-amber-800">
+                      {isSuperAdmin ? formatCurrency(targetStats.totalOtherAdvance) : "***"}
                     </span>
                   </div>
                   <div>
-                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">অবশিষ্ট বকেয়া</span>
-                    <span className="font-mono font-black text-sm text-amber-700">
-                      {isSuperAdmin ? formatCurrency(currentDue) : "***"}
+                    <span className="text-[9px] font-bold text-teal-700 uppercase tracking-wider block">রিসিভকৃত</span>
+                    <span className="font-mono font-black text-xs sm:text-sm text-teal-800">
+                      {isSuperAdmin ? formatCurrency(targetStats.advanceReceived) : "***"}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-[9px] font-bold text-rose-700 uppercase tracking-wider block">বকেয়া অগ্রিম</span>
+                    <span className="font-mono font-black text-xs sm:text-sm text-rose-700">
+                      {isSuperAdmin ? formatCurrency(targetStats.netAdvanceBalance) : "***"}
                     </span>
                   </div>
                 </div>
 
-                {/* THE BIG SALARY INPUT BOX (Lynn is big for full understanding) */}
+                {/* If in Receive mode: sub-type selector for receive */}
+                {isReceiving && (
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-teal-900 uppercase tracking-wider pl-1 flex items-center gap-1.5">
+                      <span>অগ্রিম রিসিভের খাত (Receive Category Type)</span>
+                    </label>
+                    <div className="grid grid-cols-3 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setReceiveAdvanceType("other_advance");
+                          if (!payNotes || payNotes.includes("অগ্রিম")) {
+                            setPayNotes("অন্যান্য অগ্রিম ফেরত গ্রহণ");
+                          }
+                        }}
+                        className={cn(
+                          "p-2.5 rounded-xl border text-[11px] font-bold transition-all text-center cursor-pointer",
+                          receiveAdvanceType === "other_advance"
+                            ? "bg-teal-700 text-white border-teal-700 shadow-xs"
+                            : "bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100"
+                        )}
+                      >
+                        অন্যান্য অগ্রিম
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setReceiveAdvanceType("salary_advance");
+                          if (!payNotes || payNotes.includes("অগ্রিম")) {
+                            setPayNotes("বেতন অগ্রিম ফেরত গ্রহণ");
+                          }
+                        }}
+                        className={cn(
+                          "p-2.5 rounded-xl border text-[11px] font-bold transition-all text-center cursor-pointer",
+                          receiveAdvanceType === "salary_advance"
+                            ? "bg-teal-700 text-white border-teal-700 shadow-xs"
+                            : "bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100"
+                        )}
+                      >
+                        বেতন অগ্রিম
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setReceiveAdvanceType("general");
+                          if (!payNotes || payNotes.includes("অগ্রিম")) {
+                            setPayNotes("সাধারণ অগ্রিম সমন্বয়");
+                          }
+                        }}
+                        className={cn(
+                          "p-2.5 rounded-xl border text-[11px] font-bold transition-all text-center cursor-pointer",
+                          receiveAdvanceType === "general"
+                            ? "bg-teal-700 text-white border-teal-700 shadow-xs"
+                            : "bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100"
+                        )}
+                      >
+                        সাধারণ সমন্বয়
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* THE BIG AMOUNT INPUT BOX */}
                 <div className="space-y-2">
                   <div className="flex items-center justify-between pl-1">
                     <label className="text-xs font-black text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
-                      <span>প্রদেয় বেতন / অগ্রিম পরিমাণ (BDT Amount)</span>
-                      <span className="text-[10px] font-bold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-full">
-                        বড় ইনপুট বক্স
+                      <span>
+                        {isReceiving 
+                          ? "রিসিভকৃত অগ্রিম পরিমাণ (BDT Amount Received)" 
+                          : isOtherAdvance 
+                          ? "অন্যান্য অগ্রিম পরিমাণ (BDT Amount Disbursed)" 
+                          : "প্রদেয় বেতন / অগ্রিম পরিমাণ (BDT Amount)"}
                       </span>
                     </label>
                   </div>
                   <div className="relative">
-                    <span className="absolute left-4 top-1/2 -translate-y-1/2 text-2xl sm:text-3xl font-black text-emerald-600 font-mono select-none">
+                    <span className={cn(
+                      "absolute left-4 top-1/2 -translate-y-1/2 text-2xl sm:text-3xl font-black font-mono select-none",
+                      isReceiving ? "text-teal-600" : isOtherAdvance ? "text-amber-600" : "text-emerald-600"
+                    )}>
                       ৳
                     </span>
                     <input
@@ -2410,43 +2813,66 @@ export default function Employees({
                       placeholder="০.০০"
                       value={payAmount}
                       onChange={(e) => setPayAmount(e.target.value)}
-                      className="w-full pl-12 pr-4 py-4 sm:py-5 bg-white border-2 border-emerald-400 focus:border-emerald-600 focus:ring-4 focus:ring-emerald-100 rounded-3xl text-2xl sm:text-3xl font-mono font-black text-slate-950 shadow-sm outline-none transition-all placeholder:text-slate-300"
+                      className={cn(
+                        "w-full pl-12 pr-4 py-4 sm:py-5 bg-white border-2 rounded-3xl text-2xl sm:text-3xl font-mono font-black text-slate-950 shadow-sm outline-none transition-all placeholder:text-slate-300",
+                        isReceiving 
+                          ? "border-teal-400 focus:border-teal-600 focus:ring-4 focus:ring-teal-100" 
+                          : isOtherAdvance 
+                          ? "border-amber-400 focus:border-amber-600 focus:ring-4 focus:ring-amber-100" 
+                          : "border-emerald-400 focus:border-emerald-600 focus:ring-4 focus:ring-emerald-100"
+                      )}
                     />
                   </div>
 
                   {/* Quick Auto-Fill Helper Buttons */}
                   <div className="flex items-center gap-1.5 flex-wrap pt-1">
-                    {currentDue > 0 && (
+                    {isReceiving && targetStats.netAdvanceBalance > 0 && (
                       <button
                         type="button"
-                        onClick={() => setPayAmount(currentDue.toString())}
+                        onClick={() => setPayAmount(targetStats.netAdvanceBalance.toString())}
+                        className="px-2.5 py-1.5 bg-teal-100 hover:bg-teal-200 text-teal-900 rounded-xl text-xs font-black transition-all cursor-pointer active:scale-95"
+                      >
+                        বকেয়া সব (৳{targetStats.netAdvanceBalance.toLocaleString()})
+                      </button>
+                    )}
+                    {isReceiving && targetStats.totalOtherAdvance > 0 && targetStats.totalOtherAdvance !== targetStats.netAdvanceBalance && (
+                      <button
+                        type="button"
+                        onClick={() => setPayAmount(targetStats.totalOtherAdvance.toString())}
+                        className="px-2.5 py-1.5 bg-amber-100 hover:bg-amber-200 text-amber-900 rounded-xl text-xs font-black transition-all cursor-pointer active:scale-95"
+                      >
+                        অন্যান্য সব (৳{targetStats.totalOtherAdvance.toLocaleString()})
+                      </button>
+                    )}
+                    {isSalary && targetStats.remainingSalaryDue > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setPayAmount(targetStats.remainingSalaryDue.toString())}
                         className="px-2.5 py-1.5 bg-emerald-100 hover:bg-emerald-200 text-emerald-900 rounded-xl text-xs font-black transition-all cursor-pointer active:scale-95"
                       >
-                        বাকি সব (৳{currentDue.toLocaleString()})
+                        বাকি বেতন (৳{targetStats.remainingSalaryDue.toLocaleString()})
                       </button>
                     )}
-                    {currentDue > 0 && (
-                      <button
-                        type="button"
-                        onClick={() => setPayAmount(Math.round(currentDue / 2).toString())}
-                        className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition-all cursor-pointer active:scale-95"
-                      >
-                        হাফ (৫০%)
-                      </button>
-                    )}
+                    <button
+                      type="button"
+                      onClick={() => setPayAmount("1000")}
+                      className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition-all cursor-pointer active:scale-95"
+                    >
+                      ৳১,০০০
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPayAmount("2000")}
+                      className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition-all cursor-pointer active:scale-95"
+                    >
+                      ৳২,০০০
+                    </button>
                     <button
                       type="button"
                       onClick={() => setPayAmount("5000")}
                       className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition-all cursor-pointer active:scale-95"
                     >
                       ৳৫,০০০
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setPayAmount("10000")}
-                      className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition-all cursor-pointer active:scale-95"
-                    >
-                      ৳১০,০০০
                     </button>
                     {parsedPayAmount > 0 && (
                       <button
@@ -2461,10 +2887,27 @@ export default function Employees({
 
                   {/* Dynamic remaining calculation */}
                   {parsedPayAmount > 0 && (
-                    <div className="p-3 bg-emerald-50/70 border border-emerald-200 rounded-2xl flex items-center justify-between text-xs font-bold text-emerald-900 animate-in fade-in">
-                      <span>এই পরিমাণ প্রদানের পর অবশিষ্ট থাকবে:</span>
-                      <span className="font-mono font-black text-sm text-emerald-800">
-                        ৳{remainingAfterPay.toLocaleString()}
+                    <div className={cn(
+                      "p-3 rounded-2xl flex items-center justify-between text-xs font-bold animate-in fade-in border",
+                      isReceiving 
+                        ? "bg-teal-50/70 border-teal-200 text-teal-900" 
+                        : isOtherAdvance 
+                        ? "bg-amber-50/70 border-amber-200 text-amber-900" 
+                        : "bg-emerald-50/70 border-emerald-200 text-emerald-900"
+                    )}>
+                      <span>
+                        {isReceiving 
+                          ? "রিসিভ করার পর অবশিষ্ট বকেয়া অগ্রিম থাকবে:" 
+                          : isOtherAdvance 
+                          ? "প্রদানের পর মোট বকেয়া অগ্রিম হবে:" 
+                          : "প্রদানের পর অবশিষ্ট বেতন থাকবে:"}
+                      </span>
+                      <span className="font-mono font-black text-sm">
+                        ৳{isReceiving 
+                          ? remainingAdvanceAfterReceive.toLocaleString() 
+                          : isOtherAdvance 
+                          ? newTotalAdvanceAfterOther.toLocaleString() 
+                          : remainingSalaryAfterPay.toLocaleString()}
                       </span>
                     </div>
                   )}
@@ -2472,7 +2915,9 @@ export default function Employees({
 
                 {/* Payment Method */}
                 <div className="space-y-1.5">
-                  <label className="text-xs font-bold text-slate-500 uppercase tracking-widest pl-1">Payment Method (পরিশোধের মাধ্যম)</label>
+                  <label className="text-xs font-bold text-slate-500 uppercase tracking-widest pl-1">
+                    {isReceiving ? "অর্থ গ্রহণের মাধ্যম (Deposit Inflow To)" : "পরিশোধের মাধ্যম (Paid From)"}
+                  </label>
                   <div className="grid grid-cols-2 gap-3">
                     <button
                       type="button"
@@ -2512,7 +2957,7 @@ export default function Employees({
                 <div className="space-y-1.5">
                   <label className="text-xs font-bold text-slate-500 uppercase tracking-widest pl-1">রেফারেন্স / নোটস (Optional)</label>
                   <input
-                    placeholder="e.g. চলতি মাসের বেতন ও অগ্রিম প্রদান"
+                    placeholder={isReceiving ? "e.g. অন্যান্য অগ্রিম ফেরত গ্রহণ" : isOtherAdvance ? "e.g. অতিরিক্ত জরুরি কাজের জন্য অগ্রিম" : "e.g. চলতি মাসের বেতন প্রদান"}
                     value={payNotes}
                     onChange={(e) => setPayNotes(e.target.value)}
                     className="w-full px-4 py-3.5 bg-slate-50 border border-slate-200 rounded-2xl focus:border-slate-900 focus:bg-white text-xs font-bold text-slate-800 outline-none transition-all placeholder:text-slate-400"
@@ -2523,10 +2968,31 @@ export default function Employees({
                 <button
                   type="submit"
                   disabled={isPaying || !payAmount || parseFloat(payAmount) <= 0}
-                  className="w-full py-4 sm:py-5 rounded-2xl font-black text-base sm:text-lg shadow-xl shadow-emerald-700/20 transition-all active:scale-98 disabled:opacity-50 text-white bg-emerald-600 hover:bg-emerald-700 cursor-pointer flex items-center justify-center gap-2"
+                  className={cn(
+                    "w-full py-4 sm:py-5 rounded-2xl font-black text-base sm:text-lg shadow-xl transition-all active:scale-98 disabled:opacity-50 text-white cursor-pointer flex items-center justify-center gap-2",
+                    isReceiving 
+                      ? "bg-teal-600 hover:bg-teal-700 shadow-teal-700/20" 
+                      : isOtherAdvance 
+                      ? "bg-amber-600 hover:bg-amber-700 shadow-amber-700/20" 
+                      : "bg-emerald-600 hover:bg-emerald-700 shadow-emerald-700/20"
+                  )}
                 >
-                  <Coins className="w-5 h-5" />
-                  {isPaying ? "প্রক্রিয়াধীন..." : "বেতন ও অগ্রিম প্রদান নিশ্চিত করুন (Confirm Payment)"}
+                  {isReceiving ? (
+                    <>
+                      <ArrowDownLeft className="w-5 h-5" />
+                      {isPaying ? "প্রক্রিয়াধীন..." : "অগ্রিম অর্থ রিসিভ সম্পন্ন করুন (Confirm Receipt)"}
+                    </>
+                  ) : isOtherAdvance ? (
+                    <>
+                      <Plus className="w-5 h-5" />
+                      {isPaying ? "প্রক্রিয়াধীন..." : "অন্যান্য অগ্রিম প্রদান নিশ্চিত করুন (Confirm Other Advance)"}
+                    </>
+                  ) : (
+                    <>
+                      <Coins className="w-5 h-5" />
+                      {isPaying ? "প্রক্রিয়াধীন..." : "বেতন ও অগ্রিম প্রদান নিশ্চিত করুন (Confirm Payment)"}
+                    </>
+                  )}
                 </button>
               </form>
             </div>

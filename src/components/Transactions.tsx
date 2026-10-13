@@ -847,6 +847,7 @@ export default function Transactions({
     "Counter Sales",
     "Wholesale Sales",
     "Customer Receipt",
+    "Employee Advance Received",
     "Service Charge",
     "Previous Cash",
     "Other Income"
@@ -859,6 +860,7 @@ export default function Transactions({
     "Transport & Delivery",
     "Office Supplies",
     "Staff Salary",
+    "Other Advance",
     "Supplier Due Payment",
     "Repairs & Maintenance",
     "Other"
@@ -1102,8 +1104,13 @@ export default function Transactions({
                       key={cat}
                       type="button"
                       onClick={() => {
-                        setCategory(cat === "Previous Cash" ? "Previous Cash" : "Income");
-                        setSubCategory(cat);
+                        if (cat === "Employee Advance Received") {
+                          setCategory("Employee Advance Received");
+                          setSubCategory("Employee Advance Received");
+                        } else {
+                          setCategory(cat === "Previous Cash" ? "Previous Cash" : "Income");
+                          setSubCategory(cat);
+                        }
                       }}
                       className={cn(
                         "px-2.5 py-1 text-xs font-bold rounded-lg border transition-all cursor-pointer",
@@ -1117,6 +1124,29 @@ export default function Transactions({
                   ))}
                 </div>
               </div>
+
+              {/* Employee selector for Employee Advance Received */}
+              {(subCategory === "Employee Advance Received" || category === "Employee Advance Received") && (
+                <div className="space-y-1 p-3.5 bg-teal-50/70 border border-teal-200 rounded-2xl animate-in fade-in">
+                  <label className="text-[10px] font-black text-teal-800 uppercase tracking-widest flex items-center gap-1.5">
+                    <ArrowDownLeft className="w-3.5 h-3.5 text-teal-600" />
+                    Select Employee Returning Advance (কর্মী নির্বাচন করুন)
+                  </label>
+                  <select
+                    required
+                    value={employeeId}
+                    onChange={(e) => setEmployeeId(e.target.value)}
+                    className="w-full px-4 py-2.5 bg-white border border-teal-300 rounded-xl font-bold text-xs outline-none text-slate-800"
+                  >
+                    <option value="">Select registered employee...</option>
+                    {employees.map(emp => (
+                      <option key={emp.id} value={emp.id}>
+                        {emp.name} {emp.employeeIdCode ? `(${emp.employeeIdCode})` : ""} - {emp.role}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 {/* Reference / SubCategory */}
@@ -1301,9 +1331,10 @@ export default function Transactions({
                   <option value="Supplier Due Payment">Supplier Due Settlement</option>
                   <option value="Staff Salary">Staff Monthly Salary</option>
                   <option value="Employee Advance">Employee Advance Disbursement</option>
+                  <option value="Other Advance">Other Advance (অন্যান্য অগ্রিম)</option>
                   <option value="Repairs & Maintenance">Repairs & Maintenance</option>
                   {categories
-                    .filter(c => c.type === "expense" && !["Supplier Due Payment", "Staff Salary", "Employee Advance", "Shop Rent", "Electricity & Utilities", "Food & Tea", "Transport & Delivery", "Office Supplies", "Repairs & Maintenance"].includes(c.name))
+                    .filter(c => c.type === "expense" && !["Supplier Due Payment", "Staff Salary", "Employee Advance", "Other Advance", "Shop Rent", "Electricity & Utilities", "Food & Tea", "Transport & Delivery", "Office Supplies", "Repairs & Maintenance"].includes(c.name))
                     .map(c => (
                       <option key={c.id} value={c.name}>{c.name}</option>
                     ))}
@@ -1352,7 +1383,7 @@ export default function Transactions({
               )}
 
               {/* Employee selector */}
-              {(category === "Staff Salary" || category === "Employee Advance") && (
+              {(category === "Staff Salary" || category === "Employee Advance" || category === "Other Advance") && (
                 <div className="space-y-1 p-3.5 bg-sky-50/40 border border-sky-100 rounded-2xl">
                   <label className="text-[10px] font-black text-sky-800 uppercase tracking-widest">Select Active Staff Employee</label>
                   <select
@@ -1370,7 +1401,7 @@ export default function Transactions({
               )}
 
               {/* Reference / Sub-category */}
-              {!(["Staff Salary", "Employee Advance", "Supplier Due Payment"].includes(category)) && (
+              {!(["Staff Salary", "Employee Advance", "Other Advance", "Supplier Due Payment"].includes(category)) && (
                 <div className="space-y-1">
                   <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">Reference / Specific Description</label>
                   <input

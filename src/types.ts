@@ -56,6 +56,7 @@ export interface Employee {
   nidBackPhoto?: string | null;
   birthCertificatePhoto?: string | null;
   employeeIdCode?: string;
+  otherAdvance?: number; // Other advance amount (অন্যান্য অগ্রিম)
 }
 
 export interface Department {

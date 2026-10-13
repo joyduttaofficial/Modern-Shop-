@@ -238,6 +238,7 @@ export interface CounterSale {
   isBalanced: boolean; // true if netPayable === receivedAmount (সমান সমান)
   balanceStatus: "equal" | "short" | "excess"; // "equal" = সমান সমান
   paymentMethod: string;
+  isFullDue?: boolean; // true if sale is 100% on due / credit (সম্পূর্ণ বাকিতে বিক্রয়)
   customerName?: string;
   customerPhone?: string; // Optional mobile / phone
   customerAddress?: string; // Optional address

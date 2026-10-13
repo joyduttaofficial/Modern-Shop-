@@ -250,6 +250,7 @@ export default function CounterSaleView({
 
   // Payment & Customer states (Name, Phone, Address are non-mandatory as requested)
   const [receivedAmount, setReceivedAmount] = useState<string>("");
+  const [isFullDueMode, setIsFullDueMode] = useState<boolean>(false); // 100% Full Due Sales toggle
   const [paymentMethod, setPaymentMethod] = useState<string>("Cash");
   const [customerName, setCustomerName] = useState<string>("");
   const [customerPhone, setCustomerPhone] = useState<string>("");
@@ -267,6 +268,7 @@ export default function CounterSaleView({
   const [loadingSalesList, setLoadingSalesList] = useState(true);
   const [filterDate, setFilterDate] = useState<string>(format(new Date(), "yyyy-MM-dd"));
   const [searchTerm, setSearchTerm] = useState<string>("");
+  const [salesFilterType, setSalesFilterType] = useState<"all" | "balanced" | "due" | "fullDue">("all");
   const [selectedSaleForView, setSelectedSaleForView] = useState<CounterSale | null>(null);
 
   // Load Banks
@@ -337,13 +339,14 @@ export default function CounterSaleView({
     : (totalSlipsAmount > 0 ? Math.round((discountVal / totalSlipsAmount) * 1000) / 10 : 0);
 
   const netPayable = Math.max(0, totalSlipsAmount - computedDiscountAmount);
-  const receivedNum = parseFloat(receivedAmount) || 0;
+  const effectiveReceivedNum = isFullDueMode ? 0 : (parseFloat(receivedAmount) || 0);
 
-  // Balancing logic ("এবং এই সেল টোটাল আমি দেখব যে সমান সমান হচ্ছে কিনা")
-  const diff = receivedNum - netPayable;
-  const isBalanced = netPayable > 0 && Math.abs(diff) < 0.01;
-  const isShort = netPayable > 0 && diff < -0.01;
-  const isExcess = netPayable > 0 && diff > 0.01;
+  // Balancing & Full Due logic ("সমান সমান ও সম্পূর্ণ বাকি নির্ধারণ")
+  const diff = effectiveReceivedNum - netPayable;
+  const isFullDue = isFullDueMode || (netPayable > 0 && receivedAmount === "0");
+  const isBalanced = !isFullDue && netPayable > 0 && Math.abs(diff) < 0.01;
+  const isShort = !isFullDue && netPayable > 0 && diff < -0.01;
+  const isExcess = !isFullDue && netPayable > 0 && diff > 0.01;
 
   // Slip manipulation handlers
   const handleSlipChange = (index: number, val: string) => {
@@ -385,6 +388,7 @@ export default function CounterSaleView({
     setDiscountInput("");
     setDiscountType("amount");
     setReceivedAmount("");
+    setIsFullDueMode(false);
     setCustomerName("");
     setCustomerPhone("");
     setCustomerAddress("");
@@ -397,9 +401,18 @@ export default function CounterSaleView({
 
   // Quick Action: Match received to net payable ("সমান সমান করুন")
   const handleAutoEqual = () => {
+    setIsFullDueMode(false);
     if (netPayable > 0) {
       setReceivedAmount(netPayable.toString());
+    } else {
+      setReceivedAmount("");
     }
+  };
+
+  // Quick Action: 100% Full Due Sale ("সম্পূর্ণ বাকিতে বিক্রি")
+  const handleAutoFullDue = () => {
+    setIsFullDueMode(true);
+    setReceivedAmount("0");
   };
 
   // Save Counter Sale
@@ -423,9 +436,20 @@ export default function CounterSaleView({
       return;
     }
 
-    if (receivedNum <= 0 && receivedAmount === "") {
-      // If user hasn't explicitly entered received amount, ask or auto-assume exact net payable payment
-      const proceed = confirm(`প্রাপ্ত টাকার পরিমাণ ইনপুট দেওয়া হয়নি। সর্বমোট প্রদেয় ৳${netPayable.toLocaleString()} সমান সমান (সম্পূর্ণ পরিশোধ) ধরে সংরক্ষণ করবেন?`);
+    const isFullDueSale = isFullDueMode || receivedAmount === "0";
+
+    if (isFullDueSale && !customerName.trim() && !selectedCustomerId && !customerPhone.trim()) {
+      const dayCalc = getDayBasedId(isManualTime ? customDate : format(currentDateTime, "yyyy-MM-dd"), counterSalesList);
+      const tempSerial = currentDailySerial || dayCalc.dailySerial;
+      const wantToProceed = confirm(`⚠️ আপনি এই বিক্রয়টি ১০০% সম্পূর্ণ বাকিতে (৳${netPayable.toLocaleString()} বাকি) সম্পন্ন করতে যাচ্ছেন।\n\nকাস্টমারের নাম ইনপুট দেওয়া হয়নি। ভবিষ্যতে বাকি আদায়ের সুবিধার জন্য কাস্টমার নাম লিখবেন কি?\n\n- 'Cancel' চেপে কাস্টমারের নাম/মোবাইল লিখুন\n- অথবা নাম ছাড়া অটো সিরিয়াল 'কাস্টমার #${tempSerial}' হিসেবে সংরক্ষণ করতে 'OK' চাপুন`);
+      if (!wantToProceed) {
+        return;
+      }
+    }
+
+    if (!isFullDueSale && receivedAmount === "") {
+      // If user hasn't explicitly entered received amount, ask whether to assume full paid
+      const proceed = confirm(`প্রাপ্ত টাকার পরিমাণ ইনপুট দেওয়া হয়নি। সর্বমোট প্রদেয় ৳${netPayable.toLocaleString()} সমান সমান (সম্পূর্ণ পরিশোধ) ধরে সংরক্ষণ করবেন?\n\n(যদি সম্পূর্ণ বাকিতে বিক্রি করতে চান, তবে Cancel চাপুন এবং 'সম্পূর্ণ বাকি (Full Due)' অপশনটি নির্বাচন করুন)`);
       if (proceed) {
         setReceivedAmount(netPayable.toString());
       } else {
@@ -433,11 +457,19 @@ export default function CounterSaleView({
       }
     }
 
-    const finalReceived = receivedAmount !== "" ? (parseFloat(receivedAmount) || 0) : netPayable;
+    const finalReceived = isFullDueSale 
+      ? 0 
+      : receivedAmount !== "" 
+      ? (parseFloat(receivedAmount) || 0) 
+      : netPayable;
     const finalDiff = finalReceived - netPayable;
-    const finalIsBalanced = Math.abs(finalDiff) < 0.01;
-    const dueAmount = finalDiff < -0.01 ? Math.round(Math.abs(finalDiff) * 100) / 100 : 0;
-    const changeAmount = finalDiff > 0.01 ? Math.round(finalDiff * 100) / 100 : 0;
+    const finalIsBalanced = !isFullDueSale && Math.abs(finalDiff) < 0.01;
+    const dueAmount = isFullDueSale 
+      ? netPayable 
+      : finalDiff < -0.01 
+      ? Math.round(Math.abs(finalDiff) * 100) / 100 
+      : 0;
+    const changeAmount = !isFullDueSale && finalDiff > 0.01 ? Math.round(finalDiff * 100) / 100 : 0;
     const balanceStatus: "equal" | "short" | "excess" = 
       finalIsBalanced ? "equal" : finalDiff < 0 ? "short" : "excess";
 
@@ -538,6 +570,7 @@ export default function CounterSaleView({
         dueAmount: dueAmount,
         isBalanced: finalIsBalanced,
         balanceStatus: balanceStatus,
+        isFullDue: isFullDueSale,
         paymentMethod: paymentMethod,
         createdBy: user.uid,
         createdAt: new Date().toISOString()
@@ -614,8 +647,10 @@ export default function CounterSaleView({
         menuId: "counterSale",
         menuLabel: "কাউন্টার সেল (স্লিপ বিক্রয়)",
         action: "create",
-        title: `নতুন কাউন্টার সেল স্লিপ বিক্রয় সম্পন্ন (${newCounterSale.saleId})`,
-        note: `রসিদ #${newCounterSale.saleId} | মোট স্লিপ: ${validSlips.length}টি (৳${totalSlipsAmount}) | নেট প্রদেয়: ৳${netPayable} | ক্যাশ গ্রহণ: ৳${finalReceived} | বকেয়া: ৳${dueAmount} | ক্রেতা: ${effectiveCustomerName || "সাধারণ ক্রেতা"}`
+        title: isFullDueSale 
+          ? `নতুন কাউন্টার সেল সম্পূর্ণ বাকিতে সম্পন্ন (${newCounterSale.saleId})`
+          : `নতুন কাউন্টার সেল স্লিপ বিক্রয় সম্পন্ন (${newCounterSale.saleId})`,
+        note: `রসিদ #${newCounterSale.saleId} | মোট স্লিপ: ${validSlips.length}টি (৳${totalSlipsAmount}) | নেট প্রদেয়: ৳${netPayable} | ${isFullDueSale ? "১০০% সম্পূর্ণ বাকি (Full Due)" : `ক্যাশ গ্রহণ: ৳${finalReceived}`} | বকেয়া: ৳${dueAmount} | ক্রেতা: ${effectiveCustomerName || "সাধারণ ক্রেতা"}`
       });
 
       setTimeout(() => {
@@ -644,7 +679,13 @@ export default function CounterSaleView({
       </div>
     `).join("");
 
-    const statusBadge = sale.isBalanced 
+    const isFullDueSlip = sale.isFullDue || (sale.receivedAmount === 0 && sale.dueAmount > 0);
+    const statusBadge = isFullDueSlip
+      ? `<div style="text-align: center; margin-top: 10px; padding: 8px 6px; background-color: #fffbeb; color: #b45309; font-weight: 900; border-radius: 6px; border: 2px solid #f59e0b; font-size: 13px;">
+          ⚠️ সম্পূর্ণ বাকিতে বিক্রয় (100% FULL DUE SALE)<br/>
+          <span style="font-size: 11px; font-weight: bold;">বকেয়া প্রদেয়: ৳ ${sale.dueAmount.toLocaleString()}</span>
+         </div>`
+      : sale.isBalanced 
       ? `<div style="text-align: center; margin-top: 10px; padding: 6px; background-color: #ecfdf5; color: #047857; font-weight: bold; border-radius: 6px; border: 1px solid #a7f3d0; font-size: 13px;">
           ✓ হিসাব সমান সমান (PAID IN FULL)
          </div>`
@@ -1552,7 +1593,15 @@ export default function CounterSaleView({
         (sale.customerAddress && sale.customerAddress.toLowerCase().includes(searchTerm.toLowerCase())) ||
         sale.totalSlipsAmount.toString().includes(searchTerm)
       : true;
-    return matchesDate && matchesSearch;
+    const isFullDueSale = sale.isFullDue || (sale.receivedAmount === 0 && (sale.dueAmount || 0) > 0);
+    const matchesType = salesFilterType === "balanced"
+      ? sale.isBalanced
+      : salesFilterType === "due"
+      ? ((sale.dueAmount || 0) > 0)
+      : salesFilterType === "fullDue"
+      ? isFullDueSale
+      : true;
+    return matchesDate && matchesSearch && matchesType;
   });
 
   // Daily Tally Calculations for filtered list
@@ -1560,6 +1609,9 @@ export default function CounterSaleView({
   const dailyTotalReceived = filteredSales.reduce((acc, s) => acc + s.receivedAmount, 0);
   const dailyTotalSlipsCount = filteredSales.reduce((acc, s) => acc + s.slips.length, 0);
   const dailyBalancedSalesCount = filteredSales.filter(s => s.isBalanced).length;
+  const dailyFullDueSales = filteredSales.filter(s => s.isFullDue || (s.receivedAmount === 0 && (s.dueAmount || 0) > 0));
+  const dailyFullDueAmount = dailyFullDueSales.reduce((acc, s) => acc + (s.dueAmount || s.netPayable || s.totalSlipsAmount), 0);
+  const dailyTotalDueAmount = filteredSales.reduce((acc, s) => acc + (s.dueAmount || 0), 0);
   const isDailyTallyBalanced = filteredSales.length > 0 && Math.abs(dailyTotalReceived - dailyTotalSales) < 0.01;
 
   // Customer Due Profiles calculations
@@ -2075,6 +2127,24 @@ export default function CounterSaleView({
                 </div>
               )}
 
+              {isFullDue && (
+                <div className="p-3 bg-amber-50 border border-amber-300 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 text-xs text-amber-900 font-bold mb-3 shadow-2xs animate-in fade-in">
+                  <div className="flex items-center gap-2">
+                    <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
+                    <span>⚠️ সম্পূর্ণ বাকি সেল সক্রিয়: কাস্টমারের নাম ও মোবাইল নিশ্চিত করুন</span>
+                  </div>
+                  {!selectedCustomerId && (
+                    <button
+                      type="button"
+                      onClick={() => setShowCustomerDropdownInEntry(true)}
+                      className="text-[11px] bg-white border border-amber-300 text-amber-900 px-2.5 py-1 rounded-xl hover:bg-amber-100 cursor-pointer shadow-2xs shrink-0 font-bold"
+                    >
+                      খাতা থেকে কাস্টমার নির্বাচন করুন 🔍
+                    </button>
+                  )}
+                </div>
+              )}
+
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 {/* Customer Name */}
                 <div>
@@ -2274,20 +2344,95 @@ export default function CounterSaleView({
                 )}
               </div>
 
-              {/* Received Amount Input */}
+              {/* Payment Mode Selector: Cash / Balanced vs 100% Full Due */}
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
-                  <label className="text-xs font-extrabold text-gray-700">
-                    কাস্টমার থেকে প্রাপ্ত টাকা (Cash Received):
+                  <label className="text-xs font-black uppercase text-gray-600 tracking-wider">
+                    সেল এর ধরন ও পেমেন্ট মোড:
                   </label>
+                  {isFullDue && (
+                    <span className="text-[10px] bg-amber-100 text-amber-900 border border-amber-300 px-2 py-0.5 rounded-full font-bold flex items-center gap-1 animate-pulse">
+                      <AlertCircle className="w-3 h-3 text-amber-600" />
+                      <span>১০০% বাকি সেল</span>
+                    </span>
+                  )}
+                </div>
+
+                {/* Two-tab prominent mode switcher */}
+                <div className="grid grid-cols-2 p-1 bg-gray-100 rounded-2xl border border-gray-200 text-xs font-bold gap-1">
                   <button
                     type="button"
                     onClick={handleAutoEqual}
-                    className="text-[11px] text-gray-900 font-extrabold hover:bg-gray-100 cursor-pointer bg-white px-2.5 py-1 rounded-xl border border-gray-300 shadow-2xs flex items-center gap-1"
+                    className={cn(
+                      "py-2.5 px-3 rounded-xl transition-all cursor-pointer flex items-center justify-center gap-1.5 font-bold text-center",
+                      !isFullDue
+                        ? "bg-white text-gray-900 shadow-2xs font-black border border-gray-200"
+                        : "text-gray-600 hover:text-gray-900 hover:bg-gray-50"
+                    )}
                   >
-                    <span>সমান সমান করুন</span>
-                    <Check className="w-3 h-3 text-emerald-600" />
+                    <CheckCircle2 className={cn("w-4 h-4", !isFullDue ? "text-emerald-600" : "text-gray-400")} />
+                    <span>নগদ / সমান সমান</span>
                   </button>
+                  <button
+                    type="button"
+                    onClick={handleAutoFullDue}
+                    className={cn(
+                      "py-2.5 px-3 rounded-xl transition-all cursor-pointer flex items-center justify-center gap-1.5 font-bold text-center",
+                      isFullDue
+                        ? "bg-amber-600 text-white shadow-2xs font-black border border-amber-600"
+                        : "text-amber-800 hover:text-amber-950 hover:bg-amber-50"
+                    )}
+                  >
+                    <AlertCircle className={cn("w-4 h-4", isFullDue ? "text-amber-200" : "text-amber-600")} />
+                    <span>১০০% সম্পূর্ণ বাকি (Full Due)</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Received Amount Input */}
+              <div className="space-y-2">
+                <div className="flex flex-wrap items-center justify-between gap-1.5">
+                  <label className="text-xs font-extrabold text-gray-700 flex items-center gap-1">
+                    <span>কাস্টমার থেকে প্রাপ্ত টাকা:</span>
+                    {isFullDue && (
+                      <span className="text-[10px] text-amber-700 font-bold bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200">
+                        (নগদ গ্রহণ ৳০)
+                      </span>
+                    )}
+                  </label>
+                  <div className="flex items-center gap-1.5">
+                    {/* Full Due Sale Quick Action Button */}
+                    <button
+                      type="button"
+                      onClick={handleAutoFullDue}
+                      className={cn(
+                        "text-[11px] font-extrabold cursor-pointer px-2.5 py-1 rounded-xl border shadow-2xs flex items-center gap-1 transition-all",
+                        isFullDue
+                          ? "bg-amber-600 text-white border-amber-600 shadow-xs"
+                          : "bg-amber-50 hover:bg-amber-100 text-amber-900 border-amber-300"
+                      )}
+                      title="এই সেলটি সম্পূর্ণ বাকিতে সম্পন্ন করতে ক্লিক করুন (প্রাপ্ত টাকা ৳০ হবে)"
+                    >
+                      <AlertCircle className="w-3 h-3 text-amber-500" />
+                      <span>সম্পূর্ণ বাকি (Full Due)</span>
+                    </button>
+
+                    {/* Auto Equal Quick Action Button */}
+                    <button
+                      type="button"
+                      onClick={handleAutoEqual}
+                      className={cn(
+                        "text-[11px] font-extrabold cursor-pointer px-2.5 py-1 rounded-xl border shadow-2xs flex items-center gap-1 transition-all",
+                        isBalanced
+                          ? "bg-emerald-600 text-white border-emerald-600 shadow-xs"
+                          : "bg-white hover:bg-gray-100 text-gray-900 border-gray-300"
+                      )}
+                      title="প্রাপ্ত টাকা ও প্রদেয় টাকা সমান সমান করুন"
+                    >
+                      <span>সমান সমান</span>
+                      <Check className="w-3 h-3 text-emerald-600" />
+                    </button>
+                  </div>
                 </div>
 
                 <div className="relative">
@@ -2299,40 +2444,104 @@ export default function CounterSaleView({
                     step="any"
                     placeholder={netPayable > 0 ? netPayable.toString() : "0"}
                     value={receivedAmount}
-                    onChange={(e) => setReceivedAmount(e.target.value)}
-                    className="w-full pl-8 pr-4 py-3 bg-white rounded-xl border-2 border-gray-300 text-xl font-black font-mono text-gray-900 placeholder:text-gray-300 focus:outline-none focus:border-gray-900 focus:ring-1 focus:ring-gray-900"
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setReceivedAmount(val);
+                      if (val === "0") {
+                        setIsFullDueMode(true);
+                      } else if (parseFloat(val) > 0) {
+                        setIsFullDueMode(false);
+                      }
+                    }}
+                    className={cn(
+                      "w-full pl-8 pr-4 py-3 rounded-xl border-2 text-xl font-black font-mono transition-all outline-none",
+                      isFullDue
+                        ? "bg-amber-50/60 border-amber-500 text-amber-950 focus:border-amber-600"
+                        : "bg-white border-gray-300 text-gray-900 focus:outline-none focus:border-gray-900 focus:ring-1 focus:ring-gray-900"
+                    )}
                   />
                 </div>
+
+                {/* Quick Helper Strip */}
+                {netPayable > 0 && (
+                  <div className="flex items-center gap-2 pt-0.5 text-xs">
+                    <button
+                      type="button"
+                      onClick={handleAutoFullDue}
+                      className={cn(
+                        "px-2.5 py-1 rounded-lg text-[11px] font-bold border transition-all cursor-pointer flex items-center gap-1",
+                        isFullDue
+                          ? "bg-amber-600 text-white border-amber-600"
+                          : "bg-amber-50 text-amber-900 border-amber-200 hover:bg-amber-100"
+                      )}
+                    >
+                      <span>🏷️ সম্পূর্ণ বাকি সেল (Full Due)</span>
+                    </button>
+                    {receivedAmount !== "" && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setReceivedAmount("");
+                          setIsFullDueMode(false);
+                        }}
+                        className="text-[11px] text-gray-400 hover:text-gray-700 underline cursor-pointer ml-auto"
+                      >
+                        ক্লিয়ার
+                      </button>
+                    )}
+                  </div>
+                )}
               </div>
 
               {/* LIVE BALANCING STATUS BANNER ("সমান সমান হচ্ছে কিনা") */}
               <div className="pt-1">
                 {totalSlipsAmount === 0 ? (
                   <div className="p-3.5 rounded-2xl bg-white text-gray-400 text-xs font-semibold text-center border border-dashed border-gray-200">
-                    স্লিপের টাকার পরিমাণ ইনপুট দিলে সমান সমান স্ট্যাটাস দেখা যাবে
+                    স্লিপের টাকার পরিমাণ ইনপুট দিলে সমান সমান বা বাকি স্ট্যাটাস দেখা যাবে
+                  </div>
+                ) : isFullDue ? (
+                  <div className="p-4 rounded-2xl bg-amber-50 border-2 border-amber-500 text-gray-900 space-y-1.5 shadow-2xs animate-in fade-in">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2 font-black text-sm text-amber-900">
+                        <AlertCircle className="w-5 h-5 text-amber-600 shrink-0" />
+                        <span>⚠️ সম্পূর্ণ বাকিতে বিক্রয় (100% Full Due Sale)</span>
+                      </div>
+                      <span className="text-[10px] font-black uppercase bg-amber-200 text-amber-900 px-2.5 py-0.5 rounded-full border border-amber-300">
+                        বাকি: ৳{netPayable.toLocaleString()}
+                      </span>
+                    </div>
+                    <p className="text-xs text-amber-950 font-medium leading-relaxed">
+                      কাস্টমার থেকে নগদ কোনো টাকা গ্রহণ করা হচ্ছে না (নগদ জমা: ৳০)। সম্পূর্ণ <strong>৳{netPayable.toLocaleString()}</strong> কাস্টমারের বকেয়া বাকি হিসেবে সংরক্ষিত হবে।
+                    </p>
+                    {!customerName && (
+                      <div className="text-[11px] text-amber-900 bg-amber-100/90 px-2.5 py-1.5 rounded-xl flex items-center gap-1.5 font-bold mt-1">
+                        <Info className="w-3.5 h-3.5 text-amber-700 shrink-0" />
+                        <span>পরামর্শ: কাস্টমারের নাম বা মোবাইল নম্বর দিন যাতে কাস্টমার লেজার খাতায় সহজে হিসাব পাওয়া যায়।</span>
+                      </div>
+                    )}
                   </div>
                 ) : isBalanced ? (
-                  <div className="p-4 rounded-2xl bg-white border-2 border-emerald-500 text-gray-900 space-y-1 shadow-2xs">
+                  <div className="p-4 rounded-2xl bg-white border-2 border-emerald-500 text-gray-900 space-y-1 shadow-2xs animate-in fade-in">
                     <div className="flex items-center gap-2 font-black text-sm text-emerald-700">
                       <CheckCircle2 className="w-5 h-5 text-emerald-600" />
                       <span>✓ সম্পূর্ণ সমান সমান (100% Balanced)</span>
                     </div>
                     <p className="text-xs text-gray-600 leading-relaxed">
-                      প্রদেয় বিল (৳{netPayable.toLocaleString()}) এবং প্রাপ্ত টাকা (৳{receivedNum.toLocaleString()}) হুবহু সমান সমান পরিশোধ হয়েছে!
+                      প্রদেয় বিল (৳{netPayable.toLocaleString()}) এবং প্রাপ্ত টাকা (৳{effectiveReceivedNum.toLocaleString()}) হুবহু সমান সমান পরিশোধ হয়েছে!
                     </p>
                   </div>
                 ) : isShort ? (
-                  <div className="p-4 rounded-2xl bg-white border-2 border-amber-500 text-gray-900 space-y-1 shadow-2xs">
+                  <div className="p-4 rounded-2xl bg-white border-2 border-amber-500 text-gray-900 space-y-1 shadow-2xs animate-in fade-in">
                     <div className="flex items-center gap-2 font-black text-sm text-amber-700">
                       <AlertCircle className="w-5 h-5 text-amber-600" />
-                      <span>বাকি / শর্ট: ৳ {Math.abs(diff).toLocaleString()}</span>
+                      <span>আংশিক বাকি / শর্ট: ৳ {Math.abs(diff).toLocaleString()}</span>
                     </div>
                     <p className="text-xs text-gray-600 leading-relaxed">
-                      কাস্টমার থেকে ৳{Math.abs(diff).toLocaleString()} বাকি রয়েছে। সংরক্ষণ করলে স্বয়ংক্রিয়ভাবে কাস্টমারের বাকি প্রোফাইল ও খাতা আপডেট হবে।
+                      প্রাপ্ত নগদ ৳{effectiveReceivedNum.toLocaleString()}। অবশিষ্ট ৳{Math.abs(diff).toLocaleString()} কাস্টমারের বাকি হিসেবে সংরক্ষিত হবে।
                     </p>
                   </div>
                 ) : (
-                  <div className="p-4 rounded-2xl bg-white border-2 border-gray-400 text-gray-900 space-y-1 shadow-2xs">
+                  <div className="p-4 rounded-2xl bg-white border-2 border-gray-400 text-gray-900 space-y-1 shadow-2xs animate-in fade-in">
                     <div className="flex items-center gap-2 font-black text-sm text-gray-900">
                       <Info className="w-5 h-5 text-gray-700" />
                       <span>ফেরত প্রদান: ৳ {diff.toLocaleString()}</span>
@@ -2350,12 +2559,22 @@ export default function CounterSaleView({
                   type="button"
                   disabled={isSubmitting || totalSlipsAmount <= 0}
                   onClick={handleSaveCounterSale}
-                  className="w-full py-4 bg-gray-900 hover:bg-black disabled:opacity-40 text-white rounded-2xl font-black text-base transition-all shadow-sm active:scale-98 flex items-center justify-center gap-2 cursor-pointer"
+                  className={cn(
+                    "w-full py-4 disabled:opacity-40 rounded-2xl font-black text-base transition-all shadow-sm active:scale-98 flex items-center justify-center gap-2 cursor-pointer",
+                    isFullDue
+                      ? "bg-amber-600 hover:bg-amber-700 text-white shadow-amber-200"
+                      : "bg-gray-900 hover:bg-black text-white"
+                  )}
                 >
                   {isSubmitting ? (
                     <>
                       <RefreshCw className="w-5 h-5 animate-spin" />
                       <span>সংরক্ষণ হচ্ছে...</span>
+                    </>
+                  ) : isFullDue ? (
+                    <>
+                      <AlertCircle className="w-5 h-5" />
+                      <span>সম্পূর্ণ বাকিতে সংরক্ষণ করুন (৳{netPayable.toLocaleString()} বাকি)</span>
                     </>
                   ) : (
                     <>
@@ -2382,11 +2601,11 @@ export default function CounterSaleView({
       {activeTab === "register" && (
         <div className="space-y-6">
           {/* Daily Tally Summary Bento Cards */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3.5">
             {/* Card 1: Today's Total Counter Sales */}
             <div className="bg-white p-5 rounded-3xl border border-gray-200 shadow-sm space-y-2">
               <span className="text-[11px] font-black uppercase text-gray-400 tracking-wider">
-                ফিল্টারকৃত মোট কাউন্টার সেল
+                ফিল্টারকৃত মোট সেল
               </span>
               <div className="text-2xl font-black font-mono text-gray-900">
                 ৳ {dailyTotalSales.toLocaleString()}
@@ -2396,10 +2615,46 @@ export default function CounterSaleView({
               </p>
             </div>
 
-            {/* Card 2: Total Slips Logged */}
+            {/* Card 2: Cash Received */}
             <div className="bg-white p-5 rounded-3xl border border-gray-200 shadow-sm space-y-2">
               <span className="text-[11px] font-black uppercase text-gray-400 tracking-wider">
-                মোট স্লিপ সংখ্যা (Slips Logged)
+                প্রাপ্ত ক্যাশ/পেমেন্ট (Cash In)
+              </span>
+              <div className="text-2xl font-black font-mono text-emerald-700">
+                ৳ {dailyTotalReceived.toLocaleString()}
+              </div>
+              <p className="text-xs text-gray-400">
+                কাউন্টার ক্যাশ ড্রয়ারে মোট প্রাপ্তি
+              </p>
+            </div>
+
+            {/* Card 3: Full Due Sales */}
+            <div 
+              onClick={() => setSalesFilterType("fullDue")}
+              className="bg-white p-5 rounded-3xl border border-amber-300 bg-amber-50/30 shadow-sm space-y-2 cursor-pointer hover:bg-amber-50 hover:border-amber-400 transition-all"
+              title="সম্পূর্ণ বাকি সেলগুলো দেখতে ক্লিক করুন"
+            >
+              <span className="text-[11px] font-black uppercase text-amber-800 tracking-wider flex items-center justify-between">
+                <span className="flex items-center gap-1">
+                  <AlertCircle className="w-3.5 h-3.5 text-amber-600" />
+                  <span>সম্পূর্ণ বাকি সেল (Full Due)</span>
+                </span>
+                <span className="text-[9px] bg-amber-200 text-amber-900 font-extrabold px-1.5 py-0.5 rounded">
+                  ফিল্টার 🔍
+                </span>
+              </span>
+              <div className="text-2xl font-black font-mono text-amber-900">
+                ৳ {dailyFullDueAmount.toLocaleString()}
+              </div>
+              <p className="text-xs text-amber-700 font-medium">
+                {dailyFullDueSales.length} টি সেল ১০০% সম্পূর্ণ বাকিতে (ক্লিক করে দেখুন)
+              </p>
+            </div>
+
+            {/* Card 4: Total Slips Logged */}
+            <div className="bg-white p-5 rounded-3xl border border-gray-200 shadow-sm space-y-2">
+              <span className="text-[11px] font-black uppercase text-gray-400 tracking-wider">
+                মোট স্লিপ সংখ্যা (Slips)
               </span>
               <div className="text-2xl font-black font-mono text-gray-900">
                 {dailyTotalSlipsCount} টি
@@ -2409,23 +2664,10 @@ export default function CounterSaleView({
               </p>
             </div>
 
-            {/* Card 3: Cash Received */}
+            {/* Card 5: Daily Balance / Tally Status */}
             <div className="bg-white p-5 rounded-3xl border border-gray-200 shadow-sm space-y-2">
               <span className="text-[11px] font-black uppercase text-gray-400 tracking-wider">
-                প্রাপ্ত ক্যাশ/পেমেন্ট (Cash In)
-              </span>
-              <div className="text-2xl font-black font-mono text-gray-900">
-                ৳ {dailyTotalReceived.toLocaleString()}
-              </div>
-              <p className="text-xs text-gray-400">
-                কাউন্টার ক্যাশ ড্রয়ারে মোট প্রাপ্তি
-              </p>
-            </div>
-
-            {/* Card 4: Daily Balance / Tally Status */}
-            <div className="bg-white p-5 rounded-3xl border border-gray-200 shadow-sm space-y-2">
-              <span className="text-[11px] font-black uppercase text-gray-400 tracking-wider">
-                ক্যাশ ও স্লিপ সমীকরণ (Daily Tally)
+                ক্যাশ ও স্লিপ সমীকরণ
               </span>
               <div className={cn(
                 "text-lg font-black flex items-center gap-1.5",
@@ -2441,19 +2683,63 @@ export default function CounterSaleView({
                 ) : (
                   <>
                     <AlertCircle className="w-5 h-5 shrink-0 text-amber-600" />
-                    <span>পার্থক্য: ৳{Math.abs(dailyTotalReceived - dailyTotalSales).toLocaleString()}</span>
+                    <span>মোট বকেয়া: ৳{dailyTotalDueAmount.toLocaleString()}</span>
                   </>
                 )}
               </div>
               <p className="text-xs text-gray-400">
-                {dailyBalancedSalesCount} / {filteredSales.length} টি সেল সমান সমান
+                {dailyBalancedSalesCount} / {filteredSales.length} টি সেল পরিশোধিত
               </p>
             </div>
           </div>
 
-          {/* Filter Bar */}
-          <div className="bg-white p-4 rounded-2xl border border-gray-200 shadow-sm flex flex-col sm:flex-row items-center justify-between gap-3">
-            <div className="flex items-center gap-3 w-full sm:w-auto">
+          {/* Filter Bar with Type Switcher */}
+          <div className="bg-white p-4 rounded-2xl border border-gray-200 shadow-sm flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3">
+            <div className="flex flex-wrap items-center gap-2">
+              {/* Type Switcher Pills */}
+              <div className="flex p-1 bg-gray-100 rounded-xl border border-gray-200 text-xs font-bold">
+                <button
+                  type="button"
+                  onClick={() => setSalesFilterType("all")}
+                  className={cn(
+                    "px-3 py-1.5 rounded-lg transition-all cursor-pointer",
+                    salesFilterType === "all" ? "bg-white text-gray-900 shadow-2xs font-black" : "text-gray-500 hover:text-gray-900"
+                  )}
+                >
+                  সবগুলো
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSalesFilterType("balanced")}
+                  className={cn(
+                    "px-3 py-1.5 rounded-lg transition-all cursor-pointer",
+                    salesFilterType === "balanced" ? "bg-white text-emerald-800 shadow-2xs font-black" : "text-gray-500 hover:text-gray-900"
+                  )}
+                >
+                  সমান সমান
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSalesFilterType("due")}
+                  className={cn(
+                    "px-3 py-1.5 rounded-lg transition-all cursor-pointer",
+                    salesFilterType === "due" ? "bg-white text-amber-800 shadow-2xs font-black" : "text-gray-500 hover:text-gray-900"
+                  )}
+                >
+                  বাকি সেল
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSalesFilterType("fullDue")}
+                  className={cn(
+                    "px-3 py-1.5 rounded-lg transition-all cursor-pointer flex items-center gap-1",
+                    salesFilterType === "fullDue" ? "bg-amber-600 text-white shadow-2xs font-black" : "text-amber-800 hover:text-amber-950"
+                  )}
+                >
+                  <span>⚠️ সম্পূর্ণ বাকি</span>
+                </button>
+              </div>
+
               <div className="flex items-center gap-2">
                 <Calendar className="w-4 h-4 text-gray-400" />
                 <input
@@ -2470,12 +2756,12 @@ export default function CounterSaleView({
                   onClick={() => setFilterDate("")}
                   className="text-xs text-gray-500 hover:text-gray-900 underline cursor-pointer"
                 >
-                  সব তারিখ দেখুন
+                  সব তারিখ
                 </button>
               )}
             </div>
 
-            <div className="relative w-full sm:w-72">
+            <div className="relative w-full md:w-72">
               <Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
               <input
                 type="text"
@@ -2596,9 +2882,14 @@ export default function CounterSaleView({
                               <CheckCircle2 className="w-3 h-3 text-emerald-600" />
                               <span>সমান সমান</span>
                             </span>
+                          ) : (sale.isFullDue || (sale.receivedAmount === 0 && (sale.dueAmount || 0) > 0)) ? (
+                            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-amber-100 text-amber-900 text-[11px] font-black border border-amber-400 shadow-2xs">
+                              <AlertCircle className="w-3 h-3 text-amber-600" />
+                              <span>সম্পূর্ণ বাকি ৳{sale.dueAmount.toLocaleString()}</span>
+                            </span>
                           ) : sale.dueAmount > 0 ? (
                             <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-white text-amber-700 text-[11px] font-bold border border-amber-300 shadow-2xs">
-                              <span>বাকি ৳{sale.dueAmount.toLocaleString()}</span>
+                              <span>আংশিক বাকি ৳{sale.dueAmount.toLocaleString()}</span>
                             </span>
                           ) : (
                             <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-white text-gray-800 text-[11px] font-bold border border-gray-300 shadow-2xs">
@@ -2609,6 +2900,34 @@ export default function CounterSaleView({
 
                         <td className="px-5 py-4 text-center">
                           <div className="flex items-center justify-center gap-1">
+                            {sale.dueAmount > 0 && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const cust = customersList.find(c => 
+                                    (sale.customerId && c.id === sale.customerId) || 
+                                    (sale.customerPhone && c.phone && c.phone.trim() === sale.customerPhone.trim()) || 
+                                    (sale.customerName && c.name.trim().toLowerCase() === sale.customerName.trim().toLowerCase())
+                                  );
+                                  setPaymentCustomer(cust || {
+                                    id: sale.customerId || "temp",
+                                    name: sale.customerName || `কাস্টমার #${sale.dailySerial}`,
+                                    phone: sale.customerPhone || "",
+                                    address: sale.customerAddress || "",
+                                    totalPurchases: sale.netPayable || sale.totalSlipsAmount,
+                                    totalPaid: sale.receivedAmount || 0,
+                                    totalDue: sale.dueAmount,
+                                    totalDiscount: sale.discountAmount || 0
+                                  });
+                                  setCollectionAmount(sale.dueAmount.toString());
+                                  setIsCollectingPayment(true);
+                                }}
+                                className="px-2 py-1 text-amber-900 bg-amber-100 hover:bg-amber-200 rounded-lg transition-colors cursor-pointer border border-amber-300 text-[10px] font-bold flex items-center gap-1 shrink-0"
+                                title="এই বিক্রয়ের বাকি টাকা আদায় করুন"
+                              >
+                                <span>বাকি আদায়</span>
+                              </button>
+                            )}
                             <button
                               type="button"
                               onClick={() => handlePrintSlip(sale)}
@@ -3650,8 +3969,12 @@ export default function CounterSaleView({
                   </div>
                   <div className="flex justify-between text-xs font-bold pt-1">
                     <span className="text-gray-600">মিলকরণ স্ট্যাটাস:</span>
-                    <span className={selectedSaleForView.isBalanced ? "text-emerald-700" : "text-amber-700"}>
-                      {selectedSaleForView.isBalanced ? "✓ সমান সমান" : `বাকি: ৳${selectedSaleForView.dueAmount}`}
+                    <span className={selectedSaleForView.isBalanced ? "text-emerald-700" : (selectedSaleForView.isFullDue || selectedSaleForView.receivedAmount === 0) ? "text-amber-800 font-black" : "text-amber-700"}>
+                      {selectedSaleForView.isBalanced 
+                        ? "✓ সমান সমান" 
+                        : (selectedSaleForView.isFullDue || selectedSaleForView.receivedAmount === 0) 
+                        ? `⚠️ সম্পূর্ণ বাকি: ৳${selectedSaleForView.dueAmount.toLocaleString()}` 
+                        : `আংশিক বাকি: ৳${selectedSaleForView.dueAmount.toLocaleString()}`}
                     </span>
                   </div>
                 </div>

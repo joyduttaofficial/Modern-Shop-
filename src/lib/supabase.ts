@@ -9,50 +9,18 @@ export const DEFAULT_SUPABASE_PROJECT_ID = "qwqdjdvxzljuhyczemub";
 export const DEFAULT_SUPABASE_URL = "https://qwqdjdvxzljuhyczemub.supabase.co";
 
 /**
- * Normalizes PostgreSQL connection string, host, project ref, or raw URL to Supabase HTTPS REST endpoint
+ * Normalizes PostgreSQL connection string or raw URL to Supabase HTTPS REST endpoint
  */
 export function normalizeSupabaseUrl(rawUrl: string): string {
   if (!rawUrl) return DEFAULT_SUPABASE_URL;
-  let trimmed = String(rawUrl).trim();
-  if (!trimmed) return DEFAULT_SUPABASE_URL;
-
-  // 1. If user entered a PostgreSQL connection string
+  const trimmed = rawUrl.trim();
   if (trimmed.startsWith("postgresql://") || trimmed.startsWith("postgres://")) {
-    const match = trimmed.match(/(?:db\.)?([a-z0-9_-]+)\.supabase\.(?:co|com)/i);
-    if (match && match[1] && match[1].toLowerCase() !== "pooler") {
+    const match = trimmed.match(/db\.([a-z0-9_-]+)\.supabase\.co/i);
+    if (match && match[1]) {
       return `https://${match[1]}.supabase.co`;
     }
-    const poolerUserMatch = trimmed.match(/postgres\.([a-z0-9_-]+):/i);
-    if (poolerUserMatch && poolerUserMatch[1]) {
-      return `https://${poolerUserMatch[1]}.supabase.co`;
-    }
-    return DEFAULT_SUPABASE_URL;
   }
-
-  // 2. If user entered just a project ID e.g. "qwqdjdvxzljuhyczemub"
-  if (/^[a-z0-9_-]{15,35}$/i.test(trimmed)) {
-    return `https://${trimmed}.supabase.co`;
-  }
-
-  // 3. Remove leading db. if entered like "db.qwqdjdvxzljuhyczemub.supabase.co"
-  trimmed = trimmed.replace(/^(?:https?:\/\/)?db\./i, "https://");
-
-  // 4. If missing protocol
-  if (!trimmed.startsWith("http://") && !trimmed.startsWith("https://")) {
-    trimmed = `https://${trimmed}`;
-  }
-
-  // 5. Final validation: parse as URL and ensure protocol is http or https
-  try {
-    const parsed = new URL(trimmed);
-    if (parsed.protocol === "http:" || parsed.protocol === "https:") {
-      return parsed.origin;
-    }
-  } catch {
-    // If parsing fails, fallback to default valid URL
-  }
-
-  return DEFAULT_SUPABASE_URL;
+  return trimmed;
 }
 
 /**
@@ -61,16 +29,7 @@ export function normalizeSupabaseUrl(rawUrl: string): string {
 export function getStoredSupabaseUrl(): string {
   if (typeof window !== "undefined") {
     const fromStorage = localStorage.getItem(STORAGE_URL_KEY);
-    if (fromStorage && fromStorage.trim()) {
-      const normalized = normalizeSupabaseUrl(fromStorage.trim());
-      // Self-heal localStorage if the stored value was not normalized
-      if (normalized !== fromStorage.trim()) {
-        try {
-          localStorage.setItem(STORAGE_URL_KEY, normalized);
-        } catch {}
-      }
-      return normalized;
-    }
+    if (fromStorage && fromStorage.trim()) return normalizeSupabaseUrl(fromStorage.trim());
   }
   const fromEnv = (import.meta.env.VITE_SUPABASE_URL || "").trim();
   if (fromEnv) return normalizeSupabaseUrl(fromEnv);
@@ -101,11 +60,14 @@ export function isSupabaseConfigured(): boolean {
 }
 
 /**
- * Checks which database mode is active: permanently set to "supabase" as main system database
+ * Checks which database mode is active: defaults to "supabase"
  */
-export function getActiveDatabaseMode(): "supabase" {
+export function getActiveDatabaseMode(): "supabase" | "firebase" {
   if (typeof window !== "undefined") {
-    localStorage.setItem(STORAGE_DB_MODE_KEY, "supabase");
+    const mode = localStorage.getItem(STORAGE_DB_MODE_KEY);
+    if (mode === "firebase") {
+      return "firebase";
+    }
   }
   return "supabase";
 }
@@ -113,10 +75,10 @@ export function getActiveDatabaseMode(): "supabase" {
 /**
  * Sets the active database mode
  */
-export function setActiveDatabaseMode(_mode: "supabase" | "firebase" = "supabase") {
+export function setActiveDatabaseMode(mode: "supabase" | "firebase") {
   if (typeof window !== "undefined") {
-    localStorage.setItem(STORAGE_DB_MODE_KEY, "supabase");
-    window.dispatchEvent(new CustomEvent("database-mode-changed", { detail: { mode: "supabase" } }));
+    localStorage.setItem(STORAGE_DB_MODE_KEY, mode);
+    window.dispatchEvent(new CustomEvent("database-mode-changed", { detail: { mode } }));
   }
 }
 
@@ -128,24 +90,13 @@ let lastUsedKey = "";
  * Returns the initialized Supabase client singleton
  */
 export function getSupabase(): SupabaseClient | null {
-  const rawUrl = getStoredSupabaseUrl();
-  const url = normalizeSupabaseUrl(rawUrl);
+  const url = getStoredSupabaseUrl();
   const key = getStoredSupabaseAnonKey();
 
   if (!url) return null;
 
   // If no anon key yet, return null for client-side queries (server proxy handles direct SQL)
   if (!key) return null;
-
-  // Validate URL format before calling createClient to guarantee no runtime crash
-  try {
-    const parsed = new URL(url);
-    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-      return null;
-    }
-  } catch {
-    return null;
-  }
 
   if (cachedClient && lastUsedUrl === url && lastUsedKey === key) {
     return cachedClient;
@@ -162,7 +113,7 @@ export function getSupabase(): SupabaseClient | null {
     lastUsedKey = key;
     return cachedClient;
   } catch (err) {
-    console.warn("Notice: Client-side Supabase client initialization bypassed:", err);
+    console.error("Failed to initialize Supabase client:", err);
     return null;
   }
 }
@@ -172,8 +123,7 @@ export function getSupabase(): SupabaseClient | null {
  */
 export function saveSupabaseCredentials(url: string, key: string) {
   if (typeof window !== "undefined") {
-    const cleanUrl = normalizeSupabaseUrl(url.trim());
-    localStorage.setItem(STORAGE_URL_KEY, cleanUrl);
+    localStorage.setItem(STORAGE_URL_KEY, url.trim());
     localStorage.setItem(STORAGE_ANON_KEY, key.trim());
     cachedClient = null; // reset client
     setActiveDatabaseMode("supabase");

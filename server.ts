@@ -3,7 +3,6 @@ import path from "path";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI, Type } from "@google/genai";
 import dotenv from "dotenv";
-import { dbRouter } from "./serverDbRouter";
 
 dotenv.config();
 
@@ -28,7 +27,6 @@ const app = express();
 const PORT = 3000;
 
 app.use(express.json({ limit: '10mb' }));
-app.use("/api/db", dbRouter);
 
 // API route for AI Attendance Analysis (calls Gemini API)
 app.post("/api/gemini/analyze-attendance", async (req, res) => {
@@ -296,23 +294,31 @@ Return the results matching the configured response schema.`;
 
 // API route for Supabase PostgreSQL live status check
 app.get("/api/supabase/status", async (req, res) => {
+  const { Client } = await import("pg");
+  const dbUrl = process.env.DATABASE_URL || "postgresql://postgres:Joy@398878j@db.qwqdjdvxzljuhyczemub.supabase.co:5432/postgres";
+  let client: any = null;
   try {
-    const { pool } = await import("./serverDbRouter");
+    client = new Client({
+      connectionString: dbUrl,
+      ssl: { rejectUnauthorized: false }
+    });
+    await client.connect();
     const tables = [
       "roles", "banks", "categories", "employees", "counter_sales",
       "customer_payments", "suppliers", "supplier_transactions",
       "purchases", "transactions", "activity_notifications", "company_settings"
     ];
-    const selectFragments = tables.map(t => `(SELECT COUNT(*) FROM public.${t}) AS "${t}"`).join(", ");
-    const qRes = await pool.query(`SELECT ${selectFragments}`);
     const counts: Record<string, number> = {};
-    if (qRes.rows.length > 0) {
-      for (const t of tables) {
-        counts[t] = parseInt(qRes.rows[0][t] || 0, 10);
-      }
+    for (const t of tables) {
+      const q = await client.query(`SELECT COUNT(*) FROM public.${t}`);
+      counts[t] = parseInt(q.rows[0].count, 10);
     }
+    await client.end();
     res.json({ success: true, host: "db.qwqdjdvxzljuhyczemub.supabase.co", counts });
   } catch (err: any) {
+    if (client) {
+      try { await client.end(); } catch {}
+    }
     res.status(500).json({ success: false, error: err?.message || String(err) });
   }
 });

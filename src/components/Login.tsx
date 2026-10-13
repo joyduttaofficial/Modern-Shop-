@@ -1,16 +1,12 @@
 import React, { useState, useEffect } from "react";
 import defaultLogo from "../assets/images/modern_cloth_store_logo.png";
+import { auth, db, OperationType, handleFirestoreError } from "@/src/lib/firebase";
+import { onSnapshot, doc } from "firebase/firestore";
 import { 
-  auth, 
-  db, 
-  OperationType, 
-  handleFirestoreError,
-  onSnapshot, 
-  doc,
   signInWithEmailAndPassword, 
   createUserWithEmailAndPassword, 
   updateProfile 
-} from "@/src/lib/firebaseCompat";
+} from "firebase/auth";
 import { 
   Mail, 
   Lock, 

@@ -45,7 +45,6 @@ export interface Employee {
   name: string;
   role: string;
   salary: number;
-  otherAdvanceAmount?: number; // Advance taken / other advance amount (অন্যান্য অগ্রিম)
   joinedDate: string;
   status: "active" | "inactive";
   documents?: { name: string; type: string; data: string }[];

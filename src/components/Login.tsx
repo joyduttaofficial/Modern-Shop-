@@ -10,7 +10,7 @@ import {
   signInWithEmailAndPassword, 
   createUserWithEmailAndPassword, 
   updateProfile 
-} from "@/src/lib/firebaseCompat";
+} from "@/src/lib/firebase";
 import { 
   Mail, 
   Lock, 

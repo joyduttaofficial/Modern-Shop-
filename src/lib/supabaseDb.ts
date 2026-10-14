@@ -331,8 +331,13 @@ export async function saveCounterSaleToSupabase(sale: CounterSale): Promise<{ su
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(saleRow),
-    });
-    const created = await res.json();
+    }).catch(() => null);
+
+    if (!res || !res.ok) {
+      return { success: false };
+    }
+
+    const created = await res.json().catch(() => ({}));
 
     // Also auto-log transaction in Supabase
     if (Number(sale.receivedAmount) > 0) {
@@ -345,14 +350,14 @@ export async function saveCounterSaleToSupabase(sale: CounterSale): Promise<{ su
         paymentMethod: sale.paymentMethod || "Cash",
         notes: `Counter Sale [${sale.saleId}] - প্রদেয়: ৳${sale.netPayable} | প্রাপ্ত: ৳${sale.receivedAmount} | বকেয়া: ৳${sale.dueAmount}`,
         createdBy: sale.createdBy || "admin",
-      });
+      }).catch(() => null);
     }
 
     notifyDataChanged("counter_sales");
     notifyDataChanged("transactions");
     return { success: true, data: created };
   } catch (err: any) {
-    return { success: false, error: err.message || String(err) };
+    return { success: false, error: err?.message || String(err) };
   }
 }
 

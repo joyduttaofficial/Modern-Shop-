@@ -39,7 +39,7 @@ import {
   ArrowUpDown
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
-import { auth, db, OperationType, handleFirestoreError, onAuthStateChanged, signOut, User as FirebaseUser, doc, getDoc, setDoc, onSnapshot, collection, query, where, getDocs, deleteDoc } from "@/src/lib/firebaseCompat";
+import { auth, db, OperationType, handleFirestoreError, onAuthStateChanged, signOut, User as FirebaseUser, doc, getDoc, setDoc, onSnapshot, collection, query, where, getDocs, deleteDoc } from "@/src/lib/firebase";
 import { UserProfile, UserRole, RolePermission, Transaction } from "@/src/types";
 import { useLanguage } from "./contexts/LanguageContext";
 import defaultLogo from "./assets/images/modern_cloth_store_logo.png";

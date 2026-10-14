@@ -19,7 +19,7 @@ import {
   updateProfile,
   signOut,
   firebaseConfig
-} from "@/src/lib/firebaseCompat";
+} from "@/src/lib/firebase";
 import { UserProfile, RolePermission } from "@/src/types";
 import { cn } from "@/src/lib/utils";
 import { 

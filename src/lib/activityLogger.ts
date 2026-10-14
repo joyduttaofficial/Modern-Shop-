@@ -1,4 +1,4 @@
-import { collection, addDoc, updateDoc, doc, deleteDoc, writeBatch, db } from "./firebaseCompat";
+import { collection, addDoc, updateDoc, doc, deleteDoc, writeBatch, db } from "./firebase";
 import { ActivityAction, ActivityNotification } from "../types";
 import { 
   saveActivityNotificationToSupabase, 

@@ -128,30 +128,34 @@ let lastUsedKey = "";
  * Returns the initialized Supabase client singleton
  */
 export function getSupabase(): SupabaseClient | null {
-  const rawUrl = getStoredSupabaseUrl();
-  const url = normalizeSupabaseUrl(rawUrl);
-  const key = getStoredSupabaseAnonKey();
-
-  if (!url) return null;
-
-  // If no anon key yet, return null for client-side queries (server proxy handles direct SQL)
-  if (!key) return null;
-
-  // Validate URL format before calling createClient to guarantee no runtime crash
   try {
-    const parsed = new URL(url);
+    const rawUrl = getStoredSupabaseUrl();
+    const url = normalizeSupabaseUrl(rawUrl);
+    const key = getStoredSupabaseAnonKey();
+
+    if (!url || typeof url !== "string") return null;
+    if (!key || typeof key !== "string" || !key.trim()) return null;
+
+    // Validate URL format before calling createClient to guarantee no runtime crash
+    let parsed: URL;
+    try {
+      parsed = new URL(url);
+    } catch {
+      return null;
+    }
+
     if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
       return null;
     }
-  } catch {
-    return null;
-  }
 
-  if (cachedClient && lastUsedUrl === url && lastUsedKey === key) {
-    return cachedClient;
-  }
+    if (!parsed.hostname || !parsed.hostname.includes(".")) {
+      return null;
+    }
 
-  try {
+    if (cachedClient && lastUsedUrl === url && lastUsedKey === key) {
+      return cachedClient;
+    }
+
     cachedClient = createClient(url, key, {
       auth: {
         persistSession: true,

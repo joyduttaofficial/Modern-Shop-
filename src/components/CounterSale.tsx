@@ -629,10 +629,14 @@ export default function CounterSaleView({
         }
       }
 
-      // Also persist directly into Supabase PostgreSQL database
-      saveCounterSaleToSupabase(newCounterSale as unknown as CounterSale).catch(sbErr => {
-        console.warn("Could not save sale to Supabase:", sbErr);
-      });
+      // Also persist directly into Supabase PostgreSQL database if available
+      try {
+        saveCounterSaleToSupabase(newCounterSale as unknown as CounterSale).catch(sbErr => {
+          console.warn("Could not save sale to Supabase (non-fatal):", sbErr);
+        });
+      } catch (sbErr) {
+        console.warn("Supabase background save bypassed:", sbErr);
+      }
 
       setLastSavedSale({ id: docRef.id, ...newCounterSale } as CounterSale);
       setSaveSuccess(true);

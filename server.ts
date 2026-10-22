@@ -25,7 +25,15 @@ const getGeminiClient = () => {
 };
 
 const app = express();
-const PORT = 3000;
+const getPort = () => {
+  const portArgIdx = process.argv.indexOf("--port");
+  if (portArgIdx !== -1 && process.argv[portArgIdx + 1]) {
+    const val = parseInt(process.argv[portArgIdx + 1], 10);
+    if (!isNaN(val)) return val;
+  }
+  return 3000;
+};
+const PORT = getPort();
 
 app.use(express.json({ limit: '10mb' }));
 app.use("/api/db", dbRouter);

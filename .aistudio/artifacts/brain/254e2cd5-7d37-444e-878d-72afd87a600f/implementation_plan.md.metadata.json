@@ -1,0 +1,6 @@
+{
+  "summary":  "Implementation plan to remove the Offline Storage & Sync button from the global header bar in App.tsx and completely remove user-specific calculation filtering and the Multi-User Scope Bar from Dashboard.tsx.",
+  "updatedAt":  "2026-10-26T08:45:51.432683239Z",
+  "requestFeedback":  true,
+  "userFacing":  true
+}

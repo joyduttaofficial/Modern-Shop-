@@ -77,12 +77,6 @@ export default function Dashboard({
     normalizedRole.includes("super") ||
     normalizedRole.includes("administrator");
 
-  // Multi-user input filter:
-  // For Super Admin: defaults to "all" (store-wide calculation), but can select ANY other user to see calculations of that user's input.
-  // For Other Users (including Accountant): defaults to their own UID (displaying calculation for ONLY their own inputs). Cannot select store-wide total calculation.
-  const [selectedUserFilter, setSelectedUserFilter] = useState<string>(isSuperAdmin ? "all" : (user?.uid || ""));
-  const [systemUsers, setSystemUsers] = useState<{ uid: string; displayName: string; email: string; role: string }[]>([]);
-
   // Mode for Users: Super Admin sees total calculations. Accountants and other non-admin staff are strictly in inputOnly mode (cannot show total amounts)
   const [viewMode, setViewMode] = useState<"calculation" | "inputOnly">(() => {
     if (!isSuperAdmin) return "inputOnly";
@@ -94,22 +88,6 @@ export default function Dashboard({
     }
     return "calculation";
   });
-
-  useEffect(() => {
-    const unsub = onSnapshot(collection(db, "users"), (snap) => {
-      const list = snap.docs.map(doc => {
-        const d = doc.data();
-        return {
-          uid: d.uid || doc.id,
-          displayName: d.displayName || d.name || d.email || "Staff User",
-          email: d.email || "",
-          role: d.role || "sales"
-        };
-      });
-      setSystemUsers(list);
-    }, (err) => console.warn("Could not load users:", err));
-    return () => unsub();
-  }, []);
 
   const [rawTransactions, setRawTransactions] = useState<Transaction[]>([]);
   const [rawPurchases, setRawPurchases] = useState<any[]>([]);
@@ -236,40 +214,8 @@ export default function Dashboard({
       setIsDeletingSaleInDashboard(false);
     }
   };
-
-  const matchesUser = (item: any) => {
-    if (!selectedUserFilter || selectedUserFilter === "all") return true;
-    if (!item) return false;
-    const targetUser = systemUsers.find(u => u.uid === selectedUserFilter || u.email === selectedUserFilter);
-    const targetEmail = targetUser?.email?.toLowerCase();
-    const targetName = targetUser?.displayName?.toLowerCase();
-
-    if (item.createdBy) {
-      if (item.createdBy === selectedUserFilter) return true;
-      if (targetEmail && typeof item.createdBy === "string" && item.createdBy.toLowerCase() === targetEmail) return true;
-      if (targetName && typeof item.createdBy === "string" && item.createdBy.toLowerCase() === targetName) return true;
-    }
-    if (item.userId && (item.userId === selectedUserFilter || (targetEmail && item.userId === targetEmail))) return true;
-    if (item.employeeId && item.employeeId === selectedUserFilter) return true;
-    if (user?.uid === selectedUserFilter) {
-      if (item.createdBy === user.uid) return true;
-      if (user.email && typeof item.createdBy === "string" && item.createdBy.toLowerCase() === user.email.toLowerCase()) return true;
-    }
-    return false;
-  };
-
-  const activeFilteredUser = selectedUserFilter === "all" 
-    ? null 
-    : systemUsers.find(u => u.uid === selectedUserFilter || u.email === selectedUserFilter) || {
-        uid: selectedUserFilter,
-        displayName: selectedUserFilter === user?.uid ? (user?.displayName || "You") : "Staff User",
-        email: selectedUserFilter === user?.uid ? (user?.email || "") : "",
-        role: selectedUserFilter === user?.uid ? role : "staff"
-      };
-
   const [recentTransactions, setRecentTransactions] = useState<Transaction[]>([]);
   const [banks, setBanks] = useState<Bank[]>([]);
-  const [userNetCash, setUserNetCash] = useState(0);
   const [stats, setStats] = useState({
     // Today metrics
     todaySales: 0,
@@ -436,21 +382,17 @@ export default function Dashboard({
     const today = startOfDay(new Date());
     const todayFormatted = format(new Date(), "yyyy-MM-dd");
 
-    // Filter datasets according to the active user input filter
-    const all = validTransactions.filter(matchesUser);
-    const purchasesList = rawPurchases.filter(matchesUser);
-    const supplierTransactionsList = rawSupplierTransactions.filter(matchesUser);
+    // Store-wide datasets for aggregated calculation
+    const all = validTransactions;
+    const purchasesList = rawPurchases;
+    const supplierTransactionsList = rawSupplierTransactions;
     const suppliersList = rawSuppliers;
     const attendanceList = rawAttendance;
     const employeesList = rawEmployees;
 
-    // Update recent transactions to show entries input by this user
+    // Update recent transactions
     const sortedTxs = [...all].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
     setRecentTransactions(sortedTxs.slice(0, 6));
-
-    // Calculate Net Cash input by this user (Inflows - Outflows)
-    const netCash = all.reduce((sum, tx) => (tx.type === "income" ? sum + tx.amount : sum - tx.amount), 0);
-    setUserNetCash(netCash);
 
     let todaySales = 0;
     let todayWholesale = 0;
@@ -571,8 +513,7 @@ export default function Dashboard({
       });
 
       // 1c. Counter Sales Distinct Calculations from counterSales collection
-      // Counter Sales Calculation: Gross Slips - Discounts = Net Payable -> Received Cash + Customer Due
-      const counterSalesFiltered = validCounterSales.filter(matchesUser);
+      const counterSalesFiltered = validCounterSales;
       let todayCounterCash = 0;
       let todayCounterGrossSlips = 0;
       let todayCounterDiscount = 0;
@@ -900,7 +841,7 @@ export default function Dashboard({
         return { name: dayLabel, income: dayIncome, expense: dayExpense };
       });
       setTrendChartData(days);
-  }, [validTransactions, validCounterSales, rawPurchases, rawSupplierTransactions, rawSuppliers, rawAttendance, rawEmployees, selectedUserFilter, systemUsers]);
+  }, [validTransactions, validCounterSales, rawPurchases, rawSupplierTransactions, rawSuppliers, rawAttendance, rawEmployees]);
 
   // Automated background reconciliation: cleans up orphan counterSales and orphan transactions from Firestore
   useEffect(() => {
@@ -1246,84 +1187,7 @@ export default function Dashboard({
         </div>
       )}
 
-      {/* Multi-User Calculation & Input Filter Scope Bar */}
-      <div className="bg-white border border-slate-200 rounded-2xl p-4 sm:p-5 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div className="flex items-center gap-3.5">
-          <div className="w-10 h-10 rounded-xl bg-slate-100 text-slate-800 flex items-center justify-center shrink-0 border border-slate-200 shadow-2xs">
-            <Users className="w-5 h-5 text-slate-700" />
-          </div>
-          <div>
-            <div className="flex items-center gap-2 flex-wrap">
-              <h3 className="text-sm font-black text-slate-900 uppercase tracking-tight">
-                {selectedUserFilter === "all" 
-                  ? t("Store-Wide Total Calculation (All Users)") 
-                  : `${t("Total Calculation for Inputs by")}: ${activeFilteredUser?.displayName || t("Selected User")}`}
-              </h3>
-              <span className={cn(
-                "text-[10px] font-extrabold uppercase px-2 py-0.5 rounded-full border",
-                selectedUserFilter === "all" 
-                  ? "bg-slate-100 text-slate-700 border-slate-250" 
-                  : "bg-emerald-50 text-emerald-700 border-emerald-200 animate-in fade-in"
-              )}>
-                {selectedUserFilter === "all" 
-                  ? t("Global Store Overview") 
-                  : (selectedUserFilter === user.uid ? t("Your Inputs Only") : t("Filtered User Input"))}
-              </span>
-            </div>
-            <p className="text-xs text-slate-500 font-medium mt-0.5">
-              {selectedUserFilter === "all"
-                ? t("Calculating aggregated metrics across all staff & counter entries.")
-                : `${t("Displaying metrics and calculations exclusively for records inputted by")} ${activeFilteredUser?.displayName || t("this user")}.`}
-            </p>
-          </div>
-        </div>
 
-        {/* User filter selector dropdown and mode indicator */}
-        <div className="flex items-center gap-2.5 flex-wrap">
-          {isSuperAdmin && (
-            <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-250 rounded-xl px-3 py-1.5 shadow-2xs">
-              <Filter className="w-3.5 h-3.5 text-slate-500 shrink-0" />
-              <select
-                value={selectedUserFilter}
-                onChange={(e) => setSelectedUserFilter(e.target.value)}
-                className="bg-transparent text-xs font-bold text-slate-800 outline-none cursor-pointer py-1 pr-2"
-                title={t("Filter total calculation by input of any user")}
-              >
-                <option value="all">👥 {t("All Users (Total Calculation)")}</option>
-                <option value={user.uid}>👤 {t("My Inputs Only")} ({user.displayName?.split(" ")[0] || "Me"})</option>
-                {systemUsers.length > 0 && (
-                  <optgroup label={t("Select Any Other User")}>
-                    {systemUsers
-                      .filter(u => u.uid !== user.uid)
-                      .map(u => (
-                        <option key={u.uid} value={u.uid}>
-                          {u.displayName} ({u.role || "staff"})
-                        </option>
-                      ))}
-                  </optgroup>
-                )}
-              </select>
-            </div>
-          )}
-
-          {isSuperAdmin && selectedUserFilter !== "all" && (
-            <button
-              onClick={() => setSelectedUserFilter("all")}
-              className="text-xs font-bold px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl transition cursor-pointer"
-              title={t("Reset to all users")}
-            >
-              {t("Reset to All")}
-            </button>
-          )}
-
-          {!isSuperAdmin && (
-            <div className="flex items-center gap-1.5 bg-indigo-50 border border-indigo-200/60 rounded-xl px-3 py-1.5 text-indigo-700 font-bold text-xs">
-              <ShoppingCart className="w-3.5 h-3.5" />
-              <span>{t("Input Only Mode Active")}</span>
-            </div>
-          )}
-        </div>
-      </div>
 
       {/* Low Stock Notifications Alert Banner */}
       {lowStockItems.length > 0 && (
@@ -1642,12 +1506,12 @@ export default function Dashboard({
             scope="Total"
           />
           <StatCard 
-            title={selectedUserFilter === "all" ? t("Total Bank Last Cash") : t("User Net Cash Balance")} 
-            value={selectedUserFilter === "all" ? totalBankLastCash : userNetCash} 
+            title={t("Total Bank Last Cash")} 
+            value={totalBankLastCash} 
             icon={Wallet} 
             color="sky" 
-            description={selectedUserFilter === "all" ? t("Combined remaining cash inside all banks now") : t("Net cash balance calculated from inputs by this user")}
-            scope={selectedUserFilter === "all" ? "Active Balance" : "User Net Cash"}
+            description={t("Combined remaining cash inside all banks now")}
+            scope="Active Balance"
           />
           <StatCard 
             title="Total Expense Amount" 

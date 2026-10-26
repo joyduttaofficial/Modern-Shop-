@@ -963,48 +963,6 @@ export default function App() {
             </div>
             
             <div className="flex items-center gap-3 self-stretch sm:self-auto justify-between sm:justify-end">
-              {/* IndexedDB Offline Storage & Sync Controls */}
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => setShowStorageModal(true)}
-                  className={cn(
-                    "px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-2 border shadow-xs",
-                    isOffline
-                      ? "bg-amber-50 dark:bg-amber-950/40 text-amber-800 dark:text-amber-300 border-amber-200 dark:border-amber-800"
-                      : "bg-slate-50 dark:bg-zinc-900 text-slate-700 dark:text-neutral-200 border-slate-200 dark:border-zinc-800 hover:bg-slate-100"
-                  )}
-                  title="Click to view IndexedDB storage status and offline sync diagnostic"
-                >
-                  <div className="relative flex items-center justify-center">
-                    <Database className={cn("w-3.5 h-3.5", isOffline ? "text-amber-600" : "text-emerald-600")} />
-                    <span className={cn(
-                      "absolute -top-1 -right-1 w-2 h-2 rounded-full",
-                      isOffline ? "bg-amber-500 animate-ping" : "bg-emerald-500"
-                    )} />
-                  </div>
-                  <span className="hidden md:inline">
-                    {isOffline ? "Offline (IndexedDB)" : "Cloud Synced"}
-                  </span>
-                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-black/5 dark:bg-white/10 font-mono font-bold">
-                    {offlineStats.transactionsCount} txs
-                  </span>
-                </button>
-
-                {offlineStats.pendingSyncCount > 0 && (
-                  <button
-                    type="button"
-                    onClick={handleManualSync}
-                    disabled={isSyncing}
-                    className="px-3 py-1.5 rounded-xl text-xs font-black bg-amber-500 hover:bg-amber-600 text-white transition-all cursor-pointer flex items-center gap-1.5 shadow-sm disabled:opacity-50"
-                    title="Click to push offline changes to Firestore"
-                  >
-                    <RefreshCw className={cn("w-3.5 h-3.5", isSyncing && "animate-spin")} />
-                    <span>Sync ({offlineStats.pendingSyncCount})</span>
-                  </button>
-                )}
-              </div>
-
               {/* Super Admin Live Activity Notifications Center */}
               {profile && (profile.role === "admin" || profile.role === "superadmin") && (
                 <AdminNotificationCenter
